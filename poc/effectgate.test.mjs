@@ -7,6 +7,10 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
+  ContextStore,
+  InvalidCursorError
+} from "./context-view.mjs";
+import {
   CONTEXT_FETCH_TOOL,
   EFFECTGATE_VERSION,
   FIXTURE_LARGE_LOG_TOOL,
@@ -15,6 +19,7 @@ import {
   MAX_FRAME_BYTES,
   MAX_TOOL_RESULT_BYTES,
   MCP_VERSION,
+  boundToolResult,
   buildFixtureLog,
   isSafeReadTool
 } from "./effectgate.mjs";
@@ -349,6 +354,130 @@ test("large text is losslessly paged through opaque Context View cursors", async
   });
   assert.deepEqual(tooShort.error, invented.error);
   assert.equal(proxy.stderr, "");
+});
+
+test("Context Store preserves UTF-8 boundaries and pins live continuations", () => {
+  let now = 1000;
+  const store = new ContextStore({
+    pageBytes: 5,
+    maxArtifactBytes: 12,
+    maxStoreBytes: 12,
+    maxArtifacts: 2,
+    maxCursors: 2,
+    cursorTtlMs: 10,
+    now: () => now
+  });
+  const first = store.ingest("A😀B😀");
+  assert.equal(Buffer.byteLength(first.content, "utf8"), 5);
+  assert.equal(first.content, "A😀");
+  const liveCursor = first.retrieval.cursor;
+  assert.throws(() => store.ingest("12345678"), RangeError);
+
+  const finalPage = store.fetch(liveCursor);
+  assert.equal(finalPage.content, "B😀");
+  assert.deepEqual(store.fetch(liveCursor), finalPage);
+  const second = store.ingest("12345678");
+  assert.equal(store.storedBytes, 8);
+
+  const expiring = second.retrieval.cursor;
+  now += 11;
+  assert.throws(() => store.fetch(expiring), InvalidCursorError);
+
+  const owner = new ContextStore({ pageBytes: 4 });
+  const isolated = owner.ingest("A😀B");
+  assert.equal(isolated.content, "A");
+  assert.equal(isolated.citations[0].byte_end, 1);
+  assert.throws(() => new ContextStore().fetch(isolated.retrieval.cursor));
+  const emoji = owner.fetch(isolated.retrieval.cursor);
+  assert.equal(emoji.content, "😀");
+  assert.deepEqual(emoji.citations[0], {
+    artifact_id: isolated.artifact_id,
+    source_digest: isolated.integrity.artifact_digest,
+    byte_start: 1,
+    byte_end: 5
+  });
+  assert.equal(owner.fetch(emoji.retrieval.cursor).content, "B");
+
+  assert.throws(
+    () => new ContextStore().ingest("\ud800"),
+    /Unicode scalar/
+  );
+  assert.throws(
+    () => new ContextStore({ pageBytes: 262145 }),
+    /pageBytes/
+  );
+
+  const capacity = new ContextStore({
+    pageBytes: 4,
+    maxArtifactBytes: 32,
+    maxStoreBytes: 64,
+    maxCursors: 2
+  });
+  const advancing = capacity.ingest("abcdefghijkl");
+  assert.throws(
+    () => capacity.ingest("mnopqrstuvwx"),
+    /cursor capacity/
+  );
+  assert.equal(capacity.fetch(advancing.retrieval.cursor).content, "efgh");
+});
+
+test("tool-result bounding fails closed and preserves error semantics", () => {
+  const contextStore = new ContextStore();
+  const boundedError = boundToolResult(
+    {
+      content: [{ type: "text", text: buildFixtureLog(200) }],
+      isError: true
+    },
+    { contextStore, contextViewEligible: true }
+  );
+  assert.equal(boundedError.isError, true);
+  assert.equal(
+    JSON.parse(boundedError.content[0].text).status,
+    "partial_view"
+  );
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(boundedError), "utf8") <=
+      MAX_TOOL_RESULT_BYTES
+  );
+
+  const optionalIsError = boundToolResult(
+    {
+      content: [{ type: "text", text: buildFixtureLog(200) }]
+    },
+    { contextStore, contextViewEligible: true }
+  );
+  assert.equal(optionalIsError.isError, false);
+  assert.equal(
+    JSON.parse(optionalIsError.content[0].text).status,
+    "partial_view"
+  );
+
+  const oversizedStructured = {
+    content: [{ type: "text", text: "small" }],
+    structuredContent: { blob: "x".repeat(MAX_TOOL_RESULT_BYTES) },
+    isError: false
+  };
+  assert.throws(
+    () =>
+      boundToolResult(oversizedStructured, {
+        contextStore,
+        contextViewEligible: true
+      }),
+    /output limit/
+  );
+  assert.throws(
+    () =>
+      boundToolResult(
+        {
+          content: [
+            { type: "text", text: "x".repeat(MAX_TOOL_RESULT_BYTES) }
+          ],
+          isError: false
+        },
+        { contextStore, contextViewEligible: false }
+      ),
+    /output limit/
+  );
 });
 
 test("invalid and oversized frames fail safely and the server recovers", async (context) => {
