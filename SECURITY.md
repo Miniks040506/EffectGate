@@ -2,9 +2,9 @@
 
 ## Project status
 
-EffectGate is currently a Phase 0, fixture-only proof of concept. It is not
-production-ready and must not be used to protect real tool effects, secrets, or
-untrusted external backends.
+EffectGate is currently a fixture-only Phase 1 preview. It includes a bounded,
+in-memory Context View path, but is not production-ready and must not be used
+to protect real tool effects, secrets, or untrusted external backends.
 
 ## Supported versions
 
@@ -53,6 +53,9 @@ Reports are especially useful when they demonstrate:
 - access to an arbitrary backend or protected/write operation;
 - leakage of raw backend errors, process data, credentials, or hidden names;
 - protocol confusion, request-correlation failure, or namespace collision;
+- skipped, duplicated, oversized, or uncited Context View bytes;
+- cross-session cursor use, expiry bypass, modification, or existence leaks;
+- bypass of artifact, store, or active-cursor quotas;
 - escape from the intended child-process or environment boundary;
 - a reproducible resource-exhaustion path beyond documented limitations.
 
@@ -64,20 +67,32 @@ out of scope until those features exist.
 
 ## Current trust boundary
 
-Phase 0 assumes:
+The current preview assumes:
 
 - the operating-system user, local Node.js runtime, and checkout are trusted;
 - only the bundled deterministic fixture is launched;
 - MCP clients may send malformed or adversarial protocol input;
+- the fixture's generated log contains no secrets or personal data;
+- one proxy process represents one cursor session;
 - tool annotations are admission inputs, not proof that an unknown backend is
   safe.
 
-## Known Phase 0 limitations
+## Known preview limitations
 
 - The fixture child runs with the current user's operating-system permissions;
   EffectGate is not an OS sandbox.
 - There is no authentication, encryption, tenant isolation, secret redaction,
   persistent audit journal, approval flow, or reconciliation.
+- Artifacts are buffered and retained only in process memory. The store is
+  neither streaming nor crash-safe and provides no secure-erasure guarantee.
+- Artifact identifiers expose a SHA-256 content digest. Do not use this preview
+  with secret-bearing or attacker-controlled real-world results.
+- Cursor binding is achieved by random server-side, process-local state. There
+  is no principal, client identity, or durable policy-generation binding yet.
+- The 4 KiB Context View budget covers source content; the surrounding MCP/JSON
+  tool-result value is capped at 64 KiB and the complete frame at 1 MiB.
+- Artifacts with an unfetched continuation are pinned until the cursor expires;
+  new ingestion fails closed when only pinned artifacts occupy the quota.
 - Frame and pending-request limits reduce resource risk but are not complete
   denial-of-service protection.
 - The proxy validates the tool envelope and admission map, but the bundled
