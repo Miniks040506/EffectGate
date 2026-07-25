@@ -1,0 +1,13 @@
+{
+  "name": "effectgate-phase0-poc",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node effectgate.mjs mcp serve",
+    "test": "node --test effectgate.test.mjs"
+  }
+}
