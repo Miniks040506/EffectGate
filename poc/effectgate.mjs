@@ -5,8 +5,16 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
+import {
+  CONTEXT_PAGE_BYTES,
+  ContextStore,
+  InvalidCursorError
+} from "./context-view.mjs";
+
 export const MAX_FRAME_BYTES = 1024 * 1024;
+export const MAX_TOOL_RESULT_BYTES = 64 * 1024;
 export const MCP_VERSION = "2025-11-25";
+export const EFFECTGATE_VERSION = "0.1.0";
 const MAX_PENDING_REQUESTS = 64;
 const MAX_ID_BYTES = 128;
 
@@ -45,6 +53,113 @@ export const FIXTURE_SECOND_TOOL = Object.freeze({
   name: "echo_again",
   title: "Deterministic Echo Again"
 });
+
+export const FIXTURE_LARGE_LOG_TOOL = Object.freeze({
+  name: "large_log",
+  title: "Deterministic Large Log",
+  description: "Returns a deterministic UTF-8 log for bounded-view testing.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["lines"],
+    properties: {
+      lines: { type: "integer", minimum: 1, maximum: 6000 },
+      includeStructuredCopy: { type: "boolean" }
+    }
+  },
+  annotations: FIXTURE_TOOL.annotations
+});
+
+export const CONTEXT_FETCH_TOOL = Object.freeze({
+  name: "effectgate_fetch",
+  title: "Fetch Context View",
+  description: "Fetches the next bounded page using an opaque EffectGate cursor.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["cursor"],
+    properties: {
+      cursor: { type: "string", minLength: 32, maxLength: 4096 }
+    }
+  },
+  annotations: FIXTURE_TOOL.annotations
+});
+
+export function buildFixtureLog(lines) {
+  if (!Number.isSafeInteger(lines) || lines < 1 || lines > 6000) {
+    throw new RangeError("lines must be an integer from 1 through 6000");
+  }
+  return Array.from(
+    { length: lines },
+    (_, index) =>
+      `${String(index + 1).padStart(6, "0")} level=INFO component=fixture ` +
+      `message="bounded context evidence" marker=✓\n`
+  ).join("");
+}
+
+function serializedBytes(value) {
+  const serialized = JSON.stringify(value);
+  if (typeof serialized !== "string") {
+    throw new TypeError("value is not JSON serializable");
+  }
+  return Buffer.byteLength(serialized, "utf8");
+}
+
+function contextViewResult(view, isError = false) {
+  const result = {
+    content: [{ type: "text", text: JSON.stringify(view) }],
+    isError
+  };
+  if (serializedBytes(result) > MAX_TOOL_RESULT_BYTES) {
+    throw new RangeError("Context View result exceeds the output limit");
+  }
+  return result;
+}
+
+export function boundToolResult(
+  result,
+  { contextStore, contextViewEligible }
+) {
+  if (
+    result === null ||
+    typeof result !== "object" ||
+    Array.isArray(result) ||
+    !Array.isArray(result.content)
+  ) {
+    throw new TypeError("invalid tool result");
+  }
+
+  const textItem = result.content[0];
+  const validIsError =
+    result.isError === undefined || typeof result.isError === "boolean";
+  const exactTextResult =
+    result.content.length === 1 &&
+    validIsError &&
+    Object.keys(result).every(
+      (key) => key === "content" || key === "isError"
+    ) &&
+    textItem !== null &&
+    typeof textItem === "object" &&
+    !Array.isArray(textItem) &&
+    textItem.type === "text" &&
+    typeof textItem.text === "string" &&
+    Object.keys(textItem).every((key) => key === "type" || key === "text");
+
+  if (
+    contextViewEligible &&
+    exactTextResult &&
+    Buffer.byteLength(textItem.text, "utf8") > CONTEXT_PAGE_BYTES
+  ) {
+    return contextViewResult(
+      contextStore.ingest(textItem.text),
+      result.isError === true
+    );
+  }
+  if (serializedBytes(result) > MAX_TOOL_RESULT_BYTES) {
+    throw new RangeError("tool result exceeds the output limit");
+  }
+  return result;
+}
 
 function writeMessage(stream, message) {
   const frame = `${JSON.stringify(message)}\n`;
@@ -98,7 +213,7 @@ function validateResponse(message) {
   );
 }
 
-export function isPhase0SafeTool(tool) {
+export function isSafeReadTool(tool) {
   return (
     tool?.annotations?.readOnlyHint === true &&
     tool.annotations.destructiveHint === false &&
@@ -167,7 +282,7 @@ function fixtureResponse(request) {
         result: {
           protocolVersion: MCP_VERSION,
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: "effectgate-fixture", version: "0.0.0" }
+          serverInfo: { name: "effectgate-fixture", version: EFFECTGATE_VERSION }
         }
       };
 
@@ -179,7 +294,9 @@ function fixtureResponse(request) {
         return {
           jsonrpc: "2.0",
           id,
-          result: { tools: [FIXTURE_SECOND_TOOL] }
+          result: {
+            tools: [FIXTURE_SECOND_TOOL, FIXTURE_LARGE_LOG_TOOL]
+          }
         };
       }
       if (request.params?.cursor !== undefined) {
@@ -193,6 +310,36 @@ function fixtureResponse(request) {
 
     case "tools/call": {
       const { name, arguments: args } = request.params ?? {};
+      if (name === FIXTURE_LARGE_LOG_TOOL.name) {
+        if (
+          args === null ||
+          typeof args !== "object" ||
+          Array.isArray(args) ||
+          !Number.isSafeInteger(args.lines) ||
+          args.lines < 1 ||
+          args.lines > 6000 ||
+          (args.includeStructuredCopy !== undefined &&
+            typeof args.includeStructuredCopy !== "boolean") ||
+          Object.keys(args).some(
+            (key) => key !== "lines" && key !== "includeStructuredCopy"
+          )
+        ) {
+          return errorMessage(id, -32602, "The tool arguments are invalid.");
+        }
+        const text = buildFixtureLog(args.lines);
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            content: [{ type: "text", text }],
+            ...(args.includeStructuredCopy
+              ? { structuredContent: { text } }
+              : {}),
+            isError: false
+          }
+        };
+      }
+
       if (
         (name !== FIXTURE_TOOL.name && name !== FIXTURE_SECOND_TOOL.name) ||
         args === null ||
@@ -312,6 +459,8 @@ export function runProxy(args) {
   });
   const pending = new Map();
   let toolNames = new Map();
+  const contextStore = new ContextStore();
+  let lifecycle = "new";
   let sequence = 0;
   let backendAvailable = true;
   let reportedStderr = false;
@@ -526,7 +675,10 @@ export function runProxy(args) {
 
       if (message.id === undefined) {
         if (message.method === "notifications/initialized") {
-          sendBackend(message);
+          if (lifecycle === "awaiting_initialized") {
+            lifecycle = "ready";
+            sendBackend(message);
+          }
         } else if (message.method === "notifications/cancelled") {
           const clientId = message.params?.requestId;
           const match = [...pending.entries()].find(
@@ -542,23 +694,51 @@ export function runProxy(args) {
         return;
       }
 
+      if (
+        message.method !== "initialize" &&
+        lifecycle !== "ready"
+      ) {
+        reply(
+          errorMessage(
+            message.id,
+            -32007,
+            "The MCP session is not initialized."
+          )
+        );
+        return;
+      }
+
       switch (message.method) {
         case "initialize":
+          if (lifecycle !== "new") {
+            reply(
+              errorMessage(
+                message.id,
+                -32600,
+                "This MCP session is already initialized."
+              )
+            );
+            break;
+          }
           if (message.params?.protocolVersion !== MCP_VERSION) {
             reply(
               errorMessage(
                 message.id,
                 -32602,
-                `Phase 0 supports MCP ${MCP_VERSION} only.`
+                `This preview supports MCP ${MCP_VERSION} only.`
               )
             );
             break;
           }
+          lifecycle = "initializing";
           toolNames = new Map();
           forward(message, "initialize", {
             protocolVersion: MCP_VERSION,
             capabilities: {},
-            clientInfo: { name: "effectgate-phase0", version: "0.0.0" }
+            clientInfo: {
+              name: "effectgate-preview",
+              version: EFFECTGATE_VERSION
+            }
           }, (result) => {
             if (
               result === null ||
@@ -568,6 +748,7 @@ export function runProxy(args) {
             ) {
               throw new Error("unsupported backend protocol");
             }
+            lifecycle = "awaiting_initialized";
             return {
               protocolVersion: MCP_VERSION,
               capabilities: {
@@ -575,7 +756,10 @@ export function runProxy(args) {
                   listChanged: result.capabilities?.tools?.listChanged === true
                 }
               },
-              serverInfo: { name: "effectgate-phase0", version: "0.0.0" }
+              serverInfo: {
+                name: "effectgate-preview",
+                version: EFFECTGATE_VERSION
+              }
             };
           });
           break;
@@ -585,6 +769,7 @@ export function runProxy(args) {
           break;
 
         case "tools/list":
+          if (message.params?.cursor === undefined) toolNames = new Map();
           forward(message, "tools/list", message.params, (result) => {
             if (!Array.isArray(result?.tools)) throw new Error("invalid tools");
             const nextNames =
@@ -604,26 +789,74 @@ export function runProxy(args) {
               ) {
                 throw new Error("invalid tool contract");
               }
-              if (!isPhase0SafeTool(tool)) return [];
+              if (!isSafeReadTool(tool)) return [];
               const publicName = publicToolName(tool.name);
               if (nextNames.has(publicName)) throw new Error("tool name collision");
-              nextNames.set(publicName, tool.name);
+              nextNames.set(publicName, {
+                backendName: tool.name,
+                contextViewEligible: tool.outputSchema === undefined
+              });
               return [{ ...tool, name: publicName }];
             });
             toolNames = nextNames;
             return {
               ...result,
-              tools
+              tools:
+                message.params?.cursor === undefined
+                  ? [...tools, CONTEXT_FETCH_TOOL]
+                  : tools
             };
           });
           break;
 
         case "tools/call": {
           const publicName = message.params?.name;
-          const backendName = toolNames.get(publicName);
+          if (publicName === CONTEXT_FETCH_TOOL.name) {
+            const callArguments = message.params?.arguments;
+            if (
+              callArguments === null ||
+              typeof callArguments !== "object" ||
+              Array.isArray(callArguments) ||
+              typeof callArguments.cursor !== "string" ||
+              Buffer.byteLength(callArguments.cursor, "utf8") < 32 ||
+              Buffer.byteLength(callArguments.cursor, "utf8") > 4096 ||
+              Object.keys(callArguments).some((key) => key !== "cursor")
+            ) {
+              reply(
+                errorMessage(
+                  message.id,
+                  -32602,
+                  "The retrieval cursor is invalid."
+                )
+              );
+              return;
+            }
+            try {
+              reply({
+                jsonrpc: "2.0",
+                id: message.id,
+                result: contextViewResult(
+                  contextStore.fetch(callArguments.cursor)
+                )
+              });
+            } catch (error) {
+              reply(
+                errorMessage(
+                  message.id,
+                  error instanceof InvalidCursorError ? -32602 : -32603,
+                  error instanceof InvalidCursorError
+                    ? "The retrieval cursor is invalid."
+                    : "The Context View could not be created."
+                )
+              );
+            }
+            return;
+          }
+
+          const admittedTool = toolNames.get(publicName);
           if (
             typeof publicName !== "string" ||
-            typeof backendName !== "string"
+            typeof admittedTool?.backendName !== "string"
           ) {
             reply(
               errorMessage(
@@ -636,8 +869,13 @@ export function runProxy(args) {
           }
           forward(message, "tools/call", {
             ...message.params,
-            name: backendName
-          });
+            name: admittedTool.backendName
+          }, (result) =>
+            boundToolResult(result, {
+              contextStore,
+              contextViewEligible: admittedTool.contextViewEligible
+            })
+          );
           break;
         }
 
