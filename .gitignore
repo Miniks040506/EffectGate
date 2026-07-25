@@ -1,0 +1,23 @@
+# Local agent/workspace metadata
+/.agent
+/.agents
+/.codex
+
+# Internal design-freeze source material
+/[0-9][0-9]-*.md
+/EffectGate_*.md
+/project-manifest.yaml
+/02-compatibility-matrix.yaml
+/03-policy-effect-matrix.yaml
+/05-benchmark-corpus.yaml
+/contracts/
+/tools/
+
+# Local runtime/editor output
+.env
+.env.*
+!.env.example
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
