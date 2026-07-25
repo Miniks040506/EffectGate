@@ -1,16 +1,22 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
+  CONTEXT_FETCH_TOOL,
+  EFFECTGATE_VERSION,
+  FIXTURE_LARGE_LOG_TOOL,
   FIXTURE_SECOND_TOOL,
   FIXTURE_TOOL,
   MAX_FRAME_BYTES,
+  MAX_TOOL_RESULT_BYTES,
   MCP_VERSION,
-  isPhase0SafeTool
+  buildFixtureLog,
+  isSafeReadTool
 } from "./effectgate.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -89,16 +95,20 @@ test("fixture implements deterministic typed MCP calls", async (context) => {
   const initialized = await server.request("initialize", {
     protocolVersion: MCP_VERSION,
     capabilities: {},
-    clientInfo: { name: "phase0-test", version: "1" }
+    clientInfo: { name: "preview-test", version: "1" }
   });
   assert.equal(initialized.result.protocolVersion, MCP_VERSION);
+  server.send({ jsonrpc: "2.0", method: "notifications/initialized" });
 
   const listed = await server.request("tools/list");
   assert.deepEqual(listed.result.tools, [FIXTURE_TOOL]);
   assert.equal(listed.result.nextCursor, "page-2");
 
   const secondPage = await server.request("tools/list", { cursor: "page-2" });
-  assert.deepEqual(secondPage.result.tools, [FIXTURE_SECOND_TOOL]);
+  assert.deepEqual(secondPage.result.tools, [
+    FIXTURE_SECOND_TOOL,
+    FIXTURE_LARGE_LOG_TOOL
+  ]);
 
   const called = await server.request("tools/call", {
     name: "echo",
@@ -122,12 +132,17 @@ test("proxy preserves the tool contract and namespaces only its name", async (co
   const initialized = await proxy.request("initialize", {
     protocolVersion: MCP_VERSION,
     capabilities: {},
-    clientInfo: { name: "phase0-test", version: "1" }
+    clientInfo: { name: "preview-test", version: "1" }
   });
-  assert.equal(initialized.result.serverInfo.name, "effectgate-phase0");
+  assert.deepEqual(initialized.result.serverInfo, {
+    name: "effectgate-preview",
+    version: EFFECTGATE_VERSION
+  });
   assert.deepEqual(initialized.result.capabilities, {
     tools: { listChanged: false }
   });
+  assert.equal((await proxy.request("tools/list")).error.code, -32007);
+  proxy.send({ jsonrpc: "2.0", method: "notifications/initialized" });
 
   const listed = await proxy.request("tools/list");
   const { name, ...proxiedContract } = listed.result.tools[0];
@@ -154,6 +169,185 @@ test("proxy preserves the tool contract and namespaces only its name", async (co
     firstPageStillCallable.result.structuredContent.text,
     "page one remains admitted"
   );
+
+  const refreshId = ++proxy.nextId;
+  const staleCallId = ++proxy.nextId;
+  proxy.child.stdin.write(
+    `${JSON.stringify({
+      jsonrpc: "2.0",
+      id: refreshId,
+      method: "tools/list",
+      params: {}
+    })}\n${JSON.stringify({
+      jsonrpc: "2.0",
+      id: staleCallId,
+      method: "tools/call",
+      params: {
+        name,
+        arguments: { text: "must wait for refreshed admission" }
+      }
+    })}\n`
+  );
+  const refreshResponses = [await proxy.next(), await proxy.next()];
+  assert.ok(refreshResponses.find((response) => response.id === refreshId).result);
+  assert.equal(
+    refreshResponses.find((response) => response.id === staleCallId).error.code,
+    -32602
+  );
+  assert.equal(proxy.stderr, "");
+});
+
+test("large text is losslessly paged through opaque Context View cursors", async (context) => {
+  const proxy = new RpcProcess(["mcp", "serve", "--source", "fixture"]);
+  context.after(() => proxy.stop());
+
+  await proxy.request("initialize", {
+    protocolVersion: MCP_VERSION,
+    capabilities: {},
+    clientInfo: { name: "context-view-test", version: "1" }
+  });
+  proxy.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  const repeatedInitialize = await proxy.request("initialize", {
+    protocolVersion: MCP_VERSION,
+    capabilities: {},
+    clientInfo: { name: "second-session", version: "1" }
+  });
+  assert.deepEqual(repeatedInitialize.error, {
+    code: -32600,
+    message: "This MCP session is already initialized."
+  });
+
+  const firstPage = await proxy.request("tools/list");
+  assert.deepEqual(
+    firstPage.result.tools.find((tool) => tool.name === CONTEXT_FETCH_TOOL.name),
+    CONTEXT_FETCH_TOOL
+  );
+  const secondPage = await proxy.request("tools/list", { cursor: "page-2" });
+  const largeLog = secondPage.result.tools.find(
+    (tool) => tool.name === "fixture__large_log"
+  );
+  assert.equal(largeLog.outputSchema, undefined);
+
+  const small = await proxy.request("tools/call", {
+    name: largeLog.name,
+    arguments: { lines: 1 }
+  });
+  assert.equal(small.result.content[0].text, buildFixtureLog(1));
+
+  const oversizedStructured = await proxy.request("tools/call", {
+    name: largeLog.name,
+    arguments: { lines: 1000, includeStructuredCopy: true }
+  });
+  assert.deepEqual(oversizedStructured.error, {
+    code: -32004,
+    message: "The backend returned an invalid response."
+  });
+  assert.doesNotMatch(
+    JSON.stringify(oversizedStructured),
+    /bounded context evidence/
+  );
+  assert.deepEqual((await proxy.request("ping")).result, {});
+
+  const lines = 200;
+  const expected = buildFixtureLog(lines);
+  let response = await proxy.request("tools/call", {
+    name: largeLog.name,
+    arguments: { lines }
+  });
+  let view = JSON.parse(response.result.content[0].text);
+  const firstCursor = view.retrieval.cursor;
+  const artifactId = view.artifact_id;
+  const sessionId = view.session_id;
+  const expectedDigest = `sha256:${createHash("sha256")
+    .update(expected)
+    .digest("hex")}`;
+  let reconstructed = "";
+  let expectedStart = 0;
+  let firstFetchedView;
+
+  const refreshed = await proxy.request("tools/list");
+  const readmittedEcho = refreshed.result.tools.find(
+    (tool) => tool.name === "fixture__echo"
+  );
+  const echoed = await proxy.request("tools/call", {
+    name: readmittedEcho.name,
+    arguments: { text: "catalog refresh preserves cursor state" }
+  });
+  assert.equal(
+    echoed.result.structuredContent.text,
+    "catalog refresh preserves cursor state"
+  );
+
+  for (;;) {
+    assert.ok(
+      Buffer.byteLength(JSON.stringify(response.result), "utf8") <=
+        MAX_TOOL_RESULT_BYTES
+    );
+    const citation = view.citations[0];
+    const pageBytes = Buffer.byteLength(view.content, "utf8");
+    assert.equal(view.schema_version, "1.0.0");
+    assert.match(view.view_id, /^view_[A-Za-z0-9_-]{16,128}$/);
+    assert.equal(view.artifact_id, artifactId);
+    assert.equal(view.session_id, sessionId);
+    assert.equal(view.status, "partial_view");
+    assert.equal(view.budget.applied_bytes, pageBytes);
+    assert.ok(pageBytes <= view.budget.max_bytes);
+    assert.equal(citation.byte_start, expectedStart);
+    assert.equal(citation.byte_end, expectedStart + pageBytes);
+    assert.equal(citation.artifact_id, artifactId);
+    assert.equal(citation.source_digest, expectedDigest);
+    assert.equal(artifactId, `art_${expectedDigest.slice("sha256:".length)}`);
+    assert.equal(view.integrity.artifact_digest, citation.source_digest);
+    const { view_digest: viewDigest, ...integrityBasis } = view.integrity;
+    const calculatedViewDigest = `sha256:${createHash("sha256")
+      .update(JSON.stringify({ ...view, integrity: integrityBasis }))
+      .digest("hex")}`;
+    assert.equal(viewDigest, calculatedViewDigest);
+    assert.equal(view.diagnostics[0].code, "EG-VIEW-001");
+    reconstructed += view.content;
+    expectedStart = citation.byte_end;
+
+    if (!view.retrieval.more_available) {
+      assert.deepEqual(view.retrieval.operations, []);
+      assert.equal(view.retrieval.cursor, undefined);
+      break;
+    }
+    assert.deepEqual(view.retrieval.operations, ["fetch"]);
+    assert.match(view.retrieval.cursor, /^cur_[A-Za-z0-9_-]{32,}$/);
+    assert.ok(Number.isFinite(Date.parse(view.retrieval.expires_at)));
+    const cursor = view.retrieval.cursor;
+    response = await proxy.request("tools/call", {
+      name: CONTEXT_FETCH_TOOL.name,
+      arguments: { cursor }
+    });
+    view = JSON.parse(response.result.content[0].text);
+    if (cursor === firstCursor) firstFetchedView = view;
+  }
+
+  assert.equal(reconstructed, expected);
+  assert.equal(expectedStart, Buffer.byteLength(expected, "utf8"));
+
+  const replayed = await proxy.request("tools/call", {
+    name: CONTEXT_FETCH_TOOL.name,
+    arguments: { cursor: firstCursor }
+  });
+  assert.deepEqual(
+    JSON.parse(replayed.result.content[0].text),
+    firstFetchedView
+  );
+  const invented = await proxy.request("tools/call", {
+    name: CONTEXT_FETCH_TOOL.name,
+    arguments: { cursor: `cur_${"x".repeat(32)}` }
+  });
+  const tooShort = await proxy.request("tools/call", {
+    name: CONTEXT_FETCH_TOOL.name,
+    arguments: { cursor: "cur_short" }
+  });
+  assert.deepEqual(invented.error, {
+    code: -32602,
+    message: "The retrieval cursor is invalid."
+  });
+  assert.deepEqual(tooShort.error, invented.error);
   assert.equal(proxy.stderr, "");
 });
 
@@ -195,18 +389,27 @@ test("proxy rejects attempts to address a backend tool directly", async (context
   const proxy = new RpcProcess(["mcp", "serve", "--source", "fixture"]);
   context.after(() => proxy.stop());
 
+  const beforeInitialization = await proxy.request("tools/call", {
+    name: "echo",
+    arguments: { text: "bypass" }
+  });
+  assert.equal(beforeInitialization.error.code, -32007);
+  assert.equal((await proxy.request("tools/list")).error.code, -32007);
+  assert.equal((await proxy.request("ping")).error.code, -32007);
+
+  await proxy.request("initialize", {
+    protocolVersion: MCP_VERSION,
+    capabilities: {},
+    clientInfo: { name: "preview-test", version: "1" }
+  });
+  proxy.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  await proxy.request("tools/list");
+
   const direct = await proxy.request("tools/call", {
     name: "echo",
     arguments: { text: "bypass" }
   });
   assert.equal(direct.error.code, -32602);
-
-  await proxy.request("initialize", {
-    protocolVersion: MCP_VERSION,
-    capabilities: {},
-    clientInfo: { name: "phase0-test", version: "1" }
-  });
-  await proxy.request("tools/list");
 
   const invented = await proxy.request("tools/call", {
     name: "fixture__invented",
@@ -215,17 +418,17 @@ test("proxy rejects attempts to address a backend tool directly", async (context
   assert.equal(invented.error.code, -32602);
 });
 
-test("Phase 0 admits only declared safe read tools", () => {
-  assert.equal(isPhase0SafeTool(FIXTURE_TOOL), true);
+test("the preview admits only declared safe read tools", () => {
+  assert.equal(isSafeReadTool(FIXTURE_TOOL), true);
   assert.equal(
-    isPhase0SafeTool({
+    isSafeReadTool({
       ...FIXTURE_TOOL,
       annotations: { ...FIXTURE_TOOL.annotations, readOnlyHint: false }
     }),
     false
   );
   assert.equal(
-    isPhase0SafeTool({
+    isSafeReadTool({
       ...FIXTURE_TOOL,
       annotations: { ...FIXTURE_TOOL.annotations, openWorldHint: true }
     }),
@@ -233,7 +436,7 @@ test("Phase 0 admits only declared safe read tools", () => {
   );
 });
 
-test("Phase 0 refuses arbitrary backend commands", () => {
+test("the preview refuses arbitrary backend commands", () => {
   const result = spawnSync(
     process.execPath,
     [PROGRAM, "mcp", "serve", "--", "unreviewed-backend"],
