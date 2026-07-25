@@ -2,67 +2,44 @@
 
 # EffectGate
 
-### Spend tokens on reasoning, not tool noise.
+### Building a local control point for MCP tool context and effects.
 
-A local MCP gateway being built for bounded context and verified tool effects.
+**Design goal:** Spend tokens on reasoning, not tool noise.
 
-![Phase](https://img.shields.io/badge/status-Phase%200-7c3aed?style=flat-square)
-![Node](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)
-![MCP](https://img.shields.io/badge/MCP-2025--11--25-111827?style=flat-square)
-![Dependencies](https://img.shields.io/badge/runtime_dependencies-0-0ea5e9?style=flat-square)
+[![Phase](https://img.shields.io/badge/status-Phase%200-7c3aed?style=flat-square)](#phase-0-boundary)
+[![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![MCP](https://img.shields.io/badge/MCP-2025--11--25-111827?style=flat-square)](#protocol-surface)
+[![License](https://img.shields.io/badge/license-Apache--2.0-D22128?style=flat-square)](LICENSE)
+[![Dependencies](https://img.shields.io/badge/runtime_dependencies-0-0284c7?style=flat-square)](poc/package.json)
 
-`Proof of concept · fixture only · not production-ready`
+[Quick start](#quick-start) ·
+[Architecture](#architecture) ·
+[Protocol](#protocol-surface) ·
+[Security](#security-model) ·
+[MCP setup](#connect-an-mcp-client)
 
 </div>
 
-> [!IMPORTANT]
-> Phase 0 proxies only its bundled deterministic fixture. It cannot connect to
-> arbitrary backends or execute protected writes.
+> [!CAUTION]
+> **Phase 0 is a fixture-only proof of concept.** It cannot launch arbitrary
+> backends, execute protected writes, or provide a production security
+> boundary.
 
-## Why EffectGate?
+EffectGate is being built to sit between an AI host and its MCP tools. The
+product direction combines two controls that normally live far apart:
 
-AI clients can lose useful context to oversized tool output, while protected
-writes need stronger guarantees than “send the request and hope.”
+1. **Context control** — retain raw tool evidence locally and emit only bounded,
+   cited views to the model.
+2. **Effect control** — bind approval to an exact intent, then verify or
+   reconcile the outcome instead of retrying blindly.
 
-EffectGate is being designed to sit between an MCP client and its tools:
-
-```mermaid
-flowchart LR
-    A["MCP client"] -->|"stdio · JSON-RPC"| B["EffectGate"]
-    B -->|"admitted typed call"| C["MCP backend"]
-    C -->|"bounded result"| B
-    B -->|"typed response"| A
-```
-
-The product direction is bounded, cited context for reads and explicit
-approval, verification, and reconciliation for effects. Phase 0 proves only
-the smallest transport and admission path needed to begin that work.
-
-## What works today
-
-- MCP `2025-11-25` initialization, ping, paginated tool discovery, and calls.
-- Exact typed-contract preservation; only the public tool name is namespaced.
-- Read-only, non-destructive, idempotent, closed-world tool admission.
-- One MiB input/output frame limits, bounded pending work, and backpressure.
-- Sanitized protocol/backend errors with no raw error passthrough.
-- Direct backend-name, invented-tool, and arbitrary-command rejection.
-- Deterministic tests using only the Node.js standard library.
-
-```text
-MCP client
-    │
-    │ newline-delimited JSON-RPC
-    ▼
-EffectGate Phase 0
-    │
-    │ admitted read-only calls
-    ▼
-Bundled deterministic fixture
-```
+Phase 0 proves the narrow transport and admission spine required before either
+claim can be implemented responsibly.
 
 ## Quick start
 
-Requires [Node.js](https://nodejs.org/) 24 or newer.
+Requires [Node.js 24 or newer](https://nodejs.org/). There are no runtime
+packages to install.
 
 ```powershell
 git clone https://github.com/Miniks040506/EffectGate.git
@@ -71,11 +48,110 @@ npm --prefix poc test
 npm --prefix poc start
 ```
 
-No dependency installation is required.
+`npm --prefix poc start` launches a local stdio MCP server backed only by the
+bundled deterministic fixture.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Client["MCP client"]
+
+    subgraph Gate["EffectGate Phase 0"]
+        Input["UTF-8 line parser<br/>1 MiB frame guard"]
+        Router["JSON-RPC / MCP router"]
+        Catalog["Read-only admission map<br/>public name → fixture name"]
+        Output["Error sanitizer<br/>output guard + backpressure"]
+
+        Input --> Router
+        Router -.-> Catalog
+        Router --> Output
+    end
+
+    Fixture["Bundled fixture child process<br/>fixed command · no shell"]
+
+    Client -->|"stdio"| Input
+    Router <-->|"fixed subprocess protocol"| Fixture
+    Fixture -->|"bounded JSON-RPC response"| Output
+    Output -->|"stdio"| Client
+```
+
+There is no network listener. Phase 0 always spawns the bundled fixture with a
+fixed Node.js command. `--source` changes only the validated public namespace;
+it does not select a backend.
+
+## Implemented invariants
+
+| Boundary | Phase 0 behavior |
+|---|---|
+| Backend selection | Fixed bundled fixture; arbitrary commands are rejected |
+| Process launch | `shell: false` with an explicit environment allowlist |
+| Frame size | Incoming and outgoing JSON-RPC frames are limited to 1 MiB |
+| Request IDs | Safe integers or UTF-8 strings no longer than 128 bytes |
+| Work bound | At most 64 pending backend requests |
+| Timeout | Each forwarded request expires after 10 seconds |
+| Catalog | Calls require a public name learned from an admitted `tools/list` |
+| Name isolation | Backend names cannot be called directly or invented |
+| Errors | Backend errors and stderr content are not passed through verbatim |
+| Flow control | Client input and fixture output pause while downstream writables are backpressured |
+
+An admitted tool must declare all four metadata conditions:
+
+```text
+readOnlyHint     = true
+destructiveHint  = false
+idempotentHint   = true
+openWorldHint    = false
+```
+
+For admitted tools, advertised contract fields are forwarded unchanged; only
+the name is replaced with a deterministic public namespace. Tool annotations
+are still untrusted metadata—not proof that an unknown backend is safe—which
+is why external backends remain disabled.
+
+## Protocol surface
+
+Phase 0 uses one UTF-8 JSON-RPC object per stdio line and supports MCP
+`2025-11-25` only. This is a deliberately narrow MCP subset, not a protocol
+conformance claim.
+
+| Message | Direction | Behavior |
+|---|---|---|
+| `initialize` | Client → fixture | Requires the Phase 0 MCP version; exposes only the tools capability |
+| `notifications/initialized` | Client → fixture | Forwarded |
+| `ping` | Client → fixture | Forwarded under shared timeout and pending-work limits |
+| `tools/list` | Client → fixture | Validates name and `inputSchema` shape, applies admission metadata, namespaces names, preserves pagination |
+| `tools/call` | Client → fixture | Accepts only a public name in the current admission map; the fixture validates arguments |
+| `notifications/cancelled` | Client → fixture | Remaps the client request ID to its fixture request |
+| `notifications/tools/list_changed` | Fixture → client | Clears the admission map before forwarding |
+| Other requests | Client → proxy | Return JSON-RPC `-32601` |
+| Unrelated notifications | Either direction | Ignored |
+
+The bundled fixture publishes `fixture__echo` and the second-page
+`fixture__echo_again`, both validated string echoes used to exercise catalog
+pagination.
+
+## Security model
+
+Phase 0 treats MCP input as adversarial but trusts the local operating-system
+user, the Node.js runtime, and the checked-out repository files.
+
+It is **not**:
+
+- an operating-system sandbox;
+- an authentication or encryption layer;
+- a secret-redaction or tenant-isolation system;
+- a durable audit journal;
+- an approval, verification, or reconciliation engine;
+- an independent JSON Schema validator for tool-call arguments;
+- approved for external backends, protected effects, or production use.
+
+Read the full [security policy](SECURITY.md) for reporting, supported versions,
+the current threat boundary, and known limitations.
 
 ## Connect an MCP client
 
-Configure an MCP client to launch EffectGate over stdio:
+Point an MCP client at the Phase 0 stdio process using an absolute path:
 
 ```json
 {
@@ -98,40 +174,58 @@ For Claude Code:
 claude mcp add --transport stdio effectgate -- node /absolute/path/to/EffectGate/poc/effectgate.mjs mcp serve
 ```
 
-The fixture publishes `fixture__echo` and `fixture__echo_again`.
+After discovery, ask the client to call `fixture__echo`.
 
-## Phase 0 boundary
-
-| Included | Deliberately deferred |
-|---|---|
-| Local stdio MCP proxy | Arbitrary/external backends |
-| Deterministic read-only fixture | Protected writes and approvals |
-| Typed, namespaced tools | Context Views, search, and projection |
-| Bounded framing and request limits | SQLite journal and content-addressed storage |
-| Built-in deterministic tests | Installer, package registry, and production support |
-
-Tool annotations are admission inputs, not proof that an unknown backend is
-safe. External backends remain disabled until policy and effect controls exist.
-
-## Project layout
-
-```text
-poc/
-├── effectgate.mjs       # MCP proxy, fixture, and command entry point
-├── effectgate.test.mjs  # transport, admission, and failure-path checks
-├── package.json         # Node version and scripts
-└── README.md            # Phase 0 operating notes
-```
-
-## Verify
+## Verification evidence
 
 ```powershell
 npm --prefix poc test
 ```
 
-The suite covers typed schema fidelity, pagination, Unicode limits, bounded
-frames, error sanitization, tool-name isolation, read-only admission, and
-arbitrary-backend refusal.
+The dependency-free suite directly verifies:
+
+- fixture initialization, discovery, pagination, and typed calls;
+- advertised contract preservation and public-name transformation;
+- first-page admission after a second catalog page is loaded;
+- 4,096 Unicode code points at the fixture input limit;
+- malformed and oversized frame rejection with parser recovery;
+- invalid request-ID sanitization without reflecting hidden values;
+- direct and invented backend-name rejection;
+- fixture admission plus read-only/open-world deny cases;
+- arbitrary-backend command refusal.
+
+## Phase 0 boundary
+
+| Available now | Evidence-gated product direction |
+|---|---|
+| Fixture-only stdio proxy | Reviewed stdio MCP backend adapters |
+| Typed read-only admission | Streaming content-addressed result storage |
+| Bounded protocol handling | Cited Context Views, projection, search, and paging |
+| Deterministic local tests | Token ledger and host comparison benchmarks |
+| Sanitized public errors | Intent approval, durable journal, verification, and reconciliation |
+| Node.js PoC | Tested installer and supported-platform matrix |
+
+No date or production claim is attached to a future capability until its
+acceptance evidence exists.
+
+## Repository layout
+
+```text
+.
+├── LICENSE
+├── README.md
+├── SECURITY.md
+└── poc/
+    ├── effectgate.mjs       # MCP proxy, fixture, and command entry point
+    ├── effectgate.test.mjs  # protocol, admission, and failure-path checks
+    ├── package.json         # Node version, license, and scripts
+    └── README.md            # focused Phase 0 operating notes
+```
+
+## License
+
+Copyright holders license EffectGate under the
+[Apache License 2.0](LICENSE).
 
 ---
 
