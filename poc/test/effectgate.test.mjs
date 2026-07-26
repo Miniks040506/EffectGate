@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { once } from "node:events";
 import {
   existsSync,
   mkdtempSync,
@@ -45,6 +44,7 @@ import {
   CorruptArtifactError,
   FilesystemCas
 } from "../src/storage/filesystem-cas.mjs";
+import { RpcProcess } from "../src/testkit/rpc-process.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROGRAM = join(HERE, "..", "src", "proxy", "effectgate.mjs");
@@ -116,72 +116,6 @@ function assertContextViewContract(view) {
   }
   if (view.status === "complete" && view.retrieval) {
     assert.equal(view.retrieval.more_available, false);
-  }
-}
-
-class RpcProcess {
-  constructor(args) {
-    this.child = spawn(process.execPath, [PROGRAM, ...args], {
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true
-    });
-    this.buffer = "";
-    this.messages = [];
-    this.waiters = [];
-    this.stderr = "";
-    this.nextId = 0;
-
-    this.child.stdout.setEncoding("utf8");
-    this.child.stdout.on("data", (chunk) => {
-      this.buffer += chunk;
-      let newline;
-      while ((newline = this.buffer.indexOf("\n")) !== -1) {
-        const line = this.buffer.slice(0, newline);
-        this.buffer = this.buffer.slice(newline + 1);
-        if (line.length === 0) continue;
-        const message = JSON.parse(line);
-        const waiter = this.waiters.shift();
-        if (waiter) waiter.resolve(message);
-        else this.messages.push(message);
-      }
-    });
-    this.child.stderr.setEncoding("utf8");
-    this.child.stderr.on("data", (chunk) => {
-      this.stderr += chunk;
-    });
-  }
-
-  send(message) {
-    this.child.stdin.write(`${JSON.stringify(message)}\n`);
-  }
-
-  request(method, params = {}) {
-    const id = ++this.nextId;
-    this.send({ jsonrpc: "2.0", id, method, params });
-    return this.next();
-  }
-
-  next() {
-    if (this.messages.length > 0) return Promise.resolve(this.messages.shift());
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error(`Timed out waiting for response. stderr=${this.stderr}`));
-      }, 5000);
-      this.waiters.push({
-        resolve(message) {
-          clearTimeout(timeout);
-          resolve(message);
-        }
-      });
-    });
-  }
-
-  async stop() {
-    if (this.child.exitCode !== null) return;
-    this.child.stdin.end();
-    const exited = once(this.child, "exit");
-    setTimeout(() => this.child.kill(), 500).unref();
-    await exited;
   }
 }
 
