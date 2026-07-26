@@ -17,10 +17,12 @@ import test from "node:test";
 
 import {
   ContextStore,
+  InvalidArtifactError,
   InvalidCursorError
 } from "./context-view.mjs";
 import {
   CONTEXT_FETCH_TOOL,
+  CONTEXT_SEARCH_TOOL,
   EFFECTGATE_VERSION,
   FIXTURE_LARGE_LOG_TOOL,
   FIXTURE_SECRETS,
@@ -241,6 +243,12 @@ test("large text is losslessly paged through opaque Context View cursors", async
     firstPage.result.tools.find((tool) => tool.name === CONTEXT_FETCH_TOOL.name),
     CONTEXT_FETCH_TOOL
   );
+  assert.deepEqual(
+    firstPage.result.tools.find(
+      (tool) => tool.name === CONTEXT_SEARCH_TOOL.name
+    ),
+    CONTEXT_SEARCH_TOOL
+  );
   const secondPage = await proxy.request("tools/list", { cursor: "page-2" });
   const largeLog = secondPage.result.tools.find(
     (tool) => tool.name === "fixture__large_log"
@@ -328,11 +336,11 @@ test("large text is losslessly paged through opaque Context View cursors", async
     expectedStart = citation.byte_end;
 
     if (!view.retrieval.more_available) {
-      assert.deepEqual(view.retrieval.operations, []);
+      assert.deepEqual(view.retrieval.operations, ["search"]);
       assert.equal(view.retrieval.cursor, undefined);
       break;
     }
-    assert.deepEqual(view.retrieval.operations, ["fetch"]);
+    assert.deepEqual(view.retrieval.operations, ["fetch", "search"]);
     assert.match(view.retrieval.cursor, /^cur_[A-Za-z0-9_-]{32,}$/);
     assert.ok(Number.isFinite(Date.parse(view.retrieval.expires_at)));
     const cursor = view.retrieval.cursor;
@@ -371,6 +379,132 @@ test("large text is losslessly paged through opaque Context View cursors", async
   assert.equal(proxy.stderr, "");
 });
 
+test("literal artifact search returns bounded cited windows", async (context) => {
+  const proxy = new RpcProcess(["mcp", "serve", "--source", "fixture"]);
+  const isolated = new RpcProcess(["mcp", "serve", "--source", "fixture"]);
+  context.after(() => Promise.all([proxy.stop(), isolated.stop()]));
+
+  for (const server of [proxy, isolated]) {
+    await server.request("initialize", {
+      protocolVersion: MCP_VERSION,
+      capabilities: {},
+      clientInfo: { name: "search-test", version: "1" }
+    });
+    server.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  }
+
+  const firstPage = await proxy.request("tools/list");
+  const searchTool = firstPage.result.tools.find(
+    (tool) => tool.name === CONTEXT_SEARCH_TOOL.name
+  );
+  const secondPage = await proxy.request("tools/list", { cursor: "page-2" });
+  const largeLog = secondPage.result.tools.find(
+    (tool) => tool.name === "fixture__large_log"
+  );
+  const raw = buildFixtureLog(200);
+  const initial = await proxy.request("tools/call", {
+    name: largeLog.name,
+    arguments: { lines: 200 }
+  });
+  const artifactId = JSON.parse(initial.result.content[0].text).artifact_id;
+
+  const uniqueQuery = "000100 level=INFO";
+  const unique = await proxy.request("tools/call", {
+    name: searchTool.name,
+    arguments: {
+      artifact_id: artifactId,
+      query: uniqueQuery,
+      context_lines: 0,
+      max_tokens: 64
+    }
+  });
+  const uniqueView = JSON.parse(unique.result.content[0].text);
+  const lineStart = raw.indexOf(uniqueQuery);
+  const lineEnd = raw.indexOf("\n", lineStart) + 1;
+  assert.equal(uniqueView.status, "complete");
+  assert.equal(uniqueView.content, raw.slice(lineStart, lineEnd));
+  assert.deepEqual(uniqueView.citations[0], {
+    artifact_id: artifactId,
+    source_digest: uniqueView.integrity.artifact_digest,
+    byte_start: Buffer.byteLength(raw.slice(0, lineStart), "utf8"),
+    byte_end: Buffer.byteLength(raw.slice(0, lineEnd), "utf8")
+  });
+  assert.equal(uniqueView.diagnostics[0].code, "EG-SEARCH-001");
+  assert.deepEqual(uniqueView.retrieval, {
+    more_available: false,
+    operations: ["search"]
+  });
+
+  const repeated = await proxy.request("tools/call", {
+    name: searchTool.name,
+    arguments: {
+      artifact_id: artifactId,
+      query: "bounded context evidence",
+      context_lines: 0,
+      max_tokens: 64
+    }
+  });
+  const repeatedView = JSON.parse(repeated.result.content[0].text);
+  assert.equal(repeatedView.status, "partial_view");
+  assert.ok(repeatedView.budget.applied_bytes <= 256);
+  assert.deepEqual(repeatedView.retrieval.operations, ["fetch", "search"]);
+  const searchCursor = repeatedView.retrieval.cursor;
+  const next = await proxy.request("tools/call", {
+    name: CONTEXT_FETCH_TOOL.name,
+    arguments: { cursor: searchCursor }
+  });
+  const nextView = JSON.parse(next.result.content[0].text);
+  assert.ok(
+    nextView.citations[0].byte_start > repeatedView.citations[0].byte_start
+  );
+  const replayed = await proxy.request("tools/call", {
+    name: CONTEXT_FETCH_TOOL.name,
+    arguments: { cursor: searchCursor }
+  });
+  assert.deepEqual(
+    JSON.parse(replayed.result.content[0].text),
+    nextView
+  );
+
+  const absent = await proxy.request("tools/call", {
+    name: searchTool.name,
+    arguments: { artifact_id: artifactId, query: "not-present-anywhere" }
+  });
+  const absentView = JSON.parse(absent.result.content[0].text);
+  assert.equal(absentView.status, "complete");
+  assert.equal(absentView.content, "");
+  assert.deepEqual(absentView.citations, []);
+
+  await isolated.request("tools/list");
+  const crossSession = await isolated.request("tools/call", {
+    name: CONTEXT_SEARCH_TOOL.name,
+    arguments: { artifact_id: artifactId, query: uniqueQuery }
+  });
+  const invented = await proxy.request("tools/call", {
+    name: searchTool.name,
+    arguments: {
+      artifact_id: `art_${"f".repeat(64)}`,
+      query: uniqueQuery
+    }
+  });
+  assert.deepEqual(crossSession.error, invented.error);
+  assert.deepEqual(invented.error, {
+    code: -32602,
+    message: "The artifact reference is invalid."
+  });
+
+  const invalid = await proxy.request("tools/call", {
+    name: searchTool.name,
+    arguments: { artifact_id: artifactId, query: "", context_lines: 6 }
+  });
+  assert.deepEqual(invalid.error, {
+    code: -32602,
+    message: "The search arguments are invalid."
+  });
+  assert.equal(proxy.stderr, "");
+  assert.equal(isolated.stderr, "");
+});
+
 test("secret sentinels are redacted from every Context View page", async (context) => {
   const proxy = new RpcProcess(["mcp", "serve", "--source", "fixture"]);
   context.after(() => proxy.stop());
@@ -381,7 +515,10 @@ test("secret sentinels are redacted from every Context View page", async (contex
     clientInfo: { name: "redaction-test", version: "1" }
   });
   proxy.send({ jsonrpc: "2.0", method: "notifications/initialized" });
-  await proxy.request("tools/list");
+  const catalog = await proxy.request("tools/list");
+  const searchTool = catalog.result.tools.find(
+    (tool) => tool.name === CONTEXT_SEARCH_TOOL.name
+  );
   const listed = await proxy.request("tools/list", { cursor: "page-2" });
   const largeLog = listed.result.tools.find(
     (tool) => tool.name === "fixture__large_log"

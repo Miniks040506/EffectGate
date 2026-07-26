@@ -714,7 +714,7 @@ export class ContextStore {
       ],
       retrieval: {
         more_available: moreAvailable,
-        operations: moreAvailable ? ["fetch"] : []
+        operations: moreAvailable ? ["fetch", "search"] : ["search"]
       },
       integrity: {}
     };
@@ -729,22 +729,6 @@ export class ContextStore {
       view.retrieval.cursor = continuation.cursor;
       view.retrieval.expires_at = new Date(continuation.expiresAt).toISOString();
     }
-    view.integrity = {
-      artifact_digest: artifact.sourceDigest,
-      view_digest: digest(
-        Buffer.from(
-          JSON.stringify({
-            ...view,
-            integrity: {
-              artifact_digest: artifact.sourceDigest,
-              projection_version: PROJECTION_VERSION
-            }
-          }),
-          "utf8"
-        )
-      ),
-      projection_version: PROJECTION_VERSION
-    };
-    return view;
+    return attachIntegrity(view, artifact, PROJECTION_VERSION);
   }
 }

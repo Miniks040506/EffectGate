@@ -7,14 +7,19 @@ import process from "node:process";
 
 import {
   CONTEXT_PAGE_BYTES,
+  CONTEXT_SEARCH_MAX_CONTEXT_LINES,
+  CONTEXT_SEARCH_MAX_QUERY_LENGTH,
+  CONTEXT_SEARCH_MAX_TOKENS,
+  CONTEXT_SEARCH_MIN_TOKENS,
   ContextStore,
+  InvalidArtifactError,
   InvalidCursorError
 } from "./context-view.mjs";
 
 export const MAX_FRAME_BYTES = 1024 * 1024;
 export const MAX_TOOL_RESULT_BYTES = 64 * 1024;
 export const MCP_VERSION = "2025-11-25";
-export const EFFECTGATE_VERSION = "0.3.0";
+export const EFFECTGATE_VERSION = "0.4.0";
 const MAX_PENDING_REQUESTS = 64;
 const MAX_ID_BYTES = 128;
 
@@ -87,6 +92,42 @@ export const CONTEXT_FETCH_TOOL = Object.freeze({
     required: ["cursor"],
     properties: {
       cursor: { type: "string", minLength: 32, maxLength: 4096 }
+    }
+  },
+  annotations: FIXTURE_TOOL.annotations
+});
+
+export const CONTEXT_SEARCH_TOOL = Object.freeze({
+  name: "effectgate_search",
+  title: "Search Context Artifact",
+  description:
+    "Returns a bounded, cited context window for a literal artifact match.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["artifact_id", "query"],
+    properties: {
+      artifact_id: {
+        type: "string",
+        pattern: "^art_[a-f0-9]{64}$"
+      },
+      query: {
+        type: "string",
+        minLength: 1,
+        maxLength: CONTEXT_SEARCH_MAX_QUERY_LENGTH
+      },
+      context_lines: {
+        type: "integer",
+        minimum: 0,
+        maximum: CONTEXT_SEARCH_MAX_CONTEXT_LINES,
+        default: 1
+      },
+      max_tokens: {
+        type: "integer",
+        minimum: CONTEXT_SEARCH_MIN_TOKENS,
+        maximum: CONTEXT_SEARCH_MAX_TOKENS,
+        default: 512
+      }
     }
   },
   annotations: FIXTURE_TOOL.annotations
@@ -832,7 +873,7 @@ export function runProxy(args) {
               ...result,
               tools:
                 message.params?.cursor === undefined
-                  ? [...tools, CONTEXT_FETCH_TOOL]
+                  ? [...tools, CONTEXT_FETCH_TOOL, CONTEXT_SEARCH_TOOL]
                   : tools
             };
           });
@@ -876,6 +917,83 @@ export function runProxy(args) {
                   error instanceof InvalidCursorError
                     ? "The retrieval cursor is invalid."
                     : "The Context View could not be created."
+                )
+              );
+            }
+            return;
+          }
+
+          if (publicName === CONTEXT_SEARCH_TOOL.name) {
+            const callArguments = message.params?.arguments;
+            const queryLength =
+              typeof callArguments?.query === "string"
+                ? callArguments.query.length >
+                    CONTEXT_SEARCH_MAX_QUERY_LENGTH * 2
+                  ? CONTEXT_SEARCH_MAX_QUERY_LENGTH + 1
+                  : [...callArguments.query].length
+                : 0;
+            if (
+              callArguments === null ||
+              typeof callArguments !== "object" ||
+              Array.isArray(callArguments) ||
+              typeof callArguments.artifact_id !== "string" ||
+              !/^art_[a-f0-9]{64}$/.test(callArguments.artifact_id) ||
+              queryLength < 1 ||
+              queryLength > CONTEXT_SEARCH_MAX_QUERY_LENGTH ||
+              Buffer.byteLength(callArguments.query ?? "", "utf8") >
+                CONTEXT_SEARCH_MAX_QUERY_LENGTH * 4 ||
+              (callArguments.context_lines !== undefined &&
+                (!Number.isSafeInteger(callArguments.context_lines) ||
+                  callArguments.context_lines < 0 ||
+                  callArguments.context_lines >
+                    CONTEXT_SEARCH_MAX_CONTEXT_LINES)) ||
+              (callArguments.max_tokens !== undefined &&
+                (!Number.isSafeInteger(callArguments.max_tokens) ||
+                  callArguments.max_tokens < CONTEXT_SEARCH_MIN_TOKENS ||
+                  callArguments.max_tokens > CONTEXT_SEARCH_MAX_TOKENS)) ||
+              Object.keys(callArguments).some(
+                (key) =>
+                  key !== "artifact_id" &&
+                  key !== "query" &&
+                  key !== "context_lines" &&
+                  key !== "max_tokens"
+              )
+            ) {
+              reply(
+                errorMessage(
+                  message.id,
+                  -32602,
+                  "The search arguments are invalid."
+                )
+              );
+              return;
+            }
+            try {
+              reply({
+                jsonrpc: "2.0",
+                id: message.id,
+                result: contextViewResult(
+                  contextStore.search(
+                    callArguments.artifact_id,
+                    callArguments.query,
+                    callArguments.context_lines ?? 1,
+                    callArguments.max_tokens ?? 512
+                  )
+                )
+              });
+            } catch (error) {
+              reply(
+                errorMessage(
+                  message.id,
+                  error instanceof InvalidArtifactError ||
+                    error instanceof TypeError
+                    ? -32602
+                    : -32603,
+                  error instanceof InvalidArtifactError
+                    ? "The artifact reference is invalid."
+                    : error instanceof TypeError
+                      ? "The search arguments are invalid."
+                      : "The Context View could not be created."
                 )
               );
             }
