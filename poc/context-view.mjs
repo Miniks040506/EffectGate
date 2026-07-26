@@ -6,9 +6,14 @@ export const CONTEXT_PAGE_BYTES = 4096;
 export const CONTEXT_MAX_ARTIFACT_BYTES = 1024 * 1024;
 export const CONTEXT_STORE_BYTES = 4 * 1024 * 1024;
 export const CONTEXT_CURSOR_TTL_MS = 10 * 60 * 1000;
+export const CONTEXT_SEARCH_MAX_QUERY_LENGTH = 64;
+export const CONTEXT_SEARCH_MAX_CONTEXT_LINES = 5;
+export const CONTEXT_SEARCH_MIN_TOKENS = 64;
+export const CONTEXT_SEARCH_MAX_TOKENS = 1024;
 
 const TOKEN_COUNTER_ID = "utf8-bytes-ceil-div-4";
 const PROJECTION_VERSION = "text-byte-page-redact-v1";
+const SEARCH_PROJECTION_VERSION = "text-literal-search-redact-v1";
 const MAX_SCHEMA_CONTENT_LENGTH = 262144;
 const MAX_REDACTION_SPANS = 4096;
 const REDACTION_MARKER = "[REDACTED]";
@@ -40,6 +45,13 @@ export class InvalidCursorError extends Error {
   constructor() {
     super("invalid retrieval cursor");
     this.name = "InvalidCursorError";
+  }
+}
+
+export class InvalidArtifactError extends Error {
+  constructor() {
+    super("invalid artifact reference");
+    this.name = "InvalidArtifactError";
   }
 }
 
@@ -81,6 +93,62 @@ function pageEnd(bytes, start, maxBytes) {
   let end = Math.min(start + maxBytes, bytes.length);
   while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end -= 1;
   return end;
+}
+
+function lineStarts(text) {
+  const starts = [0];
+  for (let index = text.indexOf("\n"); index !== -1;) {
+    starts.push(index + 1);
+    index = text.indexOf("\n", index + 1);
+  }
+  return starts;
+}
+
+function lineAt(starts, stringIndex) {
+  let low = 0;
+  let high = starts.length;
+  while (low + 1 < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (starts[middle] <= stringIndex) low = middle;
+    else high = middle;
+  }
+  return low;
+}
+
+function stringIndexAtByte(offsets, byteOffset) {
+  let low = 0;
+  let high = offsets.length - 1;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (offsets[middle] < byteOffset) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+function boundedWindow(bytes, start, end, matchStart, matchEnd, maxBytes) {
+  if (end - start <= maxBytes) return { start, end };
+  const minimumStart = start;
+  const matchBytes = matchEnd - matchStart;
+  const before = Math.min(
+    matchStart - start,
+    Math.floor((maxBytes - matchBytes) / 2)
+  );
+  start = matchStart - before;
+  end = Math.min(end, start + maxBytes);
+  start = Math.max(
+    start - Math.max(0, maxBytes - (end - start)),
+    minimumStart
+  );
+  while (start < matchStart && (bytes[start] & 0xc0) === 0x80) start += 1;
+  while (
+    end > matchEnd &&
+    end < bytes.length &&
+    (bytes[end] & 0xc0) === 0x80
+  ) {
+    end -= 1;
+  }
+  return { start, end };
 }
 
 function* utf8Chunks(text, maxBytes = 64 * 1024) {
@@ -183,6 +251,26 @@ function renderRedactedPage(artifact, page, start, end) {
     counts.set(key, current);
   }
   return { content: content.join(""), redactions: [...counts.values()] };
+}
+
+function attachIntegrity(view, artifact, projectionVersion) {
+  view.integrity = {
+    artifact_digest: artifact.sourceDigest,
+    view_digest: digest(
+      Buffer.from(
+        JSON.stringify({
+          ...view,
+          integrity: {
+            artifact_digest: artifact.sourceDigest,
+            projection_version: projectionVersion
+          }
+        }),
+        "utf8"
+      )
+    ),
+    projection_version: projectionVersion
+  };
+  return view;
 }
 
 export class ContextStore {
@@ -295,6 +383,51 @@ export class ContextStore {
     return this.createView(artifact, 0);
   }
 
+  search(
+    artifactId,
+    query,
+    contextLines = 1,
+    maxTokens = 512
+  ) {
+    if (typeof artifactId !== "string") throw new InvalidArtifactError();
+    if (
+      typeof query !== "string" ||
+      query.length < 1 ||
+      query.length > CONTEXT_SEARCH_MAX_QUERY_LENGTH * 2 ||
+      !isUnicodeScalarText(query) ||
+      [...query].length > CONTEXT_SEARCH_MAX_QUERY_LENGTH ||
+      Buffer.byteLength(query, "utf8") >
+        CONTEXT_SEARCH_MAX_QUERY_LENGTH * 4
+    ) {
+      throw new TypeError("query is invalid");
+    }
+    if (
+      !Number.isSafeInteger(contextLines) ||
+      contextLines < 0 ||
+      contextLines > CONTEXT_SEARCH_MAX_CONTEXT_LINES
+    ) {
+      throw new TypeError("contextLines is invalid");
+    }
+    if (
+      !Number.isSafeInteger(maxTokens) ||
+      maxTokens < CONTEXT_SEARCH_MIN_TOKENS ||
+      maxTokens > CONTEXT_SEARCH_MAX_TOKENS
+    ) {
+      throw new TypeError("maxTokens is invalid");
+    }
+
+    const artifact = this.artifacts.get(artifactId);
+    if (!artifact) throw new InvalidArtifactError();
+    this.artifacts.delete(artifactId);
+    this.artifacts.set(artifactId, artifact);
+    return this.createSearchView(artifact, {
+      query,
+      contextLines,
+      maxTokens,
+      offset: 0
+    });
+  }
+
   fetch(cursor) {
     if (typeof cursor !== "string") throw new InvalidCursorError();
     const position = this.cursors.get(cursor);
@@ -309,7 +442,12 @@ export class ContextStore {
     if (!artifact) throw new InvalidCursorError();
     this.artifacts.delete(artifact.artifactId);
     this.artifacts.set(artifact.artifactId, artifact);
-    const view = this.createView(artifact, position.offset, true);
+    const view = position.search
+      ? this.createSearchView(artifact, {
+          ...position.search,
+          offset: position.offset
+        }, true)
+      : this.createView(artifact, position.offset, true);
     position.view = view;
     return view;
   }
@@ -343,7 +481,7 @@ export class ContextStore {
     );
   }
 
-  createCursor(artifactId, offset, advancing) {
+  createCursor(artifactId, offset, advancing, search) {
     const currentTime = this.now();
     this.pruneExpiredCursors();
     const limit = advancing ? this.maxCursors : this.maxCursors - 1;
@@ -360,8 +498,161 @@ export class ContextStore {
       cursor = randomId("cur", 24);
     } while (this.cursors.has(cursor));
     const expiresAt = currentTime + this.cursorTtlMs;
-    this.cursors.set(cursor, { artifactId, offset, expiresAt });
+    this.cursors.set(cursor, {
+      artifactId,
+      offset,
+      expiresAt,
+      ...(search ? { search } : {})
+    });
     return { cursor, expiresAt };
+  }
+
+  createSearchView(
+    artifact,
+    { query, contextLines, maxTokens, offset },
+    advancing = false
+  ) {
+    const raw = this.cas.readRange(
+      artifact.sourceDigest,
+      0,
+      artifact.byteLength,
+      artifact.byteLength
+    );
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(raw);
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > text.length) {
+      throw new InvalidCursorError();
+    }
+
+    const match = text.indexOf(query, offset);
+    const maxBytes = maxTokens * 4;
+    let content = "";
+    let citations = [];
+    let redactions = [];
+    let nextMatch = -1;
+    let windowClipped = false;
+
+    if (match !== -1) {
+      const offsets = utf8ByteOffsets(text);
+      const starts = lineStarts(text);
+      const firstLine = lineAt(starts, match);
+      const lastLine = lineAt(starts, match + query.length - 1);
+      const firstContextLine = Math.max(0, firstLine - contextLines);
+      const afterContextLine = Math.min(
+        starts.length,
+        lastLine + contextLines + 1
+      );
+      const matchStart = offsets[match];
+      const matchEnd = offsets[match + query.length];
+      const requestedStart = offsets[starts[firstContextLine]];
+      const requestedEnd = offsets[
+        afterContextLine < starts.length
+          ? starts[afterContextLine]
+          : text.length
+      ];
+      const window = boundedWindow(
+        raw,
+        requestedStart,
+        requestedEnd,
+        matchStart,
+        matchEnd,
+        maxBytes
+      );
+      windowClipped =
+        window.start !== requestedStart || window.end !== requestedEnd;
+      const rendered = renderRedactedPage(
+        artifact,
+        raw.subarray(window.start, window.end),
+        window.start,
+        window.end
+      );
+      content = rendered.content;
+      redactions = rendered.redactions;
+      citations = [
+        {
+          artifact_id: artifact.artifactId,
+          source_digest: artifact.sourceDigest,
+          byte_start: window.start,
+          byte_end: window.end
+        }
+      ];
+
+      const visibleEnd = stringIndexAtByte(offsets, window.end);
+      nextMatch = text.indexOf(query, match + 1);
+      while (
+        nextMatch !== -1 &&
+        nextMatch + query.length <= visibleEnd
+      ) {
+        nextMatch = text.indexOf(query, nextMatch + 1);
+      }
+    }
+
+    const emittedBytes = Buffer.from(content, "utf8");
+    const moreAvailable = nextMatch !== -1;
+    const partial = moreAvailable || windowClipped;
+    const continuation = moreAvailable
+      ? this.createCursor(artifact.artifactId, nextMatch, advancing, {
+          query,
+          contextLines,
+          maxTokens
+        })
+      : null;
+    const view = {
+      schema_version: "1.0.0",
+      view_id: randomId("view"),
+      artifact_id: artifact.artifactId,
+      session_id: this.sessionId,
+      status: partial ? "partial_view" : "complete",
+      media_type: artifact.mediaType,
+      content,
+      budget: {
+        max_tokens: maxTokens,
+        max_bytes: maxBytes,
+        applied_tokens: Math.ceil(emittedBytes.length / 4),
+        applied_bytes: emittedBytes.length,
+        overflow: "projected"
+      },
+      token_count: tokenCount(emittedBytes.length, digest(emittedBytes)),
+      citations,
+      redactions,
+      diagnostics: [
+        {
+          code: "EG-SEARCH-001",
+          message:
+            "Deterministic case-sensitive literal search v1 was applied."
+        },
+        {
+          code: "EG-REDACT-001",
+          message: `Deterministic redaction ruleset ${REDACTION_RULESET_VERSION} was applied.`
+        },
+        ...(windowClipped
+          ? [
+              {
+                code: "EG-VIEW-001",
+                message:
+                  "The context window was clipped to the search byte budget."
+              }
+            ]
+          : [])
+      ],
+      retrieval: {
+        more_available: moreAvailable,
+        operations: moreAvailable ? ["fetch", "search"] : ["search"]
+      },
+      integrity: {}
+    };
+    if (partial) {
+      view.estimated_raw_token_count = tokenCount(
+        artifact.byteLength,
+        artifact.sourceDigest
+      );
+    }
+    if (moreAvailable) {
+      view.retrieval.cursor = continuation.cursor;
+      view.retrieval.expires_at = new Date(
+        continuation.expiresAt
+      ).toISOString();
+    }
+    return attachIntegrity(view, artifact, SEARCH_PROJECTION_VERSION);
   }
 
   createView(artifact, start, advancing = false) {
