@@ -6,8 +6,33 @@ export const CONTEXT_STORE_BYTES = 4 * 1024 * 1024;
 export const CONTEXT_CURSOR_TTL_MS = 10 * 60 * 1000;
 
 const TOKEN_COUNTER_ID = "utf8-bytes-ceil-div-4";
-const PROJECTION_VERSION = "text-byte-page-v1";
+const PROJECTION_VERSION = "text-byte-page-redact-v1";
 const MAX_SCHEMA_CONTENT_LENGTH = 262144;
+const MAX_REDACTION_SPANS = 4096;
+const REDACTION_MARKER = "[REDACTED]";
+
+const REDACTION_RULESET_VERSION = "preview-v1";
+const REDACTION_RULES = Object.freeze([
+  {
+    ruleId: "secret-assignment-v1",
+    class: "secret",
+    pattern:
+      /\b(?:api[_-]?key|access[_-]?token|password|secret)\s*[:=]\s*["']?([^\s"',;}\]]{16,})/dgi,
+    group: 1
+  },
+  {
+    ruleId: "bearer-token-v1",
+    class: "credential",
+    pattern: /\bBearer\s+([^\s"',;}\]]{16,})/dgi,
+    group: 1
+  },
+  {
+    ruleId: "prefixed-token-v1",
+    class: "credential",
+    pattern: /\b((?:sk-|ghp_|github_pat_)[A-Za-z0-9_-]{16,})\b/dg,
+    group: 1
+  }
+]);
 
 export class InvalidCursorError extends Error {
   constructor() {
@@ -54,6 +79,97 @@ function pageEnd(bytes, start, maxBytes) {
   let end = Math.min(start + maxBytes, bytes.length);
   while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end -= 1;
   return end;
+}
+
+function utf8ByteOffsets(text) {
+  const offsets = new Uint32Array(text.length + 1);
+  let byteOffset = 0;
+
+  for (let index = 0; index < text.length; index += 1) {
+    offsets[index] = byteOffset;
+    const codePoint = text.codePointAt(index);
+    if (codePoint > 0xffff) {
+      offsets[index + 1] = byteOffset;
+      index += 1;
+    }
+    byteOffset +=
+      codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
+    offsets[index + 1] = byteOffset;
+  }
+  return offsets;
+}
+
+function scanRedactions(text) {
+  const offsets = utf8ByteOffsets(text);
+  const spans = [];
+
+  for (const rule of REDACTION_RULES) {
+    for (const match of text.matchAll(rule.pattern)) {
+      const indices = match.indices?.[rule.group];
+      if (!indices || indices[0] === indices[1]) continue;
+      spans.push({
+        byteStart: offsets[indices[0]],
+        byteEnd: offsets[indices[1]],
+        class: rule.class,
+        ruleId: rule.ruleId
+      });
+      if (spans.length > MAX_REDACTION_SPANS) {
+        throw new RangeError("artifact exceeds the redaction span limit");
+      }
+    }
+  }
+  return spans.sort(
+    (left, right) =>
+      left.byteStart - right.byteStart || right.byteEnd - left.byteEnd
+  );
+}
+
+function renderRedactedPage(artifact, start, end) {
+  const relevant = artifact.redactionSpans.filter(
+    (span) => span.byteEnd > start && span.byteStart < end
+  );
+  const content = [];
+  let position = start;
+
+  for (const span of relevant) {
+    const redactionStart = Math.max(position, span.byteStart, start);
+    const redactionEnd = Math.min(span.byteEnd, end);
+    if (redactionEnd <= redactionStart) continue;
+    if (redactionStart > position) {
+      content.push(
+        new TextDecoder("utf-8", { fatal: true }).decode(
+          artifact.bytes.subarray(position, redactionStart)
+        )
+      );
+    }
+    const redactedBytes = redactionEnd - redactionStart;
+    content.push(
+      redactedBytes >= REDACTION_MARKER.length
+        ? REDACTION_MARKER
+        : "*".repeat(redactedBytes)
+    );
+    position = redactionEnd;
+  }
+  if (position < end) {
+    content.push(
+      new TextDecoder("utf-8", { fatal: true }).decode(
+        artifact.bytes.subarray(position, end)
+      )
+    );
+  }
+
+  const counts = new Map();
+  for (const span of relevant) {
+    const key = `${span.class}:${span.ruleId}`;
+    const current = counts.get(key) ?? {
+      class: span.class,
+      count: 0,
+      rule_id: span.ruleId
+    };
+    current.count += 1;
+    counts.set(key, current);
+  }
+  return { content: content.join(""), redactions: [...counts.values()] };
 }
 
 export class ContextStore {
@@ -132,6 +248,7 @@ export class ContextStore {
       this.artifacts.delete(artifactId);
       this.artifacts.set(artifactId, artifact);
     } else {
+      const redactionSpans = scanRedactions(text);
       this.pruneExpiredCursors();
       while (
         this.artifacts.size >= this.maxArtifacts ||
@@ -145,7 +262,13 @@ export class ContextStore {
         }
         this.dropArtifact(oldest);
       }
-      artifact = { artifactId, sourceDigest, bytes, mediaType };
+      artifact = {
+        artifactId,
+        sourceDigest,
+        bytes,
+        mediaType,
+        redactionSpans
+      };
       this.artifacts.set(artifactId, artifact);
       this.storedBytes += bytes.length;
     }
@@ -220,8 +343,9 @@ export class ContextStore {
       throw new Error("Context View paging made no progress");
     }
 
-    const page = artifact.bytes.subarray(start, end);
-    const pageDigest = digest(page);
+    const rendered = renderRedactedPage(artifact, start, end);
+    const emittedBytes = Buffer.from(rendered.content, "utf8");
+    const emittedDigest = digest(emittedBytes);
     const complete = start === 0 && end === artifact.bytes.length;
     const moreAvailable = end < artifact.bytes.length;
     const continuation = moreAvailable
@@ -235,15 +359,15 @@ export class ContextStore {
       session_id: this.sessionId,
       status: complete ? "complete" : "partial_view",
       media_type: artifact.mediaType,
-      content: new TextDecoder("utf-8", { fatal: true }).decode(page),
+      content: rendered.content,
       budget: {
         max_tokens: this.pageBytes,
         max_bytes: this.pageBytes,
-        applied_tokens: Math.ceil(page.length / 4),
-        applied_bytes: page.length,
+        applied_tokens: Math.ceil(emittedBytes.length / 4),
+        applied_bytes: emittedBytes.length,
         overflow: complete ? "none" : "paged"
       },
-      token_count: tokenCount(page.length, pageDigest),
+      token_count: tokenCount(emittedBytes.length, emittedDigest),
       citations: [
         {
           artifact_id: artifact.artifactId,
@@ -252,13 +376,11 @@ export class ContextStore {
           byte_end: end
         }
       ],
-      redactions: [],
+      redactions: rendered.redactions,
       diagnostics: [
         {
-          code: "EG-VIEW-001",
-          message:
-            "Redaction was not performed; this preview accepts only the " +
-            "secret-free bundled fixture."
+          code: "EG-REDACT-001",
+          message: `Deterministic redaction ruleset ${REDACTION_RULESET_VERSION} was applied.`
         }
       ],
       retrieval: {

@@ -308,7 +308,8 @@ test("large text is losslessly paged through opaque Context View cursors", async
       .update(JSON.stringify({ ...view, integrity: integrityBasis }))
       .digest("hex")}`;
     assert.equal(viewDigest, calculatedViewDigest);
-    assert.equal(view.diagnostics[0].code, "EG-VIEW-001");
+    assert.equal(view.diagnostics[0].code, "EG-REDACT-001");
+    assert.deepEqual(view.redactions, []);
     reconstructed += view.content;
     expectedStart = citation.byte_end;
 
@@ -419,6 +420,41 @@ test("Context Store preserves UTF-8 boundaries and pins live continuations", () 
     /cursor capacity/
   );
   assert.equal(capacity.fetch(advancing.retrieval.cursor).content, "efgh");
+
+  const sentinel = "Q".repeat(16);
+  const rawSecret = `😀 api_key=${sentinel} suffix`;
+  const redacting = new ContextStore({ pageBytes: 8 });
+  let secretView = redacting.ingest(rawSecret);
+  let expectedStart = 0;
+  let redactionCount = 0;
+
+  for (;;) {
+    assert.equal(JSON.stringify(secretView).includes(sentinel), false);
+    assert.equal(secretView.content.includes("Q"), false);
+    assert.equal(secretView.citations[0].byte_start, expectedStart);
+    assert.equal(
+      secretView.budget.applied_bytes,
+      Buffer.byteLength(secretView.content, "utf8")
+    );
+    redactionCount += secretView.redactions.reduce(
+      (total, redaction) => total + redaction.count,
+      0
+    );
+    expectedStart = secretView.citations[0].byte_end;
+    if (!secretView.retrieval.more_available) break;
+    secretView = redacting.fetch(secretView.retrieval.cursor);
+  }
+  assert.equal(expectedStart, Buffer.byteLength(rawSecret, "utf8"));
+  assert.ok(redactionCount >= 2);
+
+  const tooManySecrets = Array.from(
+    { length: 4097 },
+    (_, index) => `api_key=${String(index).padStart(4, "0")}${sentinel}`
+  ).join("\n");
+  assert.throws(
+    () => new ContextStore().ingest(tooManySecrets),
+    /redaction span limit/
+  );
 });
 
 test("tool-result bounding fails closed and preserves error semantics", () => {

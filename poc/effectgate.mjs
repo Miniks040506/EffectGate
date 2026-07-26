@@ -14,7 +14,7 @@ import {
 export const MAX_FRAME_BYTES = 1024 * 1024;
 export const MAX_TOOL_RESULT_BYTES = 64 * 1024;
 export const MCP_VERSION = "2025-11-25";
-export const EFFECTGATE_VERSION = "0.1.0";
+export const EFFECTGATE_VERSION = "0.2.0";
 const MAX_PENDING_REQUESTS = 64;
 const MAX_ID_BYTES = 128;
 
@@ -64,11 +64,18 @@ export const FIXTURE_LARGE_LOG_TOOL = Object.freeze({
     required: ["lines"],
     properties: {
       lines: { type: "integer", minimum: 1, maximum: 6000 },
-      includeStructuredCopy: { type: "boolean" }
+      includeStructuredCopy: { type: "boolean" },
+      includeSecrets: { type: "boolean" }
     }
   },
   annotations: FIXTURE_TOOL.annotations
 });
+
+export const FIXTURE_SECRETS = Object.freeze([
+  "eg_test_K7m2P9q4R8s1T6v3W5x0",
+  "bearer_K4n8Q2m6V9x3R7s1T5w0",
+  "sk-effectgate-A7c3F9k2M8p4R6v1"
+]);
 
 export const CONTEXT_FETCH_TOOL = Object.freeze({
   name: "effectgate_fetch",
@@ -85,15 +92,29 @@ export const CONTEXT_FETCH_TOOL = Object.freeze({
   annotations: FIXTURE_TOOL.annotations
 });
 
-export function buildFixtureLog(lines) {
+export function buildFixtureLog(lines, includeSecrets = false) {
   if (!Number.isSafeInteger(lines) || lines < 1 || lines > 6000) {
     throw new RangeError("lines must be an integer from 1 through 6000");
   }
+  if (typeof includeSecrets !== "boolean") {
+    throw new TypeError("includeSecrets must be a boolean");
+  }
   return Array.from(
     { length: lines },
-    (_, index) =>
-      `${String(index + 1).padStart(6, "0")} level=INFO component=fixture ` +
-      `message="bounded context evidence" marker=✓\n`
+    (_, index) => {
+      let secret = "";
+      if (includeSecrets && index === 4) {
+        secret = ` api_key=${FIXTURE_SECRETS[0]}`;
+      } else if (includeSecrets && index === Math.floor(lines / 2)) {
+        secret = ` authorization=Bearer ${FIXTURE_SECRETS[1]}`;
+      } else if (includeSecrets && index === lines - 2) {
+        secret = ` token=${FIXTURE_SECRETS[2]}`;
+      }
+      return (
+        `${String(index + 1).padStart(6, "0")} level=INFO component=fixture ` +
+        `message="bounded context evidence" marker=✓${secret}\n`
+      );
+    }
   ).join("");
 }
 
@@ -320,13 +341,21 @@ function fixtureResponse(request) {
           args.lines > 6000 ||
           (args.includeStructuredCopy !== undefined &&
             typeof args.includeStructuredCopy !== "boolean") ||
+          (args.includeSecrets !== undefined &&
+            typeof args.includeSecrets !== "boolean") ||
           Object.keys(args).some(
-            (key) => key !== "lines" && key !== "includeStructuredCopy"
+            (key) =>
+              key !== "lines" &&
+              key !== "includeStructuredCopy" &&
+              key !== "includeSecrets"
           )
         ) {
           return errorMessage(id, -32602, "The tool arguments are invalid.");
         }
-        const text = buildFixtureLog(args.lines);
+        const text = buildFixtureLog(
+          args.lines,
+          args.includeSecrets === true
+        );
         return {
           jsonrpc: "2.0",
           id,
