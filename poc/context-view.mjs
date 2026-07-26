@@ -1,6 +1,18 @@
 import { createHash, randomBytes } from "node:crypto";
 
 import { FilesystemCas } from "./filesystem-cas.mjs";
+import {
+  CONTEXT_PROJECT_MAX_FIELDS,
+  CONTEXT_PROJECT_MAX_LIMIT,
+  CONTEXT_PROJECT_MAX_OFFSET,
+  CONTEXT_PROJECT_MAX_TOKENS,
+  CONTEXT_PROJECT_MIN_TOKENS,
+  InvalidJsonProjectionError,
+  buildJsonProjectionEntries,
+  isUnicodeScalarText,
+  isValidJsonPointer,
+  isValidProjectionScalar
+} from "./json-project.mjs";
 
 export const CONTEXT_PAGE_BYTES = 4096;
 export const CONTEXT_MAX_ARTIFACT_BYTES = 1024 * 1024;
@@ -71,22 +83,6 @@ function tokenCount(bytes, inputDigest) {
     counter_version: "1",
     input_digest: inputDigest
   };
-}
-
-function isUnicodeScalarText(text) {
-  for (let index = 0; index < text.length; index += 1) {
-    const code = text.charCodeAt(index);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const next = text.charCodeAt(index + 1);
-      if (!Number.isInteger(next) || next < 0xdc00 || next > 0xdfff) {
-        return false;
-      }
-      index += 1;
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      return false;
-    }
-  }
-  return true;
 }
 
 function pageEnd(bytes, start, maxBytes) {
