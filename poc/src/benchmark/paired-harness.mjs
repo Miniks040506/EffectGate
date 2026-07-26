@@ -25,6 +25,8 @@ const METRIC_KEYS = new Set([
   "latency_ms",
   "fetch_count",
   "tool_call_count",
+  "tool_schema_tokens",
+  "tool_result_tokens",
   "total_input_tokens"
 ]);
 const TOKEN_KEYS = new Set([
@@ -90,13 +92,22 @@ function validatedMetrics(value) {
     value.fetch_count < 0 ||
     !Number.isSafeInteger(value.tool_call_count) ||
     value.tool_call_count < 0 ||
-    !validTokenCount(value.total_input_tokens)
+    !validTokenCount(value.tool_schema_tokens) ||
+    !validTokenCount(value.tool_result_tokens) ||
+    (value.total_input_tokens !== undefined &&
+      !validTokenCount(value.total_input_tokens))
   ) {
     throw new TypeError("invalid benchmark metrics");
   }
   return Object.freeze({
     ...value,
-    total_input_tokens: Object.freeze({ ...value.total_input_tokens })
+    tool_schema_tokens: Object.freeze({ ...value.tool_schema_tokens }),
+    tool_result_tokens: Object.freeze({ ...value.tool_result_tokens }),
+    ...(value.total_input_tokens === undefined
+      ? {}
+      : {
+          total_input_tokens: Object.freeze({ ...value.total_input_tokens })
+        })
   });
 }
 

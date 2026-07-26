@@ -48,6 +48,20 @@ function metrics(inputDigest, profile) {
     latency_ms: 10.5,
     fetch_count: profile === "P1_EG_TYPED" ? 1 : 0,
     tool_call_count: 1,
+    tool_schema_tokens: {
+      value: 20,
+      basis: "byte_proxy",
+      counter_id: "utf8-bytes-ceil-div-4",
+      counter_version: "1",
+      input_digest: inputDigest
+    },
+    tool_result_tokens: {
+      value: 30,
+      basis: "byte_proxy",
+      counter_id: "utf8-bytes-ceil-div-4",
+      counter_version: "1",
+      input_digest: inputDigest
+    },
     total_input_tokens: {
       value: 100,
       basis: "host_reported",
