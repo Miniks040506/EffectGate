@@ -37,8 +37,22 @@ const MAX_SCHEMA_CONTENT_LENGTH = 262144;
 const MAX_REDACTION_SPANS = 4096;
 const MAX_PROJECT_PAGE_ITEMS = 100;
 const REDACTION_MARKER = "[REDACTED]";
+const OPAQUE_WINDOW_BYTES = 1024;
+const OPAQUE_WINDOW_STRIDE = 512;
+const OPAQUE_TOKEN_RUN_BYTES = 128;
+const OPAQUE_ARMOR_BYTES = 256;
+const OPAQUE_ARMOR_SPACE_RATIO = 8;
 
 const REDACTION_RULESET_VERSION = "preview-v1";
+const OPAQUE_DETECTOR_VERSION = "opaque-byte-distribution-v1";
+const PRIVATE_KEY_MARKERS = [
+  "-----BEGIN PRIVATE KEY-----",
+  "-----BEGIN ENCRYPTED PRIVATE KEY-----",
+  "-----BEGIN RSA PRIVATE KEY-----",
+  "-----BEGIN EC PRIVATE KEY-----",
+  "-----BEGIN OPENSSH PRIVATE KEY-----",
+  "-----BEGIN PGP PRIVATE KEY BLOCK-----"
+].map((marker) => Buffer.from(marker, "ascii"));
 const REDACTION_RULES = Object.freeze([
   {
     ruleId: "secret-assignment-v1",
@@ -72,6 +86,20 @@ export class InvalidArtifactError extends Error {
   constructor() {
     super("invalid artifact reference");
     this.name = "InvalidArtifactError";
+  }
+}
+
+export class ContextRetentionError extends RangeError {
+  constructor() {
+    super("artifact could not be retained");
+    this.name = "ContextRetentionError";
+  }
+}
+
+export class UnsafeArtifactError extends RangeError {
+  constructor(message) {
+    super(message);
+    this.name = "UnsafeArtifactError";
   }
 }
 
@@ -199,7 +227,9 @@ function scanRedactions(text) {
         ruleId: rule.ruleId
       });
       if (spans.length > MAX_REDACTION_SPANS) {
-        throw new RangeError("artifact exceeds the redaction span limit");
+        throw new UnsafeArtifactError(
+          "artifact exceeds the redaction span limit"
+        );
       }
     }
   }
@@ -207,6 +237,180 @@ function scanRedactions(text) {
     (left, right) =>
       left.byteStart - right.byteStart || right.byteEnd - left.byteEnd
   );
+}
+
+function supportedTextMediaType(mediaType) {
+  const essence = mediaType.split(";", 1)[0].trim().toLowerCase();
+  return (
+    essence.startsWith("text/") ||
+    essence === "application/json" ||
+    essence === "application/x-ndjson" ||
+    essence.endsWith("+json")
+  );
+}
+
+function opaqueTokenByte(byte) {
+  return (
+    (byte >= 0x30 && byte <= 0x39) ||
+    (byte >= 0x41 && byte <= 0x5a) ||
+    (byte >= 0x61 && byte <= 0x7a) ||
+    byte === 0x2b ||
+    byte === 0x2d ||
+    byte === 0x2e ||
+    byte === 0x2f ||
+    byte === 0x3d ||
+    byte === 0x5f
+  );
+}
+
+function opaqueConcentration(counts, bytes, maximum) {
+  let collisions = 0;
+  for (const count of counts) collisions += count * (count - 1);
+  return 1024 * collisions <= maximum * bytes * (bytes - 1);
+}
+
+function hasOpaqueByteDistribution(bytes) {
+  if (PRIVATE_KEY_MARKERS.some((marker) => bytes.includes(marker))) return true;
+
+  const seen = new Uint32Array(256);
+  const armorCounts = new Uint32Array(256);
+  const armorTouched = [];
+  let runId = 1;
+  let runBytes = 0;
+  let runDistinct = 0;
+  let armorBytes = 0;
+  let armorDistinct = 0;
+  let armorIsHex = true;
+  let armorSpaces = 0;
+  let atLineStart = true;
+  const resetArmor = () => {
+    for (const byte of armorTouched) armorCounts[byte] = 0;
+    armorTouched.length = 0;
+    armorBytes = 0;
+    armorDistinct = 0;
+    armorIsHex = true;
+    armorSpaces = 0;
+  };
+  const opaqueArmor = () =>
+    armorBytes >= OPAQUE_ARMOR_BYTES &&
+    armorSpaces * OPAQUE_ARMOR_SPACE_RATIO <= armorBytes &&
+    ((armorDistinct >= 48 &&
+      opaqueConcentration(armorCounts, armorBytes, 24)) ||
+      (armorIsHex &&
+        armorDistinct >= 12 &&
+        opaqueConcentration(armorCounts, armorBytes, 80)));
+
+  for (let index = 0; index < bytes.length; index += 1) {
+    const byte = bytes[index];
+    if (opaqueTokenByte(byte)) {
+      atLineStart = false;
+      runBytes += 1;
+      if (seen[byte] !== runId) {
+        seen[byte] = runId;
+        runDistinct += 1;
+      }
+      armorBytes += 1;
+      if (armorCounts[byte]++ === 0) {
+        armorTouched.push(byte);
+        armorDistinct += 1;
+      }
+      if (
+        !(
+          (byte >= 0x30 && byte <= 0x39) ||
+          (byte >= 0x41 && byte <= 0x46) ||
+          (byte >= 0x61 && byte <= 0x66)
+        )
+      ) {
+        armorIsHex = false;
+      }
+      if (
+        runBytes >= OPAQUE_TOKEN_RUN_BYTES &&
+        runDistinct >= 12
+      ) {
+        return true;
+      }
+      continue;
+    }
+
+    if (opaqueArmor()) return true;
+    const escapedWhitespace =
+      byte === 0x5c &&
+      index + 1 < bytes.length &&
+      (bytes[index + 1] === 0x6e ||
+        bytes[index + 1] === 0x72 ||
+        bytes[index + 1] === 0x74);
+    const lineBreak =
+      byte === 0x0a ||
+      byte === 0x0d ||
+      (escapedWhitespace &&
+        (bytes[index + 1] === 0x6e || bytes[index + 1] === 0x72));
+    const horizontalWhitespace =
+      byte === 0x20 ||
+      byte === 0x09 ||
+      (escapedWhitespace && bytes[index + 1] === 0x74);
+    const indentation = horizontalWhitespace && atLineStart;
+    if (escapedWhitespace) index += 1;
+    if (indentation && armorBytes > 0) armorSpaces += 1;
+    const armorWhitespace = lineBreak || indentation;
+    if (
+      !armorWhitespace ||
+      (armorBytes > 0 &&
+        armorSpaces * OPAQUE_ARMOR_SPACE_RATIO > armorBytes)
+    ) {
+      resetArmor();
+    }
+    if (lineBreak) atLineStart = true;
+    if (runBytes > 0) {
+      runBytes = 0;
+      runDistinct = 0;
+      runId += 1;
+    }
+  }
+  if (opaqueArmor()) return true;
+
+  // ponytail: artifacts are capped at 1 MiB; revisit only if corpus evidence
+  // shows this conservative integer screen needs a streaming implementation.
+  const counts = new Uint32Array(256);
+  for (
+    let start = 0;
+    start + OPAQUE_WINDOW_BYTES <= bytes.length;
+    start = Math.min(
+      start + OPAQUE_WINDOW_STRIDE,
+      bytes.length - OPAQUE_WINDOW_BYTES
+    )
+  ) {
+    counts.fill(0);
+    let distinct = 0;
+    for (let index = start; index < start + OPAQUE_WINDOW_BYTES; index += 1) {
+      if (counts[bytes[index]]++ === 0) distinct += 1;
+    }
+    if (distinct >= 48) {
+      if (opaqueConcentration(counts, OPAQUE_WINDOW_BYTES, 24)) {
+        return true;
+      }
+    }
+    if (start === bytes.length - OPAQUE_WINDOW_BYTES) break;
+  }
+  return false;
+}
+
+function artifactDiagnostics(artifact) {
+  return [
+    ...(artifact.retainedResult
+      ? [
+          {
+            code: "EG-VIEW-RESULT-001",
+            message: artifact.opaque
+              ? "The original tool-result envelope was retained, but model-visible content was withheld."
+              : "The original tool-result envelope was retained and is shown as bounded JSON."
+          }
+        ]
+      : []),
+    {
+      code: "EG-REDACT-001",
+      message: `Deterministic redaction ruleset ${REDACTION_RULESET_VERSION} was applied.`
+    }
+  ];
 }
 
 function renderRedactedPage(artifact, page, start, end) {
@@ -354,9 +558,31 @@ export class ContextStore {
     this.storedBytes = 0;
   }
 
-  ingest(text, mediaType = "text/plain") {
+  requiresView(text, mediaType = "text/plain") {
+    if (typeof text !== "string" || typeof mediaType !== "string") {
+      return true;
+    }
+    if (text.length > this.maxArtifactBytes) return true;
+    if (!isUnicodeScalarText(text)) return true;
+    const bytes = Buffer.from(text, "utf8");
+    if (bytes.length > this.maxArtifactBytes) return true;
+    return (
+      scanRedactions(text).length > 0 ||
+      !supportedTextMediaType(mediaType) ||
+      hasOpaqueByteDistribution(bytes)
+    );
+  }
+
+  ingest(
+    text,
+    mediaType = "text/plain",
+    { retainedResult = false } = {}
+  ) {
     if (typeof text !== "string" || typeof mediaType !== "string") {
       throw new TypeError("text and mediaType must be strings");
+    }
+    if (typeof retainedResult !== "boolean") {
+      throw new TypeError("retainedResult must be a boolean");
     }
     if (!isUnicodeScalarText(text)) {
       throw new TypeError("text must contain only Unicode scalar values");
@@ -371,7 +597,7 @@ export class ContextStore {
       byteLength > this.maxArtifactBytes ||
       byteLength > this.maxStoreBytes
     ) {
-      throw new RangeError("artifact exceeds the Context Store capacity");
+      throw new ContextRetentionError();
     }
 
     const sourceDigest = digest(text);
@@ -379,10 +605,19 @@ export class ContextStore {
     let artifact = this.artifacts.get(artifactId);
 
     if (artifact) {
+      if (
+        artifact.mediaType !== mediaType ||
+        artifact.retainedResult !== retainedResult
+      ) {
+        throw new TypeError("artifact metadata conflicts with existing content");
+      }
       this.artifacts.delete(artifactId);
       this.artifacts.set(artifactId, artifact);
     } else {
       const redactionSpans = scanRedactions(text);
+      const opaque =
+        !supportedTextMediaType(mediaType) ||
+        hasOpaqueByteDistribution(Buffer.from(text, "utf8"));
       this.pruneExpiredCursors();
       while (
         this.artifacts.size >= this.maxArtifacts ||
@@ -392,20 +627,30 @@ export class ContextStore {
           (candidate) => !this.isPinned(candidate)
         );
         if (oldest === undefined) {
-          throw new RangeError("artifact exceeds the Context Store capacity");
+          throw new ContextRetentionError();
         }
         this.dropArtifact(oldest);
       }
-      const stored = this.cas.put(utf8Chunks(text), {
-        expectedBytes: byteLength,
-        expectedDigest: sourceDigest
-      });
+      let stored;
+      try {
+        stored = this.cas.put(utf8Chunks(text), {
+          expectedBytes: byteLength,
+          expectedDigest: sourceDigest
+        });
+      } catch (error) {
+        if (typeof error?.code === "string") {
+          throw new ContextRetentionError();
+        }
+        throw error;
+      }
       artifact = {
         artifactId,
         sourceDigest,
         byteLength: stored.bytes,
         mediaType,
-        redactionSpans
+        redactionSpans,
+        opaque,
+        retainedResult
       };
       this.artifacts.set(artifactId, artifact);
       this.storedBytes += stored.bytes;
@@ -588,6 +833,43 @@ export class ContextStore {
     });
   }
 
+  createUnavailableView(artifact, maxBytes, projectionVersion) {
+    const view = {
+      schema_version: "1.0.0",
+      view_id: randomId("view"),
+      artifact_id: artifact.artifactId,
+      session_id: this.sessionId,
+      status: "unavailable",
+      media_type: artifact.mediaType,
+      content: "",
+      budget: {
+        max_tokens: Math.ceil(maxBytes / 4),
+        max_bytes: maxBytes,
+        applied_tokens: 0,
+        applied_bytes: 0,
+        overflow: "failed"
+      },
+      token_count: tokenCount(0, digest(Buffer.alloc(0))),
+      estimated_raw_token_count: tokenCount(
+        artifact.byteLength,
+        artifact.sourceDigest
+      ),
+      citations: [],
+      redactions: [],
+      diagnostics: [
+        {
+          code: "EG-VIEW-OPAQUE-001",
+          message:
+            `Content was withheld by ${OPAQUE_DETECTOR_VERSION}; ` +
+            "no summary was generated."
+        },
+        ...artifactDiagnostics(artifact)
+      ],
+      integrity: {}
+    };
+    return finalizeView(view, artifact, projectionVersion);
+  }
+
   createProjectView(
     artifact,
     {
@@ -603,6 +885,15 @@ export class ContextStore {
     },
     advancing = false
   ) {
+    if (artifact.opaque) {
+      return this.createUnavailableView(
+        artifact,
+        maxTokens * 4,
+        format === "json" || format === "jsonl"
+          ? JSON_PROJECTION_VERSION
+          : DOCUMENT_PROJECTION_VERSION
+      );
+    }
     // ponytail: artifacts are capped at 1 MiB; add a streaming index if that
     // ceiling changes or projection latency becomes measurable.
     const raw = this.cas.readRange(
@@ -825,6 +1116,13 @@ export class ContextStore {
     { query, contextLines, maxTokens, offset },
     advancing = false
   ) {
+    if (artifact.opaque) {
+      return this.createUnavailableView(
+        artifact,
+        maxTokens * 4,
+        SEARCH_PROJECTION_VERSION
+      );
+    }
     const raw = this.cas.readRange(
       artifact.sourceDigest,
       0,
