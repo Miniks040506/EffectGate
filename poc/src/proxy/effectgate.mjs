@@ -47,10 +47,21 @@ export const MAX_FRAME_BYTES = 1024 * 1024;
 export const MAX_TOOL_RESULT_BYTES = 64 * 1024;
 export const DEFAULT_MAX_SESSION_EMITTED_TOKENS = 256 * 1024;
 export const MCP_VERSION = "2025-11-25";
-export const EFFECTGATE_VERSION = "0.13.0";
+export const EFFECTGATE_VERSION = "0.14.0";
 const MAX_PENDING_REQUESTS = 64;
 const MAX_ID_BYTES = 128;
 const CURSOR_INPUT_PATTERN = new RegExp(CURSOR_PATTERN, "u");
+const TOKEN_LEDGER_PROFILES = new Set([
+  "native_default",
+  "native_deferred",
+  "compact_mux",
+  "direct_bypass",
+  "eager_diagnostic"
+]);
+const SERVE_USAGE =
+  "Usage: effectgate.mjs fixture | mcp serve [--source NAME] " +
+  "[--max-session-emitted-tokens COUNT] [--token-ledger FILE] " +
+  "[--run-id ID] [--profile PROFILE]";
 const SESSION_OUTPUT_LIMIT_MESSAGE =
   "EffectGate's local emitted-output limit is exhausted; " +
   "host total context usage is not measured.";
@@ -849,15 +860,14 @@ function parseServeArguments(args) {
   let source = "fixture";
   let maxSessionEmittedTokens = DEFAULT_MAX_SESSION_EMITTED_TOKENS;
   let tokenLedgerFile;
+  let runId;
+  let profile = "native_deferred";
 
   for (let index = 0; index < args.length; index += 1) {
     const option = args[index];
     const value = args[index + 1];
     if (value === undefined) {
-      throw new Error(
-        "Usage: effectgate.mjs mcp serve [--source NAME] " +
-          "[--max-session-emitted-tokens COUNT] [--token-ledger FILE]"
-      );
+      throw new Error(SERVE_USAGE);
     }
     if (option === "--source") {
       source = value;
@@ -874,11 +884,18 @@ function parseServeArguments(args) {
       !value.includes("\0")
     ) {
       tokenLedgerFile = value;
+    } else if (
+      option === "--run-id" &&
+      /^[A-Za-z0-9_-]{1,128}$/u.test(value)
+    ) {
+      runId = value;
+    } else if (
+      option === "--profile" &&
+      TOKEN_LEDGER_PROFILES.has(value)
+    ) {
+      profile = value;
     } else {
-      throw new Error(
-        "Usage: effectgate.mjs mcp serve [--source NAME] " +
-          "[--max-session-emitted-tokens COUNT] [--token-ledger FILE]"
-      );
+      throw new Error(SERVE_USAGE);
     }
     index += 1;
   }
@@ -887,7 +904,7 @@ function parseServeArguments(args) {
     throw new Error("Backend source must match [A-Za-z0-9_.-] and be <=64 chars.");
   }
 
-  return { source, maxSessionEmittedTokens, tokenLedgerFile };
+  return { source, maxSessionEmittedTokens, tokenLedgerFile, runId, profile };
 }
 
 function backendEnvironment() {
@@ -913,7 +930,9 @@ export function runProxy(args) {
   const {
     source,
     maxSessionEmittedTokens,
-    tokenLedgerFile
+    tokenLedgerFile,
+    runId,
+    profile
   } = parseServeArguments(args);
   const prefix = `${source}__`;
   const pending = new Map();
@@ -926,8 +945,9 @@ export function runProxy(args) {
     ? null
     : new TokenLedger({
         file: tokenLedgerFile,
-        runId: contextStore.sessionId,
-        sessionId: contextStore.sessionId
+        runId: runId ?? contextStore.sessionId,
+        sessionId: contextStore.sessionId,
+        profile
       });
   const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "fixture"], {
     env: backendEnvironment(),
@@ -1660,10 +1680,7 @@ export async function main(args = process.argv.slice(2)) {
     return;
   }
 
-  throw new Error(
-    "Usage: effectgate.mjs fixture | mcp serve [--source NAME] " +
-      "[--max-session-emitted-tokens COUNT] [--token-ledger FILE]"
-  );
+  throw new Error(SERVE_USAGE);
 }
 
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);

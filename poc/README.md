@@ -40,6 +40,22 @@ Persist safe token provenance for one proxy session with:
 node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp serve --token-ledger /absolute/path/to/tokens.jsonl
 ```
 
+Benchmark adapters can import `runPairedBenchmark()` from
+`src/benchmark/paired-harness.mjs`. One call runs P0, P1, P2, and P3 for every
+repetition in a seeded deterministic order. The callback receives stable
+`pairId`, `runId`, `profile`, and `ledgerProfile` values; pass the latter two
+to a candidate proxy so its token ledger can be joined to the raw run event:
+
+```text
+node effectgate.mjs mcp serve --token-ledger tokens.jsonl --run-id RUN_ID --profile LEDGER_PROFILE
+```
+
+The harness requires SHA-256 digests for common backend bytes, prompt, and
+success rubric. It creates its JSONL evidence file exclusively, records every
+completed or failed profile run, and never persists callback error messages.
+It does not launch a model or claim benchmark results; real host adapters and
+statistical reporting remain separate qualification work.
+
 The fixture exposes:
 
 | Tool | Purpose |
@@ -114,6 +130,7 @@ Runtime modules live under `src/`, grouped by responsibility:
 
 ```text
 src/
+├── benchmark/  # deterministic paired-run orchestration and raw evidence
 ├── budget/     # token counters, calibration, and result guards
 ├── context/    # Context Views and cursor state
 ├── projection/ # JSON, CSV/TSV, and Markdown projection
@@ -130,6 +147,7 @@ test/           # dependency-free integration and boundary checks
 | Serialized tool-result value | 64 KiB |
 | Local model-visible tool output | 262,144 byte-proxy tokens per process session |
 | Optional token ledger | 1,000,000 entries / 64 MiB / one process writer |
+| Paired benchmark | 1,000 repetitions / four fixed profiles / one exclusive evidence file |
 | Context View source content | 4,096 bytes per first view / fetched page |
 | Search query | 64 Unicode characters / 256 UTF-8 bytes |
 | Search context | 0–5 lines / 64–1,024 byte-proxy tokens |
@@ -157,5 +175,6 @@ process-local, and backend results still arrive as complete strings. The
 preview has no durable index,
 end-to-end streaming adapter, comprehensive secret/PII detection, regex/ranked
 search, JSONPath or richer predicates, full CommonMark structure, SQLite
-ledger/multi-writer recovery, approval flow, fuzz qualification, or production
+ledger/multi-writer recovery, real model/host benchmark adapter, statistical
+report, confidence interval, approval flow, fuzz qualification, or production
 support claim.

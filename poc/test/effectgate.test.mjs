@@ -345,7 +345,11 @@ test("proxy persists token provenance without raw result content", async (contex
     "mcp",
     "serve",
     "--token-ledger",
-    ledgerFile
+    ledgerFile,
+    "--run-id",
+    "run_benchmark_fixture",
+    "--profile",
+    "compact_mux"
   ]);
   context.after(async () => {
     await proxy.stop();
@@ -376,6 +380,8 @@ test("proxy persists token provenance without raw result content", async (contex
     assert.equal(persisted.includes(secret), false);
   }
   const records = persisted.trimEnd().split("\n").map(JSON.parse);
+  assert.equal(records[0].run_id, "run_benchmark_fixture");
+  assert.equal(records[0].profile, "compact_mux");
   assert.deepEqual(
     records.slice(1).map(({ stage, direction }) => [stage, direction]),
     [
@@ -2241,6 +2247,14 @@ test("the preview refuses arbitrary backend commands", () => {
   );
   assert.equal(invalidBudget.status, 2);
   assert.match(invalidBudget.stderr, /Usage:/);
+
+  const invalidProfile = spawnSync(
+    process.execPath,
+    [PROGRAM, "mcp", "serve", "--profile", "silent_switch"],
+    { encoding: "utf8", windowsHide: true }
+  );
+  assert.equal(invalidProfile.status, 2);
+  assert.match(invalidProfile.stderr, /Usage:/);
 
   const directory = mkdtempSync(join(tmpdir(), "effectgate-ledger-startup-"));
   const ledgerFile = join(directory, "corrupt.jsonl");

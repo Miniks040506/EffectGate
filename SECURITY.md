@@ -124,6 +124,10 @@ The current preview assumes:
   categories, and timestamps but no measured content. It rejects a malformed,
   truncated, inconsistent, or foreign-session file; it has no shared-writer
   locking, SQLite transaction recovery, encryption, or secure-erasure claim.
+- The paired benchmark harness creates new JSONL evidence exclusively and stores
+  common-input digests rather than prompt, backend, or rubric content. Runner
+  failure messages are discarded. The caller and its `runProfile` callback are
+  trusted; the harness is not a sandbox for external model or host adapters.
 - Artifact identifiers expose a SHA-256 content digest. Do not use this preview
   with secret-bearing or attacker-controlled real-world results.
 - Cursor envelopes use HMAC-SHA256 and bind artifact, source view, next

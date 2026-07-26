@@ -7,7 +7,7 @@
 **Design goal:** Spend tokens on reasoning, not tool noise.
 
 [![Phase](https://img.shields.io/badge/status-Phase%201%20preview-7c3aed?style=flat-square)](#current-boundary)
-[![Version](https://img.shields.io/badge/version-0.13.0-0f766e?style=flat-square)](poc/package.json)
+[![Version](https://img.shields.io/badge/version-0.14.0-0f766e?style=flat-square)](poc/package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25-111827?style=flat-square)](#protocol-surface)
 [![License](https://img.shields.io/badge/license-Apache--2.0-D22128?style=flat-square)](LICENSE)
@@ -119,6 +119,7 @@ namespace; it does not select a backend.
 | Continuity | Artifacts with an unfetched cursor are pinned; recent retries use a bounded page cache; explicit invalidation revokes cached and live cursors |
 | Page bound | At most 4,096 source bytes, cut only at a valid UTF-8 boundary |
 | Redaction | Versioned assignment, bearer-token, and common token-prefix rules run before every emitted page; more than 4,096 detected spans fails closed |
+| Benchmark evidence | Seeded P0–P3 order, stable pair/run IDs, exclusive JSONL creation, retained failures, and digest-only common-input identity |
 | Errors | Backend errors and stderr content are not passed through verbatim |
 | Flow control | Client input and fixture output pause while downstream writables are backpressured |
 
@@ -351,6 +352,8 @@ The dependency-free suite directly verifies:
   configurable exhaustion, and an explicit non-claim about host context;
 - persistent raw-result/output provenance, byte-proxy recomputation,
   Context View identity binding, corruption denial, and secret containment;
+- deterministic P0–P3 paired order and run identity, complete profile coverage,
+  retained/sanitized runner failures, and evidence no-overwrite protection;
 - byte-for-byte reconstruction across multibyte UTF-8 page boundaries;
 - assignment, bearer-token, and prefixed-token sentinel removal across every
   first/fetched page;
@@ -401,7 +404,7 @@ The dependency-free suite directly verifies:
 | Quota-limited partitioned filesystem CAS with explicit invalidation | Durable metadata, shared-writer locking, crash-root recovery, and production GC |
 | Cited paging/search/projection plus fail-closed opaque-content withholding | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
 | HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |
-| Basis-aware counters, output guards, and optional single-session JSONL ledger | SQLite-backed multi-writer ledger and host comparison benchmarks |
+| Basis-aware counters, output guards, optional session ledger, and paired-run JSONL evidence | Statistical reporting, SQLite-backed multi-writer evidence, and real-host comparison qualification |
 | Deterministic local tests | Compatibility, fuzz, latency, and crash qualification |
 | Sanitized public errors | Intent approval, durable journal, verification, and reconciliation |
 | Node.js PoC | Tested installer and supported-platform matrix |
