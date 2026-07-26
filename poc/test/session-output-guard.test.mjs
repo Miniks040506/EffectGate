@@ -28,6 +28,13 @@ test("session output accounting counts replays and rejects atomically", () => {
     () => guard.admit("overflow"),
     SessionOutputLimitError
   );
+  assert.throws(
+    () =>
+      guard.admit("fits", () => {
+        throw new Error("ledger unavailable");
+      }),
+    /ledger unavailable/
+  );
   assert.equal(guard.snapshot().emitted_tokens, 2);
   assert.equal(guard.snapshot().emitted_bytes, 8);
 });

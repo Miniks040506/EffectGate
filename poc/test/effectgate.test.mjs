@@ -339,6 +339,66 @@ test("proxy enforces a local-only session emitted-output limit", async (context)
   }
 });
 
+test("proxy persists token provenance without raw result content", async (context) => {
+  const directory = mkdtempSync(join(tmpdir(), "effectgate-ledger-proxy-"));
+  const ledgerFile = join(directory, "tokens.jsonl");
+  const proxy = new RpcProcess([
+    "mcp",
+    "serve",
+    "--token-ledger",
+    ledgerFile
+  ]);
+  context.after(async () => {
+    await proxy.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  await proxy.request("initialize", {
+    protocolVersion: MCP_VERSION,
+    capabilities: {},
+    clientInfo: { name: "preview-test", version: "1" }
+  });
+  proxy.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  const firstCatalog = await proxy.request("tools/list");
+  await proxy.request("tools/list", {
+    cursor: firstCatalog.result.nextCursor
+  });
+
+  const called = await proxy.request("tools/call", {
+    name: "fixture__large_log",
+    arguments: { lines: 200, includeSecrets: true }
+  });
+  for (const secret of FIXTURE_SECRETS) {
+    assert.equal(JSON.stringify(called).includes(secret), false);
+  }
+
+  const persisted = readFileSync(ledgerFile, "utf8");
+  for (const secret of FIXTURE_SECRETS) {
+    assert.equal(persisted.includes(secret), false);
+  }
+  const records = persisted.trimEnd().split("\n").map(JSON.parse);
+  assert.deepEqual(
+    records.slice(1).map(({ stage, direction }) => [stage, direction]),
+    [
+      ["tool_metadata", "to_host"],
+      ["tool_metadata", "to_host"],
+      ["backend_raw_result", "from_host"],
+      ["first_view", "to_host"]
+    ]
+  );
+  for (const entry of records.slice(1)) {
+    assert.equal(entry.token_count.basis, "byte_proxy");
+    assert.equal(entry.token_count.value, Math.ceil(entry.bytes / 4));
+  }
+  assert.equal(
+    records.at(-1).safe_metadata.category,
+    "context_view_tokens_emitted"
+  );
+  assert.match(records.at(-1).artifact_id, /^art_[a-f0-9]{64}$/u);
+  assert.match(records.at(-1).view_id, /^view_[A-Za-z0-9_-]{24}$/u);
+  assert.equal(proxy.stderr, "");
+});
+
 test("large text is losslessly paged through opaque Context View cursors", async (context) => {
   const proxy = new RpcProcess(["mcp", "serve", "--source", "fixture"]);
   context.after(() => proxy.stop());
@@ -2097,4 +2157,16 @@ test("the preview refuses arbitrary backend commands", () => {
   );
   assert.equal(invalidBudget.status, 2);
   assert.match(invalidBudget.stderr, /Usage:/);
+
+  const directory = mkdtempSync(join(tmpdir(), "effectgate-ledger-startup-"));
+  const ledgerFile = join(directory, "corrupt.jsonl");
+  writeFileSync(ledgerFile, "not-a-ledger\n");
+  const corruptLedger = spawnSync(
+    process.execPath,
+    [PROGRAM, "mcp", "serve", "--token-ledger", ledgerFile],
+    { encoding: "utf8", timeout: 2000, windowsHide: true }
+  );
+  rmSync(directory, { recursive: true, force: true });
+  assert.equal(corruptLedger.status, 2);
+  assert.match(corruptLedger.stderr, /token ledger failed validation/);
 });

@@ -34,6 +34,12 @@ Optionally lower the default 262,144-token local output ceiling:
 node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp serve --max-session-emitted-tokens 8192
 ```
 
+Persist safe token provenance for one proxy session with:
+
+```text
+node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp serve --token-ledger /absolute/path/to/tokens.jsonl
+```
+
 The fixture exposes:
 
 | Tool | Purpose |
@@ -73,6 +79,10 @@ requested search or projection limits can lower, but never raise, them.
 Serialized tool catalogs and results also share a process-local cumulative
 guard. Replayed results count again and rejected output is not charged. This
 does not measure prompts, assistant output, JSON-RPC errors, or host context.
+The optional JSONL ledger stores only counts, bytes, counter provenance,
+digests, fixed safe categories, timestamps, and generated identifiers. It
+rejects malformed, truncated, inconsistent, or cross-session files and never
+stores the measured catalog or result content.
 
 Use `effectgate_search` with the view's `artifact_id` and a literal `query`.
 Optional `context_lines` is `0..5`; `max_tokens` is `64..1024`. Repeated
@@ -119,6 +129,7 @@ test/           # dependency-free integration and boundary checks
 | JSON-RPC frame | 1 MiB |
 | Serialized tool-result value | 64 KiB |
 | Local model-visible tool output | 262,144 byte-proxy tokens per process session |
+| Optional token ledger | 1,000,000 entries / 64 MiB / one process writer |
 | Context View source content | 4,096 bytes per first view / fetched page |
 | Search query | 64 Unicode characters / 256 UTF-8 bytes |
 | Search context | 0–5 lines / 64–1,024 byte-proxy tokens |
@@ -141,5 +152,6 @@ The filesystem objects are atomically finalized and verified before every
 page read. Session metadata remains volatile and process-local, and backend
 results still arrive as complete strings. The preview has no durable index,
 end-to-end streaming adapter, comprehensive secret/PII detection, regex/ranked
-search, JSONPath or richer predicates, full CommonMark structure, token ledger,
-approval flow, fuzz qualification, or production support claim.
+search, JSONPath or richer predicates, full CommonMark structure, SQLite
+ledger/multi-writer recovery, approval flow, fuzz qualification, or production
+support claim.

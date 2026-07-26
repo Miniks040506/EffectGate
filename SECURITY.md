@@ -114,6 +114,11 @@ The current preview assumes:
 - File data is synced before same-volume rename, but directory durability,
   shared-writer locking, durable metadata, and crash qualification are not yet
   production claims. Network filesystems are unsupported.
+- The optional token ledger is a flushed, append-only JSONL file for one proxy
+  process/session. It stores digests, counts, generated identifiers, fixed safe
+  categories, and timestamps but no measured content. It rejects a malformed,
+  truncated, inconsistent, or foreign-session file; it has no shared-writer
+  locking, SQLite transaction recovery, encryption, or secure-erasure claim.
 - Artifact identifiers expose a SHA-256 content digest. Do not use this preview
   with secret-bearing or attacker-controlled real-world results.
 - Cursor envelopes use HMAC-SHA256 and bind artifact, source view, next

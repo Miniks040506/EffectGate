@@ -7,7 +7,7 @@
 **Design goal:** Spend tokens on reasoning, not tool noise.
 
 [![Phase](https://img.shields.io/badge/status-Phase%201%20preview-7c3aed?style=flat-square)](#current-boundary)
-[![Version](https://img.shields.io/badge/version-0.11.0-0f766e?style=flat-square)](poc/package.json)
+[![Version](https://img.shields.io/badge/version-0.12.0-0f766e?style=flat-square)](poc/package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25-111827?style=flat-square)](#protocol-surface)
 [![License](https://img.shields.io/badge/license-Apache--2.0-D22128?style=flat-square)](LICENSE)
@@ -189,6 +189,13 @@ rejected output does not mutate usage. This is EffectGate output accounting,
 not a measurement or guarantee of prompts, assistant output, protocol errors,
 or the host's total conversation context.
 
+Pass `--token-ledger FILE` to persist one process session as validated JSONL.
+Entries contain stage, direction, byte count, measurement basis, counter
+identity/version, input digest, safe category, and trusted artifact/view IDs
+when available. Raw tool content and protected arguments are never written.
+Byte-proxy values are recomputed when the file is opened; truncated,
+inconsistent, cross-session, or malformed ledgers fail closed.
+
 Call `effectgate_search` with an `artifact_id` and literal `query` to retrieve a
 bounded redacted context window. Optional `context_lines` ranges from zero
 through five; `max_tokens` ranges from 64 through 1,024 and defaults to 512.
@@ -338,6 +345,8 @@ The dependency-free suite directly verifies:
   deterministic estimate calibration;
 - atomic cumulative output admission, replay accounting, session isolation,
   configurable exhaustion, and an explicit non-claim about host context;
+- persistent raw-result/output provenance, byte-proxy recomputation,
+  Context View identity binding, corruption denial, and secret containment;
 - byte-for-byte reconstruction across multibyte UTF-8 page boundaries;
 - assignment, bearer-token, and prefixed-token sentinel removal across every
   first/fetched page;
@@ -387,7 +396,7 @@ The dependency-free suite directly verifies:
 | Quota-limited temporary filesystem CAS | Durable metadata, shared-writer locking, crash-root recovery, and production GC |
 | Cited paging/search/projection plus fail-closed opaque-content withholding | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
 | HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |
-| Basis-aware counters plus first-view/page and local session-output guards | Persistent token ledger and host comparison benchmarks |
+| Basis-aware counters, output guards, and optional single-session JSONL ledger | SQLite-backed multi-writer ledger and host comparison benchmarks |
 | Deterministic local tests | Compatibility, fuzz, latency, and crash qualification |
 | Sanitized public errors | Intent approval, durable journal, verification, and reconciliation |
 | Node.js PoC | Tested installer and supported-platform matrix |
