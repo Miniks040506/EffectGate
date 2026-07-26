@@ -32,14 +32,23 @@ import {
   CONTEXT_PROJECT_MAX_TOKENS,
   CONTEXT_PROJECT_MIN_TOKENS
 } from "../projection/json-project.mjs";
+import {
+  MAX_SESSION_EMITTED_TOKENS,
+  SessionOutputLimitError,
+  createSessionOutputGuard
+} from "../budget/session-output-guard.mjs";
 
 export const MAX_FRAME_BYTES = 1024 * 1024;
 export const MAX_TOOL_RESULT_BYTES = 64 * 1024;
+export const DEFAULT_MAX_SESSION_EMITTED_TOKENS = 256 * 1024;
 export const MCP_VERSION = "2025-11-25";
-export const EFFECTGATE_VERSION = "0.10.0";
+export const EFFECTGATE_VERSION = "0.11.0";
 const MAX_PENDING_REQUESTS = 64;
 const MAX_ID_BYTES = 128;
 const CURSOR_INPUT_PATTERN = new RegExp(CURSOR_PATTERN, "u");
+const SESSION_OUTPUT_LIMIT_MESSAGE =
+  "EffectGate's local emitted-output limit is exhausted; " +
+  "host total context usage is not measured.";
 
 class FrameTooLargeError extends Error {}
 class ResultTooLargeError extends RangeError {}
@@ -816,14 +825,31 @@ export function runFixture() {
 
 function parseServeArguments(args) {
   let source = "fixture";
+  let maxSessionEmittedTokens = DEFAULT_MAX_SESSION_EMITTED_TOKENS;
 
   for (let index = 0; index < args.length; index += 1) {
-    if (args[index] !== "--source" || index + 1 >= args.length) {
+    const option = args[index];
+    const value = args[index + 1];
+    if (value === undefined) {
       throw new Error(
-        "Usage: effectgate.mjs mcp serve [--source NAME]"
+        "Usage: effectgate.mjs mcp serve [--source NAME] " +
+          "[--max-session-emitted-tokens COUNT]"
       );
     }
-    source = args[index + 1];
+    if (option === "--source") {
+      source = value;
+    } else if (
+      option === "--max-session-emitted-tokens" &&
+      /^[1-9]\d{0,6}$/u.test(value) &&
+      Number(value) <= MAX_SESSION_EMITTED_TOKENS
+    ) {
+      maxSessionEmittedTokens = Number(value);
+    } else {
+      throw new Error(
+        "Usage: effectgate.mjs mcp serve [--source NAME] " +
+          "[--max-session-emitted-tokens COUNT]"
+      );
+    }
     index += 1;
   }
 
@@ -831,7 +857,7 @@ function parseServeArguments(args) {
     throw new Error("Backend source must match [A-Za-z0-9_.-] and be <=64 chars.");
   }
 
-  return { source };
+  return { source, maxSessionEmittedTokens };
 }
 
 function backendEnvironment() {
@@ -854,7 +880,7 @@ function backendEnvironment() {
 }
 
 export function runProxy(args) {
-  const { source } = parseServeArguments(args);
+  const { source, maxSessionEmittedTokens } = parseServeArguments(args);
   const prefix = `${source}__`;
   const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "fixture"], {
     env: backendEnvironment(),
@@ -865,12 +891,20 @@ export function runProxy(args) {
   const pending = new Map();
   let toolNames = new Map();
   const contextStore = new ContextStore();
+  const sessionOutput = createSessionOutputGuard({
+    maxTokens: maxSessionEmittedTokens
+  });
   let lifecycle = "new";
   let sequence = 0;
   let backendAvailable = true;
   let reportedStderr = false;
   let backendInputBlocked = false;
   let outputBlocked = false;
+
+  function guardModelVisible(result) {
+    sessionOutput.admit(serialize(result));
+    return result;
+  }
 
   function reply(message) {
     let writable;
@@ -1026,6 +1060,16 @@ export function runProxy(args) {
           result: waiting.transform(message.result)
         });
       } catch (error) {
+        if (error instanceof SessionOutputLimitError) {
+          reply(
+            errorMessage(
+              waiting.clientId,
+              -32008,
+              SESSION_OUTPUT_LIMIT_MESSAGE
+            )
+          );
+          return;
+        }
         if (error instanceof ResultTooLargeError) {
           reply(
             errorMessage(
@@ -1230,8 +1274,9 @@ export function runProxy(args) {
                 "tool catalog exceeds the output limit"
               );
             }
+            const guardedCatalog = guardModelVisible(publicCatalog);
             toolNames = nextNames;
-            return publicCatalog;
+            return guardedCatalog;
           });
           break;
 
@@ -1262,17 +1307,25 @@ export function runProxy(args) {
               reply({
                 jsonrpc: "2.0",
                 id: message.id,
-                result: contextViewResult(
-                  contextStore.fetch(callArguments.cursor)
+                result: guardModelVisible(
+                  contextViewResult(
+                    contextStore.fetch(callArguments.cursor)
+                  )
                 )
               });
             } catch (error) {
               reply(
                 errorMessage(
                   message.id,
-                  error instanceof InvalidCursorError ? -32602 : -32603,
+                  error instanceof InvalidCursorError
+                    ? -32602
+                    : error instanceof SessionOutputLimitError
+                      ? -32008
+                      : -32603,
                   error instanceof InvalidCursorError
                     ? "The retrieval cursor is invalid."
+                    : error instanceof SessionOutputLimitError
+                      ? SESSION_OUTPUT_LIMIT_MESSAGE
                     : "The Context View could not be created."
                 )
               );
@@ -1329,12 +1382,14 @@ export function runProxy(args) {
               reply({
                 jsonrpc: "2.0",
                 id: message.id,
-                result: contextViewResult(
-                  contextStore.search(
-                    callArguments.artifact_id,
-                    callArguments.query,
-                    callArguments.context_lines ?? 1,
-                    callArguments.max_tokens ?? 512
+                result: guardModelVisible(
+                  contextViewResult(
+                    contextStore.search(
+                      callArguments.artifact_id,
+                      callArguments.query,
+                      callArguments.context_lines ?? 1,
+                      callArguments.max_tokens ?? 512
+                    )
                   )
                 )
               });
@@ -1345,11 +1400,15 @@ export function runProxy(args) {
                   error instanceof InvalidArtifactError ||
                     error instanceof TypeError
                     ? -32602
+                    : error instanceof SessionOutputLimitError
+                      ? -32008
                     : -32603,
                   error instanceof InvalidArtifactError
                     ? "The artifact reference is invalid."
                     : error instanceof TypeError
                       ? "The search arguments are invalid."
+                      : error instanceof SessionOutputLimitError
+                        ? SESSION_OUTPUT_LIMIT_MESSAGE
                       : "The Context View could not be created."
                 )
               );
@@ -1413,19 +1472,21 @@ export function runProxy(args) {
               reply({
                 jsonrpc: "2.0",
                 id: message.id,
-                result: contextViewResult(
-                  contextStore.project(callArguments.artifact_id, {
-                    format: callArguments.format,
-                    fields,
-                    columns,
-                    ...(filter ? { filter } : {}),
-                    ...(callArguments.heading !== undefined
-                      ? { heading: callArguments.heading }
-                      : {}),
-                    offset: callArguments.offset ?? 0,
-                    limit: callArguments.limit ?? 100,
-                    maxTokens: callArguments.max_tokens ?? 512
-                  })
+                result: guardModelVisible(
+                  contextViewResult(
+                    contextStore.project(callArguments.artifact_id, {
+                      format: callArguments.format,
+                      fields,
+                      columns,
+                      ...(filter ? { filter } : {}),
+                      ...(callArguments.heading !== undefined
+                        ? { heading: callArguments.heading }
+                        : {}),
+                      offset: callArguments.offset ?? 0,
+                      limit: callArguments.limit ?? 100,
+                      maxTokens: callArguments.max_tokens ?? 512
+                    })
+                  )
                 )
               });
             } catch (error) {
@@ -1435,11 +1496,15 @@ export function runProxy(args) {
                   error instanceof InvalidArtifactError ||
                     error instanceof TypeError
                     ? -32602
+                    : error instanceof SessionOutputLimitError
+                      ? -32008
                     : -32603,
                   error instanceof InvalidArtifactError
                     ? "The artifact reference is invalid."
                     : error instanceof TypeError
                       ? "The projection arguments are invalid."
+                      : error instanceof SessionOutputLimitError
+                        ? SESSION_OUTPUT_LIMIT_MESSAGE
                       : "The Context View could not be created."
                 )
               );
@@ -1465,10 +1530,12 @@ export function runProxy(args) {
             ...message.params,
             name: admittedTool.backendName
           }, (result) =>
-            boundToolResult(result, {
-              contextStore,
-              contextViewEligible: admittedTool.contextViewEligible
-            })
+            guardModelVisible(
+              boundToolResult(result, {
+                contextStore,
+                contextViewEligible: admittedTool.contextViewEligible
+              })
+            )
           );
           break;
         }
@@ -1510,7 +1577,8 @@ export async function main(args = process.argv.slice(2)) {
   }
 
   throw new Error(
-    "Usage: effectgate.mjs fixture | mcp serve [--source NAME]"
+    "Usage: effectgate.mjs fixture | mcp serve [--source NAME] " +
+      "[--max-session-emitted-tokens COUNT]"
   );
 }
 
