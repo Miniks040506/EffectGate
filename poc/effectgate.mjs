@@ -11,9 +11,11 @@ import {
   CONTEXT_SEARCH_MAX_QUERY_LENGTH,
   CONTEXT_SEARCH_MAX_TOKENS,
   CONTEXT_SEARCH_MIN_TOKENS,
+  ContextRetentionError,
   ContextStore,
   InvalidArtifactError,
-  InvalidCursorError
+  InvalidCursorError,
+  UnsafeArtifactError
 } from "./context-view.mjs";
 import {
   CURSOR_MAX_BYTES,
@@ -34,12 +36,13 @@ import {
 export const MAX_FRAME_BYTES = 1024 * 1024;
 export const MAX_TOOL_RESULT_BYTES = 64 * 1024;
 export const MCP_VERSION = "2025-11-25";
-export const EFFECTGATE_VERSION = "0.7.0";
+export const EFFECTGATE_VERSION = "0.8.0";
 const MAX_PENDING_REQUESTS = 64;
 const MAX_ID_BYTES = 128;
 const CURSOR_INPUT_PATTERN = new RegExp(CURSOR_PATTERN, "u");
 
 class FrameTooLargeError extends Error {}
+class ResultTooLargeError extends RangeError {}
 
 export const FIXTURE_TOOL = Object.freeze({
   name: "echo",
@@ -364,12 +367,16 @@ export function buildFixtureMarkdown(lines, includeSecrets = false) {
   ].join("");
 }
 
-function serializedBytes(value) {
+function serialize(value) {
   const serialized = JSON.stringify(value);
   if (typeof serialized !== "string") {
     throw new TypeError("value is not JSON serializable");
   }
-  return Buffer.byteLength(serialized, "utf8");
+  return serialized;
+}
+
+function serializedBytes(value) {
+  return Buffer.byteLength(serialize(value), "utf8");
 }
 
 function contextViewResult(view, isError = false) {
@@ -378,9 +385,53 @@ function contextViewResult(view, isError = false) {
     isError
   };
   if (serializedBytes(result) > MAX_TOOL_RESULT_BYTES) {
-    throw new RangeError("Context View result exceeds the output limit");
+    throw new ResultTooLargeError(
+      "Context View result exceeds the output limit"
+    );
   }
   return result;
+}
+
+function safeToolFailure(code, message) {
+  return {
+    content: [{ type: "text", text: `${code}: ${message}` }],
+    isError: true
+  };
+}
+
+function retainedContextView(
+  contextStore,
+  text,
+  mediaType,
+  isError,
+  retainedResult = false
+) {
+  try {
+    return contextViewResult(
+      contextStore.ingest(text, mediaType, { retainedResult }),
+      isError
+    );
+  } catch (error) {
+    if (error instanceof ContextRetentionError) {
+      return safeToolFailure(
+        "EG-CAS-001",
+        "The result could not be retained within the configured artifact limit; no source content was emitted."
+      );
+    }
+    if (error instanceof TypeError || error instanceof UnsafeArtifactError) {
+      return safeToolFailure(
+        "EG-VIEW-002",
+        "The result could not be projected safely; no source content was emitted."
+      );
+    }
+    if (error instanceof ResultTooLargeError || error instanceof RangeError) {
+      return safeToolFailure(
+        "EG-VIEW-001",
+        "The retained result could not fit the configured view budget; no source content was emitted."
+      );
+    }
+    throw error;
+  }
 }
 
 export function boundToolResult(
@@ -396,9 +447,19 @@ export function boundToolResult(
     throw new TypeError("invalid tool result");
   }
 
+  const serialized = serialize(result);
+  const resultBytes = Buffer.byteLength(serialized, "utf8");
   const textItem = result.content[0];
   const validIsError =
     result.isError === undefined || typeof result.isError === "boolean";
+  const unsupportedContent = result.content.some(
+    (item) =>
+      item === null ||
+      typeof item !== "object" ||
+      Array.isArray(item) ||
+      item.type !== "text" ||
+      typeof item.text !== "string"
+  );
   const exactTextResult =
     result.content.length === 1 &&
     validIsError &&
@@ -411,19 +472,60 @@ export function boundToolResult(
     textItem.type === "text" &&
     typeof textItem.text === "string" &&
     Object.keys(textItem).every((key) => key === "type" || key === "text");
+  if (!validIsError) throw new TypeError("invalid tool result");
+  let requiresView;
+  try {
+    requiresView =
+      unsupportedContent ||
+      (exactTextResult
+        ? contextStore.requiresView(textItem.text)
+        : contextStore.requiresView(serialized, "application/json"));
+  } catch (error) {
+    if (!(error instanceof UnsafeArtifactError)) throw error;
+    return safeToolFailure(
+      "EG-VIEW-002",
+      "The result could not be projected safely; no source content was emitted."
+    );
+  }
+
+  if (contextViewEligible && exactTextResult) {
+    const textBytes = Buffer.byteLength(textItem.text, "utf8");
+    if (
+      textBytes > CONTEXT_PAGE_BYTES ||
+      requiresView
+    ) {
+      return retainedContextView(
+        contextStore,
+        textItem.text,
+        "text/plain",
+        result.isError === true
+      );
+    }
+  }
 
   if (
     contextViewEligible &&
-    exactTextResult &&
-    Buffer.byteLength(textItem.text, "utf8") > CONTEXT_PAGE_BYTES
+    (resultBytes > MAX_TOOL_RESULT_BYTES ||
+      requiresView)
   ) {
-    return contextViewResult(
-      contextStore.ingest(textItem.text),
-      result.isError === true
+    return retainedContextView(
+      contextStore,
+      serialized,
+      unsupportedContent
+        ? "application/octet-stream"
+        : "application/json",
+      result.isError === true,
+      true
     );
   }
-  if (serializedBytes(result) > MAX_TOOL_RESULT_BYTES) {
-    throw new RangeError("tool result exceeds the output limit");
+  if (!contextViewEligible && requiresView) {
+    return safeToolFailure(
+      "EG-VIEW-002",
+      "The typed result was withheld because it requires redaction or opaque-content handling; no source content was emitted."
+    );
+  }
+  if (resultBytes > MAX_TOOL_RESULT_BYTES) {
+    throw new ResultTooLargeError("tool result exceeds the output limit");
   }
   return result;
 }
@@ -557,6 +659,21 @@ function fixtureResponse(request) {
       return { jsonrpc: "2.0", id, result: {} };
 
     case "tools/list":
+      if (request.params?.cursor === "oversized") {
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            tools: [
+              {
+                ...FIXTURE_TOOL,
+                name: "oversized_catalog",
+                description: "x".repeat(MAX_TOOL_RESULT_BYTES)
+              }
+            ]
+          }
+        };
+      }
       if (request.params?.cursor === "page-2") {
         return {
           jsonrpc: "2.0",
@@ -908,7 +1025,17 @@ export function runProxy(args) {
           id: waiting.clientId,
           result: waiting.transform(message.result)
         });
-      } catch {
+      } catch (error) {
+        if (error instanceof ResultTooLargeError) {
+          reply(
+            errorMessage(
+              waiting.clientId,
+              -32005,
+              `The response exceeds the ${MAX_TOOL_RESULT_BYTES}-byte result limit.`
+            )
+          );
+          return;
+        }
         reply(
           errorMessage(
             waiting.clientId,
@@ -1086,8 +1213,7 @@ export function runProxy(args) {
               });
               return [{ ...tool, name: publicName }];
             });
-            toolNames = nextNames;
-            return {
+            const publicCatalog = {
               ...result,
               tools:
                 message.params?.cursor === undefined
@@ -1099,6 +1225,13 @@ export function runProxy(args) {
                     ]
                   : tools
             };
+            if (serializedBytes(publicCatalog) > MAX_TOOL_RESULT_BYTES) {
+              throw new ResultTooLargeError(
+                "tool catalog exceeds the output limit"
+              );
+            }
+            toolNames = nextNames;
+            return publicCatalog;
           });
           break;
 

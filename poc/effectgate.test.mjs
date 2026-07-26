@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
+  CONTEXT_PAGE_BYTES,
   ContextStore,
   InvalidArtifactError,
   InvalidCursorError
@@ -1504,14 +1505,103 @@ test("tool-result bounding fails closed and preserves error semantics", () => {
     structuredContent: { blob: "x".repeat(MAX_TOOL_RESULT_BYTES) },
     isError: false
   };
+  const boundedStructured = boundToolResult(oversizedStructured, {
+    contextStore,
+    contextViewEligible: true
+  });
+  let structuredView = JSON.parse(boundedStructured.content[0].text);
+  let reconstructed = "";
+  for (;;) {
+    assert.ok(
+      structuredView.diagnostics.some(({ code }) => code === "EG-VIEW-002")
+    );
+    assert.ok(
+      structuredView.budget.applied_bytes <=
+        structuredView.budget.max_bytes
+    );
+    reconstructed += structuredView.content;
+    if (!structuredView.retrieval.more_available) break;
+    structuredView = contextStore.fetch(structuredView.retrieval.cursor);
+  }
+  assert.equal(reconstructed, JSON.stringify(oversizedStructured));
+  assert.ok(
+    structuredView.diagnostics.some(
+      ({ code }) => code === "EG-VIEW-RESULT-001"
+    )
+  );
+
+  const secret = `api_key=${"S".repeat(24)}`;
+  const protectedResult = boundToolResult(
+    { content: [{ type: "text", text: secret }], isError: false },
+    { contextStore, contextViewEligible: true }
+  );
+  const protectedView = JSON.parse(protectedResult.content[0].text);
+  assert.equal(protectedView.status, "complete");
+  assert.equal(JSON.stringify(protectedResult).includes(secret), false);
+  assert.match(protectedView.content, /\[REDACTED\]|\*+/);
+
+  const typedOpaque = "Aa0Bb1Cc2Dd3".repeat(16);
+  for (const isError of [false, true]) {
+    const withheldTyped = boundToolResult(
+      {
+        content: [{ type: "text", text: "typed metadata" }],
+        structuredContent: { blob: typedOpaque },
+        isError
+      },
+      { contextStore, contextViewEligible: false }
+    );
+    assert.equal(withheldTyped.isError, true);
+    assert.match(withheldTyped.content[0].text, /^EG-VIEW-002:/);
+    assert.equal(JSON.stringify(withheldTyped).includes(typedOpaque), false);
+  }
+
   assert.throws(
     () =>
-      boundToolResult(oversizedStructured, {
-        contextStore,
-        contextViewEligible: true
-      }),
-    /output limit/
+      boundToolResult(
+        { content: [{ type: "text", text: "invalid" }], isError: "false" },
+        { contextStore, contextViewEligible: true }
+      ),
+    /invalid tool result/
   );
+
+  const constrainedStore = new ContextStore({
+    maxArtifactBytes: 64,
+    maxStoreBytes: 64
+  });
+  const retentionFailure = boundToolResult(
+    {
+      content: [{ type: "text", text: "x".repeat(CONTEXT_PAGE_BYTES + 1) }],
+      isError: false
+    },
+    { contextStore: constrainedStore, contextViewEligible: true }
+  );
+  assert.equal(retentionFailure.isError, true);
+  assert.match(retentionFailure.content[0].text, /^EG-CAS-001:/);
+  assert.equal(retentionFailure.content[0].text.includes("x".repeat(32)), false);
+  constrainedStore.close();
+
+  const cursorLimitedStore = new ContextStore({
+    pageBytes: 4,
+    maxCursors: 2
+  });
+  boundToolResult(
+    {
+      content: [{ type: "text", text: "a".repeat(CONTEXT_PAGE_BYTES + 1) }],
+      isError: false
+    },
+    { contextStore: cursorLimitedStore, contextViewEligible: true }
+  );
+  const viewFailure = boundToolResult(
+    {
+      content: [{ type: "text", text: "b".repeat(CONTEXT_PAGE_BYTES + 1) }],
+      isError: false
+    },
+    { contextStore: cursorLimitedStore, contextViewEligible: true }
+  );
+  assert.equal(viewFailure.isError, true);
+  assert.match(viewFailure.content[0].text, /^EG-VIEW-001:/);
+  cursorLimitedStore.close();
+
   assert.throws(
     () =>
       boundToolResult(
@@ -1525,6 +1615,7 @@ test("tool-result bounding fails closed and preserves error semantics", () => {
       ),
     /output limit/
   );
+  contextStore.close();
 });
 
 test("invalid and oversized frames fail safely and the server recovers", async (context) => {
