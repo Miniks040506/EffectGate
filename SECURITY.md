@@ -128,6 +128,9 @@ The current preview assumes:
   common-input digests rather than prompt, backend, or rubric content. Runner
   failure messages are discarded. The caller and its `runProfile` callback are
   trusted; the harness is not a sandbox for external model or host adapters.
+  The bundled adapter launches only the fixture and preview proxy, records P2
+  as unavailable, and measures tool schema/result byte proxies—not host total
+  session usage.
 - Artifact identifiers expose a SHA-256 content digest. Do not use this preview
   with secret-bearing or attacker-controlled real-world results.
 - Cursor envelopes use HMAC-SHA256 and bind artifact, source view, next

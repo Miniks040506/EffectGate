@@ -40,6 +40,19 @@ Persist safe token provenance for one proxy session with:
 node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp serve --token-ledger /absolute/path/to/tokens.jsonl
 ```
 
+Run the deterministic `BENCH-SMALL-005` fixture adapter with:
+
+```powershell
+npm run benchmark:fixture -- --output .\benchmark.jsonl --ledger-directory .\benchmark-ledgers --repetitions 1
+```
+
+It executes the direct native fixture (P0), typed EffectGate proxy (P1), and
+eager direct fixture (P3) as real child processes. Compact mux is not
+implemented, so P2 is retained as a `profile_unavailable` failure. The output
+contains raw per-run latency, success, call count, and byte-proxy tool
+schema/result measurements. Only P1 creates a joined token ledger. No total
+host-session token value or savings claim is produced.
+
 Benchmark adapters can import `runPairedBenchmark()` from
 `src/benchmark/paired-harness.mjs`. One call runs P0, P1, P2, and P3 for every
 repetition in a seeded deterministic order. The callback receives stable
@@ -53,7 +66,7 @@ node effectgate.mjs mcp serve --token-ledger tokens.jsonl --run-id RUN_ID --prof
 The harness requires SHA-256 digests for common backend bytes, prompt, and
 success rubric. It creates its JSONL evidence file exclusively, records every
 completed or failed profile run, and never persists callback error messages.
-It does not launch a model or claim benchmark results; real host adapters and
+It does not launch a model or claim token savings; real host adapters and
 statistical reporting remain separate qualification work.
 
 The fixture exposes:
@@ -175,6 +188,6 @@ process-local, and backend results still arrive as complete strings. The
 preview has no durable index,
 end-to-end streaming adapter, comprehensive secret/PII detection, regex/ranked
 search, JSONPath or richer predicates, full CommonMark structure, SQLite
-ledger/multi-writer recovery, real model/host benchmark adapter, statistical
-report, confidence interval, approval flow, fuzz qualification, or production
-support claim.
+ledger/multi-writer recovery, compact-mux profile, real model/host benchmark
+adapter, statistical report, confidence interval, approval flow, fuzz
+qualification, or production support claim.
