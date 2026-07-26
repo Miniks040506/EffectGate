@@ -7,7 +7,7 @@
 **Design goal:** Spend tokens on reasoning, not tool noise.
 
 [![Phase](https://img.shields.io/badge/status-Phase%201%20preview-7c3aed?style=flat-square)](#current-boundary)
-[![Version](https://img.shields.io/badge/version-0.2.0-0f766e?style=flat-square)](poc/package.json)
+[![Version](https://img.shields.io/badge/version-0.3.0-0f766e?style=flat-square)](poc/package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25-111827?style=flat-square)](#protocol-surface)
 [![License](https://img.shields.io/badge/license-Apache--2.0-D22128?style=flat-square)](LICENSE)
@@ -67,7 +67,7 @@ flowchart LR
         Router["JSON-RPC / MCP router"]
         Catalog["Read-only admission map<br/>public name → fixture name"]
         Views["Context View pager<br/>4 KiB redacted, cited text pages"]
-        Store["In-memory artifact store<br/>SHA-256 · 4 MiB quota"]
+        Store["Temporary filesystem CAS<br/>SHA-256 · 4 MiB logical quota"]
         Output["Error sanitizer<br/>output guard + backpressure"]
 
         Input --> Router
@@ -104,7 +104,9 @@ namespace; it does not select a backend.
 | Catalog | Calls require a public name learned from an admitted `tools/list` |
 | Name isolation | Backend names cannot be called directly or invented |
 | Large text | Exact single-text results without an `outputSchema` are paged above 4 KiB |
-| Artifact storage | SHA-256-addressed memory store: 1 MiB per artifact, 4 MiB total, 16 artifacts |
+| Artifact storage | 64 KiB chunk writer into a SHA-256 filesystem CAS: 1 MiB per artifact, 4 MiB logical total, 16 artifacts |
+| Finalization | File `fsync`, same-volume atomic rename, startup `.part` cleanup, deduplication, and full-hash read verification |
+| Corruption | A missing, truncated, or hash-mismatched object fails closed; corrupt objects are moved to quarantine |
 | Tool-result output | Every serialized tool-result value is capped at 64 KiB |
 | Retrieval | Random 192-bit cursors; process/session-local with a 10-minute expiry |
 | Continuity | Artifacts with an unfetched cursor are pinned; recent same-session retries use a bounded page cache |
@@ -153,8 +155,9 @@ cross-process, and unknown cursors all return the same public error.
 > [!NOTE]
 > The 4 KiB budget measures source content inside the Context View. MCP and JSON
 > envelope bytes are covered by a 64 KiB tool-result limit and the separate
-> 1 MiB frame limit. Storage is volatile: artifacts disappear on safe eviction
-> or process exit, and cursors also expire after 10 minutes.
+> 1 MiB frame limit. Session metadata remains volatile. The proxy uses a
+> process-owned temporary CAS removed on safe eviction or normal shutdown;
+> cursors expire after 10 minutes.
 
 ## Protocol surface
 
@@ -191,7 +194,7 @@ It is **not**:
 - an operating-system sandbox;
 - an authentication or encryption layer;
 - a comprehensive secret/PII detector or tenant-isolation system;
-- a persistent or streaming content-addressed store;
+- a durable indexed CAS or end-to-end streaming backend adapter;
 - a durable audit journal;
 - an approval, verification, or reconciliation engine;
 - an independent JSON Schema validator for tool-call arguments;
@@ -256,6 +259,10 @@ The dependency-free suite directly verifies:
 - same-session cursor retry with a byte-identical cached page;
 - cursor expiry and cross-store rejection with a non-disclosing public error;
 - pinning of artifacts that still have a live continuation;
+- atomic filesystem finalization, interrupted `.part` recovery, and
+  cross-instance content deduplication;
+- full-hash read verification, corruption quarantine, and physical deletion
+  only after cursor pins are released;
 - whole-result output caps for errors, structured data, and typed results;
 - malformed and oversized frame rejection with parser recovery;
 - invalid request-ID sanitization without reflecting hidden values;
@@ -269,7 +276,7 @@ The dependency-free suite directly verifies:
 |---|---|
 | Fixture-only stdio proxy | Reviewed stdio MCP backend adapters |
 | Typed read-only admission | Signed/pinned backend capability passports |
-| Quota-limited in-memory artifact store | Streaming, crash-safe persistent CAS |
+| Quota-limited temporary filesystem CAS | Durable metadata, shared-writer locking, crash-root recovery, and production GC |
 | Cited, deterministic text redaction and paging | Field-aware policy redaction, search, and deterministic JSON/JSONL/CSV projection |
 | Opaque session-local fetch cursors | Authenticated principal/client/policy bindings |
 | Byte-proxy counts in each view | Token ledger and host comparison benchmarks |
@@ -291,6 +298,7 @@ acceptance evidence exists.
     ├── context-view.mjs     # bounded store, paging, citations, and cursors
     ├── effectgate.mjs       # MCP proxy, fixture, and command entry point
     ├── effectgate.test.mjs  # protocol, paging, isolation, and failure checks
+    ├── filesystem-cas.mjs   # chunked writes, atomic finalize, and verification
     ├── package.json         # Node version, license, and scripts
     └── README.md            # focused preview operating notes
 ```

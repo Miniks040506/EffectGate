@@ -3,9 +3,10 @@
 ## Project status
 
 EffectGate is currently a fixture-only Phase 1 preview. It includes a bounded,
-in-memory Context View path with deterministic high-signal credential
-redaction, but is not production-ready and must not be used to protect real
-tool effects, secrets, or untrusted external backends.
+filesystem-backed Context View path with deterministic high-signal credential
+redaction and volatile session metadata. It is not production-ready and must
+not be used to protect real tool effects, secrets, or untrusted external
+backends.
 
 ## Supported versions
 
@@ -55,6 +56,7 @@ Reports are especially useful when they demonstrate:
 - leakage of raw backend errors, process data, credentials, or hidden names;
 - protocol confusion, request-correlation failure, or namespace collision;
 - skipped, duplicated, oversized, or uncited Context View bytes;
+- acceptance of interrupted, missing, truncated, or hash-mismatched CAS data;
 - cross-session cursor use, expiry bypass, modification, or existence leaks;
 - bypass of artifact, store, or active-cursor quotas;
 - escape from the intended child-process or environment boundary;
@@ -89,8 +91,14 @@ The current preview assumes:
   bearer tokens, and selected token prefixes. It is not comprehensive
   secret/PII detection or protection. More than 4,096 detected spans fails
   closed.
-- Artifacts are buffered and retained only in process memory. The store is
-  neither streaming nor crash-safe and provides no secure-erasure guarantee.
+- Backend results still arrive at the proxy as complete strings; ingestion is
+  not yet end-to-end bounded-memory streaming.
+- Finalized raw objects use a process-owned temporary filesystem CAS. Session
+  metadata is memory-only, abrupt termination may leave an undiscovered
+  temporary root, and there is no secure-erasure guarantee.
+- File data is synced before same-volume rename, but directory durability,
+  shared-writer locking, durable metadata, and crash qualification are not yet
+  production claims. Network filesystems are unsupported.
 - Artifact identifiers expose a SHA-256 content digest. Do not use this preview
   with secret-bearing or attacker-controlled real-world results.
 - Cursor binding is achieved by random server-side, process-local state. There

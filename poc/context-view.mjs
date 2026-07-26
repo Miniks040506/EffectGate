@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
+import { FilesystemCas } from "./filesystem-cas.mjs";
+
 export const CONTEXT_PAGE_BYTES = 4096;
 export const CONTEXT_MAX_ARTIFACT_BYTES = 1024 * 1024;
 export const CONTEXT_STORE_BYTES = 4 * 1024 * 1024;
@@ -81,6 +83,17 @@ function pageEnd(bytes, start, maxBytes) {
   return end;
 }
 
+function* utf8Chunks(text, maxBytes = 64 * 1024) {
+  const encoder = new TextEncoder();
+  const buffer = Buffer.allocUnsafe(maxBytes);
+  for (let start = 0; start < text.length;) {
+    const { read, written } = encoder.encodeInto(text.slice(start), buffer);
+    if (read === 0) throw new Error("UTF-8 encoding made no progress");
+    yield buffer.subarray(0, written);
+    start += read;
+  }
+}
+
 function utf8ByteOffsets(text) {
   const offsets = new Uint32Array(text.length + 1);
   let byteOffset = 0;
@@ -124,7 +137,7 @@ function scanRedactions(text) {
   );
 }
 
-function renderRedactedPage(artifact, start, end) {
+function renderRedactedPage(artifact, page, start, end) {
   const relevant = artifact.redactionSpans.filter(
     (span) => span.byteEnd > start && span.byteStart < end
   );
@@ -138,7 +151,7 @@ function renderRedactedPage(artifact, start, end) {
     if (redactionStart > position) {
       content.push(
         new TextDecoder("utf-8", { fatal: true }).decode(
-          artifact.bytes.subarray(position, redactionStart)
+          page.subarray(position - start, redactionStart - start)
         )
       );
     }
@@ -153,7 +166,7 @@ function renderRedactedPage(artifact, start, end) {
   if (position < end) {
     content.push(
       new TextDecoder("utf-8", { fatal: true }).decode(
-        artifact.bytes.subarray(position, end)
+        page.subarray(position - start, end - start)
       )
     );
   }
@@ -180,7 +193,8 @@ export class ContextStore {
     maxArtifacts = 16,
     maxCursors = 64,
     cursorTtlMs = CONTEXT_CURSOR_TTL_MS,
-    now = Date.now
+    now = Date.now,
+    casDirectory
   } = {}) {
     for (const [name, value, minimum] of [
       ["pageBytes", pageBytes, 4],
@@ -211,6 +225,10 @@ export class ContextStore {
     this.maxCursors = maxCursors;
     this.cursorTtlMs = cursorTtlMs;
     this.now = now;
+    this.cas = new FilesystemCas({
+      directory: casDirectory,
+      maxObjectBytes: maxArtifactBytes
+    });
     this.sessionId = randomId("sess");
     this.artifacts = new Map();
     this.cursors = new Map();
@@ -229,22 +247,19 @@ export class ContextStore {
       throw new TypeError("mediaType must contain 1 through 128 characters");
     }
 
-    const bytes = Buffer.from(text, "utf8");
+    const byteLength = Buffer.byteLength(text, "utf8");
     if (
-      bytes.length > this.maxArtifactBytes ||
-      bytes.length > this.maxStoreBytes
+      byteLength > this.maxArtifactBytes ||
+      byteLength > this.maxStoreBytes
     ) {
       throw new RangeError("artifact exceeds the Context Store capacity");
     }
 
-    const sourceDigest = digest(bytes);
+    const sourceDigest = digest(text);
     const artifactId = `art_${sourceDigest.slice("sha256:".length)}`;
     let artifact = this.artifacts.get(artifactId);
 
     if (artifact) {
-      if (!artifact.bytes.equals(bytes)) {
-        throw new Error("artifact digest collision");
-      }
       this.artifacts.delete(artifactId);
       this.artifacts.set(artifactId, artifact);
     } else {
@@ -252,7 +267,7 @@ export class ContextStore {
       this.pruneExpiredCursors();
       while (
         this.artifacts.size >= this.maxArtifacts ||
-        this.storedBytes + bytes.length > this.maxStoreBytes
+        this.storedBytes + byteLength > this.maxStoreBytes
       ) {
         const oldest = [...this.artifacts.keys()].find(
           (candidate) => !this.isPinned(candidate)
@@ -262,15 +277,19 @@ export class ContextStore {
         }
         this.dropArtifact(oldest);
       }
+      const stored = this.cas.put(utf8Chunks(text), {
+        expectedBytes: byteLength,
+        expectedDigest: sourceDigest
+      });
       artifact = {
         artifactId,
         sourceDigest,
-        bytes,
+        byteLength: stored.bytes,
         mediaType,
         redactionSpans
       };
       this.artifacts.set(artifactId, artifact);
-      this.storedBytes += bytes.length;
+      this.storedBytes += stored.bytes;
     }
 
     return this.createView(artifact, 0);
@@ -298,8 +317,16 @@ export class ContextStore {
   dropArtifact(artifactId) {
     const artifact = this.artifacts.get(artifactId);
     if (!artifact) return;
+    this.cas.remove(artifact.sourceDigest);
     this.artifacts.delete(artifactId);
-    this.storedBytes -= artifact.bytes.length;
+    this.storedBytes -= artifact.byteLength;
+  }
+
+  close() {
+    this.cursors.clear();
+    this.artifacts.clear();
+    this.storedBytes = 0;
+    this.cas.close();
   }
 
   pruneExpiredCursors() {
@@ -338,16 +365,27 @@ export class ContextStore {
   }
 
   createView(artifact, start, advancing = false) {
-    const end = pageEnd(artifact.bytes, start, this.pageBytes);
-    if (end < start || (end === start && start < artifact.bytes.length)) {
+    const probeEnd = Math.min(
+      start + this.pageBytes + 1,
+      artifact.byteLength
+    );
+    const probe = this.cas.readRange(
+      artifact.sourceDigest,
+      start,
+      probeEnd,
+      artifact.byteLength
+    );
+    const end = start + pageEnd(probe, 0, this.pageBytes);
+    if (end < start || (end === start && start < artifact.byteLength)) {
       throw new Error("Context View paging made no progress");
     }
 
-    const rendered = renderRedactedPage(artifact, start, end);
+    const page = probe.subarray(0, end - start);
+    const rendered = renderRedactedPage(artifact, page, start, end);
     const emittedBytes = Buffer.from(rendered.content, "utf8");
     const emittedDigest = digest(emittedBytes);
-    const complete = start === 0 && end === artifact.bytes.length;
-    const moreAvailable = end < artifact.bytes.length;
+    const complete = start === 0 && end === artifact.byteLength;
+    const moreAvailable = end < artifact.byteLength;
     const continuation = moreAvailable
       ? this.createCursor(artifact.artifactId, end, advancing)
       : null;
@@ -392,7 +430,7 @@ export class ContextStore {
 
     if (!complete) {
       view.estimated_raw_token_count = tokenCount(
-        artifact.bytes.length,
+        artifact.byteLength,
         artifact.sourceDigest
       );
     }

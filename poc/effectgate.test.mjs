@@ -2,6 +2,15 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -24,6 +33,10 @@ import {
   buildFixtureLog,
   isSafeReadTool
 } from "./effectgate.mjs";
+import {
+  CorruptArtifactError,
+  FilesystemCas
+} from "./filesystem-cas.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROGRAM = join(HERE, "effectgate.mjs");
@@ -438,13 +451,17 @@ test("Context Store preserves UTF-8 boundaries and pins live continuations", () 
   assert.equal(Buffer.byteLength(first.content, "utf8"), 5);
   assert.equal(first.content, "A😀");
   const liveCursor = first.retrieval.cursor;
+  const firstObject = store.cas.objectPath(first.integrity.artifact_digest);
+  assert.equal(existsSync(firstObject), true);
   assert.throws(() => store.ingest("12345678"), RangeError);
+  assert.equal(existsSync(firstObject), true);
 
   const finalPage = store.fetch(liveCursor);
   assert.equal(finalPage.content, "B😀");
   assert.deepEqual(store.fetch(liveCursor), finalPage);
   const second = store.ingest("12345678");
   assert.equal(store.storedBytes, 8);
+  assert.equal(existsSync(firstObject), false);
 
   const expiring = second.retrieval.cursor;
   now += 11;
@@ -521,6 +538,68 @@ test("Context Store preserves UTF-8 boundaries and pins live continuations", () 
     () => new ContextStore().ingest(tooManySecrets),
     /redaction span limit/
   );
+});
+
+test("filesystem CAS finalizes, recovers, deduplicates, and quarantines", (context) => {
+  const directory = mkdtempSync(join(tmpdir(), "effectgate-cas-test-"));
+  context.after(() => rmSync(directory, { recursive: true, force: true }));
+  const temporaryDirectory = join(directory, "tmp");
+  mkdirSync(temporaryDirectory, { recursive: true });
+  writeFileSync(
+    join(temporaryDirectory, `upload_${"x".repeat(20)}.part`),
+    "interrupted"
+  );
+
+  const bytes = Buffer.from("atomic UTF-8 artifact 😀", "utf8");
+  const expectedDigest = `sha256:${createHash("sha256")
+    .update(bytes)
+    .digest("hex")}`;
+  const cas = new FilesystemCas({
+    directory,
+    maxObjectBytes: 1024
+  });
+  assert.equal(cas.recoveredParts, 1);
+  assert.deepEqual(readdirSync(temporaryDirectory), []);
+
+  const stored = cas.put(
+    [bytes.subarray(0, 7), bytes.subarray(7)],
+    { expectedBytes: bytes.length, expectedDigest }
+  );
+  assert.deepEqual(stored, {
+    digest: expectedDigest,
+    bytes: bytes.length,
+    deduplicated: false
+  });
+  const objectPath = cas.objectPath(expectedDigest);
+  assert.equal(existsSync(objectPath), true);
+  assert.deepEqual(cas.readRange(expectedDigest, 7, bytes.length), bytes.subarray(7));
+  assert.deepEqual(readdirSync(temporaryDirectory), []);
+  cas.close();
+
+  const reopened = new FilesystemCas({
+    directory,
+    maxObjectBytes: 1024
+  });
+  assert.equal(
+    reopened.put([bytes], {
+      expectedBytes: bytes.length,
+      expectedDigest
+    }).deduplicated,
+    true
+  );
+  writeFileSync(objectPath, "corrupt");
+  assert.throws(
+    () => reopened.readRange(expectedDigest, 0, 1, bytes.length),
+    CorruptArtifactError
+  );
+  assert.equal(existsSync(objectPath), false);
+  assert.equal(readdirSync(join(directory, "quarantine")).length, 1);
+  reopened.close();
+
+  const ephemeral = new FilesystemCas();
+  const ephemeralRoot = ephemeral.root;
+  ephemeral.close();
+  assert.equal(existsSync(ephemeralRoot), false);
 });
 
 test("tool-result bounding fails closed and preserves error semantics", () => {

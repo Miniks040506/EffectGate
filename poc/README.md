@@ -4,7 +4,7 @@ This dependency-free Node.js preview proves two narrow paths:
 
 ```text
 small typed result  -> unchanged MCP result
-large text result   -> in-memory artifact -> redacted Context View -> fetch pages
+large text result   -> temporary filesystem CAS -> redacted Context View -> fetch
 ```
 
 It remains fixture-only. Arbitrary backends, protected effects, real
@@ -46,13 +46,17 @@ that documented synthetic sentinels are removed from every emitted page.
 | JSON-RPC frame | 1 MiB |
 | Serialized tool-result value | 64 KiB |
 | Context View source content | 4,096 bytes per page |
+| CAS write chunk | 64 KiB |
 | Stored artifact | 1 MiB |
-| In-memory artifact store | 4 MiB / 16 artifacts |
+| Logical artifact store | 4 MiB / 16 artifacts |
 | Detected redaction spans | 4,096 per artifact; excess fails closed |
 | Cursor states | 64; live continuations are pinned |
 | Cursor lifetime | 10 minutes; recent same-session retries are cached |
 | Forwarded backend requests | 64 pending / 10 seconds each |
 
-The Context Store is volatile and process-local. It has no persistence,
-streaming ingestion, comprehensive secret/PII detection, search, structured
-projection, token ledger, approval flow, or production support claim.
+The filesystem objects are atomically finalized and verified before every
+page read. Session metadata remains volatile and process-local, and backend
+results still arrive as complete strings. The preview has no durable index,
+end-to-end streaming adapter, comprehensive secret/PII detection, search,
+structured projection, token ledger, approval flow, or production support
+claim.
