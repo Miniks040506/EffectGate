@@ -17,7 +17,7 @@ const RUNNER = fileURLToPath(
   new URL("../src/benchmark/fixture-runner.mjs", import.meta.url)
 );
 
-test("fixture benchmark runs real profiles and retains unavailable mux evidence", async () => {
+test("fixture benchmark runs all four real profile paths with joined ledgers", async () => {
   const directory = mkdtempSync(join(tmpdir(), "effectgate-fixture-bench-"));
   const output = join(directory, "paired.jsonl");
   const ledgerDirectory = join(directory, "ledgers");
@@ -36,6 +36,7 @@ test("fixture benchmark runs real profiles and retains unavailable mux evidence"
     for (const profile of [
       "P0_NATIVE_DEFAULT",
       "P1_EG_TYPED",
+      "P2_EG_MUX",
       "P3_EAGER_DIAGNOSTIC"
     ]) {
       const event = byProfile[profile];
@@ -43,7 +44,10 @@ test("fixture benchmark runs real profiles and retains unavailable mux evidence"
       assert.equal(event.metrics.task_success, true);
       assert.ok(event.metrics.latency_ms > 0);
       assert.equal(event.metrics.fetch_count, 0);
-      assert.equal(event.metrics.tool_call_count, 1);
+      assert.equal(
+        event.metrics.tool_call_count,
+        profile === "P2_EG_MUX" ? 3 : 1
+      );
       assert.equal(event.metrics.total_input_tokens, undefined);
       assert.equal(event.metrics.tool_schema_tokens.basis, "byte_proxy");
       assert.equal(event.metrics.tool_result_tokens.basis, "byte_proxy");
@@ -52,23 +56,36 @@ test("fixture benchmark runs real profiles and retains unavailable mux evidence"
       byProfile.P3_EAGER_DIAGNOSTIC.metrics.tool_schema_tokens.value >
         byProfile.P0_NATIVE_DEFAULT.metrics.tool_schema_tokens.value
     );
-    assert.equal(byProfile.P2_EG_MUX.status, "failed");
-    assert.equal(
-      byProfile.P2_EG_MUX.failure_code,
-      "profile_unavailable"
-    );
-
     const ledgers = readdirSync(ledgerDirectory);
-    assert.equal(ledgers.length, 1);
-    const ledger = readFileSync(join(ledgerDirectory, ledgers[0]), "utf8")
-      .trimEnd()
-      .split("\n")
-      .map(JSON.parse);
-    assert.equal(ledger[0].run_id, byProfile.P1_EG_TYPED.run_id);
-    assert.equal(ledger[0].profile, "native_deferred");
+    assert.equal(ledgers.length, 2);
+    const ledgerRecords = ledgers.map((file) =>
+      readFileSync(join(ledgerDirectory, file), "utf8")
+        .trimEnd()
+        .split("\n")
+        .map(JSON.parse)
+    );
+    const typedLedger = ledgerRecords.find(
+      ([header]) => header.profile === "native_deferred"
+    );
+    const compactLedger = ledgerRecords.find(
+      ([header]) => header.profile === "compact_mux"
+    );
+    assert.equal(typedLedger[0].run_id, byProfile.P1_EG_TYPED.run_id);
     assert.deepEqual(
-      ledger.slice(1).map(({ stage }) => stage),
+      typedLedger.slice(1).map(({ stage }) => stage),
       ["tool_metadata", "backend_raw_result", "first_view"]
+    );
+    assert.equal(compactLedger[0].run_id, byProfile.P2_EG_MUX.run_id);
+    assert.deepEqual(
+      compactLedger.slice(1).map(({ stage }) => stage),
+      [
+        "tool_metadata",
+        "tool_metadata",
+        "tool_metadata",
+        "tool_metadata",
+        "backend_raw_result",
+        "first_view"
+      ]
     );
 
     const evidence = readFileSync(output, "utf8")
@@ -102,8 +119,8 @@ test("fixture benchmark CLI writes evidence and a machine-readable summary", () 
     assert.equal(run.stderr, "");
     assert.deepEqual(JSON.parse(run.stdout), {
       evidence_file: output,
-      completed_runs: 3,
-      failed_runs: 1
+      completed_runs: 4,
+      failed_runs: 0
     });
     assert.equal(readFileSync(output, "utf8").split("\n").length, 6);
   } finally {

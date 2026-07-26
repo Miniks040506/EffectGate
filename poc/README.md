@@ -46,11 +46,10 @@ Run the deterministic `BENCH-SMALL-005` fixture adapter with:
 npm run benchmark:fixture -- --output .\benchmark.jsonl --ledger-directory .\benchmark-ledgers --repetitions 1
 ```
 
-It executes the direct native fixture (P0), typed EffectGate proxy (P1), and
-eager direct fixture (P3) as real child processes. Compact mux is not
-implemented, so P2 is retained as a `profile_unavailable` failure. The output
-contains raw per-run latency, success, call count, and byte-proxy tool
-schema/result measurements. Only P1 creates a joined token ledger. No total
+It executes the direct native fixture (P0), typed EffectGate proxy (P1),
+compact mux (P2), and eager direct fixture (P3) as real child processes. The
+output contains raw per-run latency, success, call count, and byte-proxy tool
+schema/result measurements. P1 and P2 create joined token ledgers. No total
 host-session token value or savings claim is produced.
 
 Benchmark adapters can import `runPairedBenchmark()` from
@@ -79,6 +78,19 @@ The fixture exposes:
 | `effectgate_fetch` | Local continuation using an authenticated opaque cursor |
 | `effectgate_search` | Bounded literal context search over a retained artifact |
 | `effectgate_project` | Bounded JSON/JSONL, CSV/TSV, or Markdown projection |
+
+Pin the compatibility surface at process startup with:
+
+```text
+node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp serve --profile compact_mux
+```
+
+Compact mode publishes exactly `effectgate_search`, `effectgate_describe`,
+`effectgate_call`, and `effectgate_fetch`. Catalog pagination admits only the
+same safe read-only fixture tools as typed mode. Search returns bounded
+metadata and an admission reference, describe returns that reference's exact
+schema, call accepts its generic argument object, and fetch reuses the
+authenticated Context View cursor. Direct typed names are rejected.
 
 Try `fixture__large_log` with `{"lines": 200}`. If the returned Context View
 reports `retrieval.more_available: true`, pass its cursor to
@@ -188,6 +200,6 @@ process-local, and backend results still arrive as complete strings. The
 preview has no durable index,
 end-to-end streaming adapter, comprehensive secret/PII detection, regex/ranked
 search, JSONPath or richer predicates, full CommonMark structure, SQLite
-ledger/multi-writer recovery, compact-mux profile, real model/host benchmark
-adapter, statistical report, confidence interval, approval flow, fuzz
-qualification, or production support claim.
+ledger/multi-writer recovery, real model/host benchmark adapter, statistical
+report, confidence interval, compact-mux quality qualification, approval flow,
+fuzz qualification, or production support claim.

@@ -7,7 +7,7 @@
 **Design goal:** Spend tokens on reasoning, not tool noise.
 
 [![Phase](https://img.shields.io/badge/status-Phase%201%20preview-7c3aed?style=flat-square)](#current-boundary)
-[![Version](https://img.shields.io/badge/version-0.15.0-0f766e?style=flat-square)](poc/package.json)
+[![Version](https://img.shields.io/badge/version-0.16.0-0f766e?style=flat-square)](poc/package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25-111827?style=flat-square)](#protocol-surface)
 [![License](https://img.shields.io/badge/license-Apache--2.0-D22128?style=flat-square)](LICENSE)
@@ -105,6 +105,7 @@ namespace; it does not select a backend.
 | Timeout | Each forwarded request expires after 10 seconds |
 | Lifecycle | Exactly one successful initialization path per stdio process |
 | Catalog | Calls require a public name learned from a `tools/list` page that passed the 64 KiB public-result guard |
+| Compact mux | A session pinned to `compact_mux` exposes only bounded search, describe, call, and authenticated fetch tools; direct typed names are denied |
 | Name isolation | Backend names cannot be called directly or invented |
 | Eligible results | Exact text above 4 KiB and oversized untyped envelopes are retained; small text with a redaction or opacity match is bounded too |
 | Typed safety | A typed result that needs redaction or opaque handling fails closed instead of violating its `outputSchema` or exposing source bytes |
@@ -119,7 +120,7 @@ namespace; it does not select a backend.
 | Continuity | Artifacts with an unfetched cursor are pinned; recent retries use a bounded page cache; explicit invalidation revokes cached and live cursors |
 | Page bound | At most 4,096 source bytes, cut only at a valid UTF-8 boundary |
 | Redaction | Versioned assignment, bearer-token, and common token-prefix rules run before every emitted page; more than 4,096 detected spans fails closed |
-| Benchmark evidence | Seeded P0–P3 order, stable pair/run IDs, real P0/P1/P3 small-read fixture execution, explicit P2 unavailability, exclusive JSONL creation, and retained failures |
+| Benchmark evidence | Seeded P0–P3 order, stable pair/run IDs, real execution of all four small-read fixture profiles, exclusive JSONL creation, and retained failures |
 | Errors | Backend errors and stderr content are not passed through verbatim |
 | Flow control | Client input and fixture output pause while downstream writables are backpressured |
 
@@ -256,10 +257,12 @@ conformance claim.
 | `initialize` | Client → EffectGate | Requires the preview MCP version; exposes only the tools capability and starts a fresh cursor session |
 | `notifications/initialized` | Client → EffectGate | Completes the lifecycle gate and is forwarded to the fixture |
 | `ping` | Client → EffectGate | Forwarded under shared timeout and pending-work limits |
-| `tools/list` | Client → EffectGate | Validates and namespaces tools, enforces the public-result ceiling before admission, preserves pagination, and advertises local fetch/search/project tools |
+| `tools/list` | Client → EffectGate | Validates and namespaces tools, enforces contract/result ceilings, preserves pagination, and publishes either typed tools or the four compact contracts pinned at startup |
 | `tools/call` | Client → EffectGate | Accepts only an admitted public name; eligible untyped output is bounded, while typed sensitive/opaque output fails closed |
 | `effectgate_fetch` | Client → proxy | Consumes an opaque cursor locally and returns the next cited page |
-| `effectgate_search` | Client → proxy | Searches a session-owned artifact for a bounded literal context window |
+| `effectgate_search` | Client → proxy | In typed mode, searches a retained artifact; in compact mode, searches bounded metadata for admitted capabilities |
+| `effectgate_describe` | Client → proxy | Compact mode only: returns one admitted capability's exact input/output contract |
+| `effectgate_call` | Client → proxy | Compact mode only: calls one admitted read-only capability through generic arguments |
 | `effectgate_project` | Client → proxy | Applies bounded JSON/JSONL, CSV/TSV, or Markdown projection with source citations |
 | `notifications/cancelled` | Client → fixture | Remaps the client request ID to its fixture request |
 | `notifications/tools/list_changed` | Fixture → client | Clears stale admission before forwarding; active Context View chains remain valid |
@@ -356,6 +359,8 @@ The dependency-free suite directly verifies:
   retained/sanitized runner failures, and evidence no-overwrite protection;
 - real direct, typed-proxy, and eager fixture process runs with exact-payload
   oracles, byte-proxy schema/result events, and joined P1 token provenance;
+- exact compact search/describe/call/fetch contracts, paged admission,
+  direct-name denial, Context View continuation, and real P2 ledger evidence;
 - byte-for-byte reconstruction across multibyte UTF-8 page boundaries;
 - assignment, bearer-token, and prefixed-token sentinel removal across every
   first/fetched page;
@@ -406,7 +411,7 @@ The dependency-free suite directly verifies:
 | Quota-limited partitioned filesystem CAS with explicit invalidation | Durable metadata, shared-writer locking, crash-root recovery, and production GC |
 | Cited paging/search/projection plus fail-closed opaque-content withholding | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
 | HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |
-| Basis-aware counters, output guards, optional session ledger, and real fixture paired-run JSONL evidence | Compact-mux implementation, statistical reporting, SQLite-backed evidence, and real-host comparison qualification |
+| Basis-aware counters, output guards, optional session ledger, compact mux, and real P0–P3 fixture evidence | Statistical reporting, SQLite-backed evidence, and real-host comparison qualification |
 | Deterministic local tests | Compatibility, fuzz, latency, and crash qualification |
 | Sanitized public errors | Intent approval, durable journal, verification, and reconciliation |
 | Node.js PoC | Tested installer and supported-platform matrix |

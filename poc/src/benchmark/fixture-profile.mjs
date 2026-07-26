@@ -6,6 +6,11 @@ import {
   EFFECTGATE_VERSION,
   MCP_VERSION
 } from "../proxy/effectgate.mjs";
+import {
+  COMPACT_CALL_TOOL,
+  COMPACT_DESCRIBE_TOOL,
+  COMPACT_SEARCH_TOOL
+} from "../proxy/compact-mux.mjs";
 import { RpcProcess } from "../testkit/rpc-process.mjs";
 import { BENCHMARK_PROFILES } from "./paired-harness.mjs";
 
@@ -57,11 +62,8 @@ export async function runFixtureProfile(
   ) {
     throw new TypeError("invalid fixture benchmark configuration");
   }
-  if (context.profile === "P2_EG_MUX") {
-    throw failure("profile_unavailable");
-  }
-
-  const proxied = context.profile === "P1_EG_TYPED";
+  const compact = context.profile === "P2_EG_MUX";
+  const proxied = context.profile === "P1_EG_TYPED" || compact;
   const eager = context.profile === "P3_EAGER_DIAGNOSTIC";
   const ledgerFile = join(resolve(ledgerDirectory), `${context.runId}.jsonl`);
   const args = proxied
@@ -97,26 +99,50 @@ export async function runFixtureProfile(
     const catalogs = [];
     let catalog = resultOf(await process.request("tools/list"));
     catalogs.push(catalog);
-    while (eager && typeof catalog.nextCursor === "string") {
+    while ((eager || compact) && typeof catalog.nextCursor === "string") {
       catalog = resultOf(
         await process.request("tools/list", { cursor: catalog.nextCursor })
       );
       catalogs.push(catalog);
     }
 
+    const compactResults = [];
+    let callName = proxied ? "fixture__echo" : "echo";
+    let callArguments = { text: SMALL_READ_PAYLOAD };
+    if (compact) {
+      const searched = resultOf(await process.request("tools/call", {
+        name: COMPACT_SEARCH_TOOL.name,
+        arguments: { query: "deterministic echo", limit: 8 }
+      }));
+      const ref = searched.matches?.find(
+        (match) => match.ref === "fixture__echo"
+      )?.ref;
+      if (ref === undefined) throw failure("capability_not_found");
+      const described = resultOf(await process.request("tools/call", {
+        name: COMPACT_DESCRIBE_TOOL.name,
+        arguments: { ref }
+      }));
+      compactResults.push(searched, described);
+      callName = COMPACT_CALL_TOOL.name;
+      callArguments = {
+        ref,
+        arguments: { text: SMALL_READ_PAYLOAD }
+      };
+    }
     const called = resultOf(await process.request("tools/call", {
-      name: proxied ? "fixture__echo" : "echo",
-      arguments: { text: SMALL_READ_PAYLOAD }
+      name: callName,
+      arguments: callArguments
     }));
+    compactResults.push(called);
     const catalogContent = catalogs.map(JSON.stringify).join("\n");
-    const resultContent = JSON.stringify(called);
+    const resultContent = compactResults.map(JSON.stringify).join("\n");
     return {
       task_success:
         called.isError === false &&
         called.structuredContent?.text === SMALL_READ_PAYLOAD,
       latency_ms: clock() - startedAt,
       fetch_count: 0,
-      tool_call_count: 1,
+      tool_call_count: compact ? 3 : 1,
       tool_schema_tokens: BYTE_PROXY_COUNTER.measure({
         content: catalogContent
       }),
