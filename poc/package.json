@@ -8,7 +8,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "start": "node effectgate.mjs mcp serve",
-    "test": "node --test effectgate.test.mjs"
+    "start": "node src/proxy/effectgate.mjs mcp serve",
+    "test": "node --test test/effectgate.test.mjs"
   }
 }

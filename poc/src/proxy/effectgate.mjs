@@ -16,14 +16,14 @@ import {
   InvalidArtifactError,
   InvalidCursorError,
   UnsafeArtifactError
-} from "./context-view.mjs";
+} from "../context/context-view.mjs";
 import {
   CURSOR_MAX_BYTES,
   CURSOR_PATTERN
-} from "./cursor-service.mjs";
+} from "../context/cursor-service.mjs";
 import {
   isValidProjectionOptions
-} from "./document-project.mjs";
+} from "../projection/document-project.mjs";
 import {
   CONTEXT_PROJECT_MAX_FIELDS,
   CONTEXT_PROJECT_MAX_LIMIT,
@@ -31,7 +31,7 @@ import {
   CONTEXT_PROJECT_MAX_POINTER_LENGTH,
   CONTEXT_PROJECT_MAX_TOKENS,
   CONTEXT_PROJECT_MIN_TOKENS
-} from "./json-project.mjs";
+} from "../projection/json-project.mjs";
 
 export const MAX_FRAME_BYTES = 1024 * 1024;
 export const MAX_TOOL_RESULT_BYTES = 64 * 1024;

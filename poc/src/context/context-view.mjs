@@ -4,11 +4,11 @@ import {
   CursorService,
   InvalidCursorTokenError
 } from "./cursor-service.mjs";
-import { FilesystemCas } from "./filesystem-cas.mjs";
+import { FilesystemCas } from "../storage/filesystem-cas.mjs";
 import {
   buildDocumentProjectionEntries,
   isValidProjectionOptions
-} from "./document-project.mjs";
+} from "../projection/document-project.mjs";
 import {
   CONTEXT_PROJECT_MAX_LIMIT,
   CONTEXT_PROJECT_MAX_OFFSET,
@@ -17,7 +17,7 @@ import {
   InvalidJsonProjectionError,
   buildJsonProjectionEntries,
   isUnicodeScalarText
-} from "./json-project.mjs";
+} from "../projection/json-project.mjs";
 
 export const CONTEXT_PAGE_BYTES = 4096;
 export const CONTEXT_MAX_ARTIFACT_BYTES = 1024 * 1024;

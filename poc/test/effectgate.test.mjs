@@ -21,8 +21,8 @@ import {
   ContextStore,
   InvalidArtifactError,
   InvalidCursorError
-} from "./context-view.mjs";
-import { CURSOR_PATTERN } from "./cursor-service.mjs";
+} from "../src/context/context-view.mjs";
+import { CURSOR_PATTERN } from "../src/context/cursor-service.mjs";
 import {
   CONTEXT_FETCH_TOOL,
   CONTEXT_PROJECT_TOOL,
@@ -41,19 +41,25 @@ import {
   buildFixtureLog,
   buildFixtureMarkdown,
   isSafeReadTool
-} from "./effectgate.mjs";
+} from "../src/proxy/effectgate.mjs";
 import {
   CorruptArtifactError,
   FilesystemCas
-} from "./filesystem-cas.mjs";
+} from "../src/storage/filesystem-cas.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const PROGRAM = join(HERE, "effectgate.mjs");
+const PROGRAM = join(HERE, "..", "src", "proxy", "effectgate.mjs");
 const CONTEXT_VIEW_SCHEMA = JSON.parse(
-  readFileSync(join(HERE, "..", "contracts", "context-view.schema.json"), "utf8")
+  readFileSync(
+    join(HERE, "..", "..", "contracts", "context-view.schema.json"),
+    "utf8"
+  )
 );
 const TOKEN_LEDGER_SCHEMA = JSON.parse(
-  readFileSync(join(HERE, "..", "contracts", "token-ledger.schema.json"), "utf8")
+  readFileSync(
+    join(HERE, "..", "..", "contracts", "token-ledger.schema.json"),
+    "utf8"
+  )
 );
 
 function assertTokenCountContract(tokenCount) {

@@ -266,7 +266,7 @@ Point an MCP client at the preview stdio process using an absolute path:
     "effectgate": {
       "command": "node",
       "args": [
-        "/absolute/path/to/EffectGate/poc/effectgate.mjs",
+        "/absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs",
         "mcp",
         "serve"
       ]
@@ -278,7 +278,7 @@ Point an MCP client at the preview stdio process using an absolute path:
 For Claude Code:
 
 ```powershell
-claude mcp add --transport stdio effectgate -- node /absolute/path/to/EffectGate/poc/effectgate.mjs mcp serve
+claude mcp add --transport stdio effectgate -- node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp serve
 ```
 
 After discovery:
@@ -378,16 +378,13 @@ acceptance evidence exists.
 │   ├── context-view.schema.json # public model-visible result contract
 │   └── token-ledger.schema.json # shared token-count definition
 └── poc/
-    ├── context-view.mjs     # bounded store, paging, citations, and cursors
-    ├── cursor-service.mjs   # authenticated cursor envelopes and replay state
-    ├── document-project.mjs # structured projection validation and routing
-    ├── effectgate.mjs       # MCP proxy, fixture, and command entry point
-    ├── effectgate.test.mjs  # protocol, paging, isolation, and failure checks
-    ├── filesystem-cas.mjs   # chunked writes, atomic finalize, and verification
-    ├── json-project.mjs     # JSON/JSONL projection
-    ├── markdown-project.mjs # ATX heading index and section extraction
+    ├── src/
+    │   ├── context/         # bounded views and authenticated cursors
+    │   ├── projection/      # JSON, tabular, and Markdown projections
+    │   ├── proxy/           # MCP proxy, fixture, and command entry point
+    │   └── storage/         # filesystem content-addressed storage
+    ├── test/                # protocol, paging, isolation, and failure checks
     ├── package.json         # Node version, license, and scripts
-    ├── tabular-project.mjs  # strict CSV/TSV projection
     └── README.md            # focused preview operating notes
 ```
 

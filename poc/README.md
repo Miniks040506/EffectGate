@@ -25,7 +25,7 @@ npm start
 Point an MCP stdio client at:
 
 ```text
-node /absolute/path/to/EffectGate/poc/effectgate.mjs mcp serve
+node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp serve
 ```
 
 The fixture exposes:
@@ -80,6 +80,19 @@ For Markdown, request `{"lines": 200, "format": "markdown"}`. Project without
 `heading` for a cited ATX heading index, or provide an exact, case-sensitive
 heading title for that bounded section. Headings inside fenced code blocks are
 ignored.
+
+## Source layout
+
+Runtime modules live under `src/`, grouped by responsibility:
+
+```text
+src/
+├── context/    # Context Views and cursor state
+├── projection/ # JSON, CSV/TSV, and Markdown projection
+├── proxy/      # MCP entry point and fixture backend
+└── storage/    # filesystem CAS
+test/           # dependency-free integration and boundary checks
+```
 
 ## Bounds
 
