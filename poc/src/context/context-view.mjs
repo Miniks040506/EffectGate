@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 
+import { createResultBudgetController } from "../budget/result-budget.mjs";
 import { BYTE_PROXY_COUNTER } from "../budget/token-counter.mjs";
 import {
   CursorService,
@@ -460,10 +461,12 @@ function renderRedactedPage(artifact, page, start, end) {
 
 function finalizeView(view, artifact, projectionVersion) {
   const appliedBytes = Buffer.byteLength(view.content, "utf8");
-  const appliedTokens = Math.ceil(appliedBytes / 4);
+  const appliedTokens = view.token_count.value;
   if (
     appliedBytes !== view.budget.applied_bytes ||
     appliedTokens !== view.budget.applied_tokens ||
+    view.token_count.input_digest !==
+      digest(Buffer.from(view.content, "utf8")) ||
     appliedBytes > view.budget.max_bytes ||
     appliedTokens > view.budget.max_tokens
   ) {
@@ -502,6 +505,9 @@ function finalizeView(view, artifact, projectionVersion) {
 export class ContextStore {
   constructor({
     pageBytes = CONTEXT_PAGE_BYTES,
+    firstViewBytes = pageBytes,
+    pageTokens = Math.ceil(pageBytes / 4),
+    firstViewTokens = Math.ceil(firstViewBytes / 4),
     maxArtifactBytes = CONTEXT_MAX_ARTIFACT_BYTES,
     maxStoreBytes = CONTEXT_STORE_BYTES,
     maxArtifacts = 16,
@@ -512,6 +518,9 @@ export class ContextStore {
   } = {}) {
     for (const [name, value, minimum] of [
       ["pageBytes", pageBytes, 4],
+      ["firstViewBytes", firstViewBytes, 4],
+      ["pageTokens", pageTokens, 1],
+      ["firstViewTokens", firstViewTokens, 1],
       ["maxArtifactBytes", maxArtifactBytes, 1],
       ["maxStoreBytes", maxStoreBytes, 1],
       ["maxArtifacts", maxArtifacts, 1],
@@ -530,9 +539,19 @@ export class ContextStore {
         `pageBytes must be <= ${MAX_SCHEMA_CONTENT_LENGTH}`
       );
     }
+    if (firstViewBytes > MAX_SCHEMA_CONTENT_LENGTH) {
+      throw new TypeError(
+        `firstViewBytes must be <= ${MAX_SCHEMA_CONTENT_LENGTH}`
+      );
+    }
     if (typeof now !== "function") throw new TypeError("now must be a function");
 
-    this.pageBytes = pageBytes;
+    this.resultBudget = createResultBudgetController({
+      firstViewBytes,
+      firstViewTokens,
+      pageBytes,
+      pageTokens
+    });
     this.maxArtifactBytes = maxArtifactBytes;
     this.maxStoreBytes = maxStoreBytes;
     this.maxArtifacts = maxArtifacts;
@@ -783,7 +802,10 @@ export class ContextStore {
             artifact,
             position.offset,
             true,
-            position.budget
+            {
+              maxBytes: position.budget,
+              maxTokens: Math.ceil(position.budget / 4)
+            }
           );
     position.view = view;
     return view;
@@ -830,7 +852,16 @@ export class ContextStore {
     });
   }
 
-  createUnavailableView(artifact, maxBytes, projectionVersion) {
+  createUnavailableView(
+    artifact,
+    stage,
+    requested,
+    projectionVersion
+  ) {
+    const measured = this.resultBudget.measure(stage, "", {
+      ...requested,
+      overflow: "failed"
+    });
     const view = {
       schema_version: "1.0.0",
       view_id: randomId("view"),
@@ -839,14 +870,8 @@ export class ContextStore {
       status: "unavailable",
       media_type: artifact.mediaType,
       content: "",
-      budget: {
-        max_tokens: Math.ceil(maxBytes / 4),
-        max_bytes: maxBytes,
-        applied_tokens: 0,
-        applied_bytes: 0,
-        overflow: "failed"
-      },
-      token_count: tokenCount(0, digest(Buffer.alloc(0))),
+      budget: measured.budget,
+      token_count: measured.tokenCount,
       estimated_raw_token_count: tokenCount(
         artifact.byteLength,
         artifact.sourceDigest
@@ -882,10 +907,14 @@ export class ContextStore {
     },
     advancing = false
   ) {
+    const stage = advancing ? "page" : "first_view";
+    const requested = { maxTokens, maxBytes: maxTokens * 4 };
+    const limit = this.resultBudget.limits(stage, requested);
     if (artifact.opaque) {
       return this.createUnavailableView(
         artifact,
-        maxTokens * 4,
+        stage,
+        requested,
         format === "json" || format === "jsonl"
           ? JSON_PROJECTION_VERSION
           : DOCUMENT_PROJECTION_VERSION
@@ -935,7 +964,7 @@ export class ContextStore {
           artifact,
           0,
           advancing,
-          maxTokens * 4
+          requested
         );
         fallback.diagnostics.unshift({
           code: "EG-PROJECT-JSON-001",
@@ -960,7 +989,7 @@ export class ContextStore {
       throw new InvalidCursorError();
     }
 
-    const maxBytes = maxTokens * 4;
+    const maxBytes = limit.maxBytes;
     const chunks = [];
     const citations = [];
     const citationIndexes = new Map();
@@ -1058,7 +1087,10 @@ export class ContextStore {
         )
       : null;
     const content = chunks.join("");
-    const emittedDigest = digest(Buffer.from(content, "utf8"));
+    const measured = this.resultBudget.measure(stage, content, {
+      ...requested,
+      overflow: partial ? "projected" : "none"
+    });
     const view = {
       schema_version: "1.0.0",
       view_id: viewId,
@@ -1067,14 +1099,8 @@ export class ContextStore {
       status: partial ? "partial_view" : "complete",
       media_type: projection.mediaType,
       content,
-      budget: {
-        max_tokens: maxTokens,
-        max_bytes: maxBytes,
-        applied_tokens: Math.ceil(appliedBytes / 4),
-        applied_bytes: appliedBytes,
-        overflow: partial ? "projected" : "none"
-      },
-      token_count: tokenCount(appliedBytes, emittedDigest),
+      budget: measured.budget,
+      token_count: measured.tokenCount,
       citations,
       record_citations: recordCitations,
       redactions: [...redactionCounts.values()],
@@ -1113,10 +1139,14 @@ export class ContextStore {
     { query, contextLines, maxTokens, offset },
     advancing = false
   ) {
+    const stage = advancing ? "page" : "first_view";
+    const requested = { maxTokens, maxBytes: maxTokens * 4 };
+    const limit = this.resultBudget.limits(stage, requested);
     if (artifact.opaque) {
       return this.createUnavailableView(
         artifact,
-        maxTokens * 4,
+        stage,
+        requested,
         SEARCH_PROJECTION_VERSION
       );
     }
@@ -1132,7 +1162,7 @@ export class ContextStore {
     }
 
     const match = text.indexOf(query, offset);
-    const maxBytes = maxTokens * 4;
+    const maxBytes = limit.maxBytes;
     let content = "";
     let citations = [];
     let redactions = [];
@@ -1194,9 +1224,12 @@ export class ContextStore {
       }
     }
 
-    const emittedBytes = Buffer.from(content, "utf8");
     const moreAvailable = nextMatch !== -1;
     const partial = moreAvailable || windowClipped;
+    const measured = this.resultBudget.measure(stage, content, {
+      ...requested,
+      overflow: partial ? "projected" : "none"
+    });
     const viewId = randomId("view");
     const continuation = moreAvailable
       ? this.createCursor(
@@ -1222,14 +1255,8 @@ export class ContextStore {
       status: partial ? "partial_view" : "complete",
       media_type: artifact.mediaType,
       content,
-      budget: {
-        max_tokens: maxTokens,
-        max_bytes: maxBytes,
-        applied_tokens: Math.ceil(emittedBytes.length / 4),
-        applied_bytes: emittedBytes.length,
-        overflow: partial ? "projected" : "none"
-      },
-      token_count: tokenCount(emittedBytes.length, digest(emittedBytes)),
+      budget: measured.budget,
+      token_count: measured.tokenCount,
       citations,
       redactions,
       diagnostics: [
@@ -1276,12 +1303,16 @@ export class ContextStore {
     artifact,
     start,
     advancing = false,
-    maxBytes = this.pageBytes
+    requested = {}
   ) {
+    const stage = advancing ? "page" : "first_view";
+    const limit = this.resultBudget.limits(stage, requested);
+    const maxBytes = limit.maxBytes;
     if (artifact.opaque) {
       return this.createUnavailableView(
         artifact,
-        maxBytes,
+        stage,
+        requested,
         PROJECTION_VERSION
       );
     }
@@ -1302,17 +1333,20 @@ export class ContextStore {
 
     const page = probe.subarray(0, end - start);
     const rendered = renderRedactedPage(artifact, page, start, end);
-    const emittedBytes = Buffer.from(rendered.content, "utf8");
-    const emittedDigest = digest(emittedBytes);
     const complete = start === 0 && end === artifact.byteLength;
     const moreAvailable = end < artifact.byteLength;
+    const measured = this.resultBudget.measure(stage, rendered.content, {
+      ...requested,
+      overflow: complete ? "none" : "paged"
+    });
     const viewId = randomId("view");
+    const nextLimit = this.resultBudget.limits("page", requested);
     const continuation = moreAvailable
       ? this.createCursor(
           artifact.artifactId,
           viewId,
           end,
-          maxBytes,
+          nextLimit.maxBytes,
           advancing
         )
       : null;
@@ -1325,14 +1359,8 @@ export class ContextStore {
       status: complete ? "complete" : "partial_view",
       media_type: artifact.mediaType,
       content: rendered.content,
-      budget: {
-        max_tokens: Math.ceil(maxBytes / 4),
-        max_bytes: maxBytes,
-        applied_tokens: Math.ceil(emittedBytes.length / 4),
-        applied_bytes: emittedBytes.length,
-        overflow: complete ? "none" : "paged"
-      },
-      token_count: tokenCount(emittedBytes.length, emittedDigest),
+      budget: measured.budget,
+      token_count: measured.tokenCount,
       citations: [
         {
           artifact_id: artifact.artifactId,
