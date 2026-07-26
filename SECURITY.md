@@ -58,6 +58,7 @@ Reports are especially useful when they demonstrate:
 - skipped, duplicated, oversized, or uncited Context View bytes;
 - acceptance of interrupted, missing, truncated, or hash-mismatched CAS data;
 - cross-session cursor use, expiry bypass, modification, or existence leaks;
+- cross-session artifact search or search-result existence oracles;
 - bypass of artifact, store, or active-cursor quotas;
 - escape from the intended child-process or environment boundary;
 - a reproducible resource-exhaustion path beyond documented limitations.
@@ -103,6 +104,9 @@ The current preview assumes:
   with secret-bearing or attacker-controlled real-world results.
 - Cursor binding is achieved by random server-side, process-local state. There
   is no principal, client identity, or durable policy-generation binding yet.
+- Search is a bounded, case-sensitive literal scan over at most a 1 MiB
+  artifact. It has no regex, semantic ranking, persistent index, or untrusted
+  query logging, and it decodes the complete artifact for each search page.
 - The 4 KiB Context View budget covers source content; the surrounding MCP/JSON
   tool-result value is capped at 64 KiB and the complete frame at 1 MiB.
 - Artifacts with an unfetched continuation are pinned until the cursor expires;

@@ -531,6 +531,9 @@ test("secret sentinels are redacted from every Context View page", async (contex
     name: largeLog.name,
     arguments: { lines: 200, includeSecrets: true }
   });
+  const secretArtifactId = JSON.parse(
+    response.result.content[0].text
+  ).artifact_id;
   let expectedStart = 0;
   const appliedRules = new Set();
 
@@ -570,6 +573,25 @@ test("secret sentinels are redacted from every Context View page", async (contex
     "prefixed-token-v1",
     "secret-assignment-v1"
   ]));
+
+  for (const secret of FIXTURE_SECRETS) {
+    const search = await proxy.request("tools/call", {
+      name: searchTool.name,
+      arguments: {
+        artifact_id: secretArtifactId,
+        query: secret,
+        context_lines: 0,
+        max_tokens: 64
+      }
+    });
+    const serialized = JSON.stringify(search);
+    for (const sentinel of FIXTURE_SECRETS) {
+      assert.equal(serialized.includes(sentinel), false);
+    }
+    const searchView = JSON.parse(search.result.content[0].text);
+    assert.ok(searchView.redactions.length >= 1);
+    assert.match(searchView.content, /\[REDACTED\]|\*+/);
+  }
   assert.equal(proxy.stderr, "");
 });
 
@@ -666,6 +688,39 @@ test("Context Store preserves UTF-8 boundaries and pins live continuations", () 
   }
   assert.equal(expectedStart, Buffer.byteLength(rawSecret, "utf8"));
   assert.ok(redactionCount >= 2);
+
+  const searchable = new ContextStore({ pageBytes: 64 });
+  const unicodeQuery = "😀needle";
+  const searchableRaw =
+    `${"x".repeat(400)}${unicodeQuery}${"y".repeat(400)}`;
+  const searchableView = searchable.ingest(searchableRaw);
+  const searchView = searchable.search(
+    searchableView.artifact_id,
+    unicodeQuery,
+    0,
+    64
+  );
+  const matchStart = Buffer.byteLength(
+    searchableRaw.slice(0, searchableRaw.indexOf(unicodeQuery)),
+    "utf8"
+  );
+  const matchEnd = matchStart + Buffer.byteLength(unicodeQuery, "utf8");
+  assert.equal(searchView.status, "partial_view");
+  assert.ok(searchView.budget.applied_bytes <= 256);
+  assert.ok(searchView.citations[0].byte_start <= matchStart);
+  assert.ok(searchView.citations[0].byte_end >= matchEnd);
+  assert.match(searchView.content, /😀needle/);
+  assert.equal(
+    searchView.diagnostics.at(-1).code,
+    "EG-VIEW-001"
+  );
+  assert.throws(
+    () => new ContextStore().search(
+      searchableView.artifact_id,
+      unicodeQuery
+    ),
+    InvalidArtifactError
+  );
 
   const tooManySecrets = Array.from(
     { length: 4097 },
