@@ -33,6 +33,7 @@ import {
   MAX_TOOL_RESULT_BYTES,
   MCP_VERSION,
   boundToolResult,
+  buildFixtureJsonl,
   buildFixtureLog,
   isSafeReadTool
 } from "./effectgate.mjs";
@@ -515,6 +516,167 @@ test("literal artifact search returns bounded cited windows", async (context) =>
   assert.deepEqual(invalid.error, {
     code: -32602,
     message: "The search arguments are invalid."
+  });
+  assert.equal(proxy.stderr, "");
+  assert.equal(isolated.stderr, "");
+});
+
+test("JSONL projection filters, selects, cites, redacts, and pages", async (context) => {
+  const proxy = new RpcProcess(["mcp", "serve", "--source", "fixture"]);
+  const isolated = new RpcProcess(["mcp", "serve", "--source", "fixture"]);
+  context.after(() => Promise.all([proxy.stop(), isolated.stop()]));
+
+  for (const server of [proxy, isolated]) {
+    await server.request("initialize", {
+      protocolVersion: MCP_VERSION,
+      capabilities: {},
+      clientInfo: { name: "projection-test", version: "1" }
+    });
+    server.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  }
+
+  const catalog = await proxy.request("tools/list");
+  const projectTool = catalog.result.tools.find(
+    (tool) => tool.name === CONTEXT_PROJECT_TOOL.name
+  );
+  const listed = await proxy.request("tools/list", { cursor: "page-2" });
+  const largeResult = listed.result.tools.find(
+    (tool) => tool.name === "fixture__large_log"
+  );
+  const raw = buildFixtureJsonl(80, true);
+  const initial = await proxy.request("tools/call", {
+    name: largeResult.name,
+    arguments: { lines: 80, format: "jsonl", includeSecrets: true }
+  });
+  const artifactId = JSON.parse(initial.result.content[0].text).artifact_id;
+  const fields = [
+    "/line",
+    "/level",
+    "/details/message",
+    "/authorization"
+  ];
+  const expected = raw
+    .trimEnd()
+    .split("\n")
+    .map((line) => JSON.parse(line))
+    .filter((record) => record.level === "WARN")
+    .slice(1, 9)
+    .map((record) => ({
+      "/line": record.line,
+      "/level": record.level,
+      "/details/message": record.details.message,
+      ...(record.authorization
+        ? { "/authorization": "Bearer [REDACTED]" }
+        : {})
+    }));
+
+  let response = await proxy.request("tools/call", {
+    name: projectTool.name,
+    arguments: {
+      artifact_id: artifactId,
+      format: "jsonl",
+      fields,
+      filter: { pointer: "/level", equals: "WARN" },
+      offset: 1,
+      limit: 8,
+      max_tokens: 64
+    }
+  });
+  const projected = [];
+  let firstCursor;
+  let firstFetchedView;
+
+  for (;;) {
+    const serialized = JSON.stringify(response);
+    for (const secret of FIXTURE_SECRETS) {
+      assert.equal(serialized.includes(secret), false);
+    }
+    const view = JSON.parse(response.result.content[0].text);
+    const records = view.content.length === 0
+      ? []
+      : view.content.trimEnd().split("\n").map((line) => JSON.parse(line));
+    assert.equal(view.media_type, "application/x-ndjson");
+    assert.equal(view.diagnostics[0].code, "EG-PROJECT-001");
+    assert.ok(view.budget.applied_bytes <= 256);
+    assert.equal(
+      view.budget.applied_bytes,
+      Buffer.byteLength(view.content, "utf8")
+    );
+    assert.equal(view.record_citations.length, records.length);
+
+    for (let index = 0; index < records.length; index += 1) {
+      const citation = view.citations[view.record_citations[index]];
+      const source = JSON.parse(
+        Buffer.from(raw, "utf8")
+          .subarray(citation.byte_start, citation.byte_end)
+          .toString("utf8")
+      );
+      assert.equal(source.level, "WARN");
+      assert.equal(records[index]["/line"], source.line);
+      projected.push(records[index]);
+    }
+
+    if (!view.retrieval.more_available) {
+      assert.deepEqual(view.retrieval.operations, ["project", "search"]);
+      break;
+    }
+    assert.deepEqual(view.retrieval.operations, [
+      "fetch",
+      "project",
+      "search"
+    ]);
+    const cursor = view.retrieval.cursor;
+    firstCursor ??= cursor;
+    response = await proxy.request("tools/call", {
+      name: CONTEXT_FETCH_TOOL.name,
+      arguments: { cursor }
+    });
+    if (cursor === firstCursor) {
+      firstFetchedView = JSON.parse(response.result.content[0].text);
+    }
+  }
+
+  assert.deepEqual(projected, expected);
+  assert.match(JSON.stringify(projected), /\[REDACTED\]/);
+  const replayed = await proxy.request("tools/call", {
+    name: CONTEXT_FETCH_TOOL.name,
+    arguments: { cursor: firstCursor }
+  });
+  assert.deepEqual(
+    JSON.parse(replayed.result.content[0].text),
+    firstFetchedView
+  );
+
+  await isolated.request("tools/list");
+  const crossSession = await isolated.request("tools/call", {
+    name: CONTEXT_PROJECT_TOOL.name,
+    arguments: { artifact_id: artifactId, format: "jsonl" }
+  });
+  const invented = await proxy.request("tools/call", {
+    name: projectTool.name,
+    arguments: {
+      artifact_id: `art_${"f".repeat(64)}`,
+      format: "jsonl"
+    }
+  });
+  assert.deepEqual(crossSession.error, invented.error);
+  assert.deepEqual(invented.error, {
+    code: -32602,
+    message: "The artifact reference is invalid."
+  });
+
+  const invalid = await proxy.request("tools/call", {
+    name: projectTool.name,
+    arguments: {
+      artifact_id: artifactId,
+      format: "jsonl",
+      fields: ["/bad~2pointer"],
+      limit: 0
+    }
+  });
+  assert.deepEqual(invalid.error, {
+    code: -32602,
+    message: "The projection arguments are invalid."
   });
   assert.equal(proxy.stderr, "");
   assert.equal(isolated.stderr, "");
