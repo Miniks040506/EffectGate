@@ -16,20 +16,21 @@ import {
   InvalidCursorError
 } from "./context-view.mjs";
 import {
+  isValidProjectionOptions
+} from "./document-project.mjs";
+import {
   CONTEXT_PROJECT_MAX_FIELDS,
   CONTEXT_PROJECT_MAX_LIMIT,
   CONTEXT_PROJECT_MAX_OFFSET,
   CONTEXT_PROJECT_MAX_POINTER_LENGTH,
   CONTEXT_PROJECT_MAX_TOKENS,
-  CONTEXT_PROJECT_MIN_TOKENS,
-  isValidJsonPointer,
-  isValidProjectionScalar
+  CONTEXT_PROJECT_MIN_TOKENS
 } from "./json-project.mjs";
 
 export const MAX_FRAME_BYTES = 1024 * 1024;
 export const MAX_TOOL_RESULT_BYTES = 64 * 1024;
 export const MCP_VERSION = "2025-11-25";
-export const EFFECTGATE_VERSION = "0.5.0";
+export const EFFECTGATE_VERSION = "0.6.0";
 const MAX_PENDING_REQUESTS = 64;
 const MAX_ID_BYTES = 128;
 
@@ -79,7 +80,11 @@ export const FIXTURE_LARGE_LOG_TOOL = Object.freeze({
     required: ["lines"],
     properties: {
       lines: { type: "integer", minimum: 1, maximum: 6000 },
-      format: { type: "string", enum: ["log", "jsonl"], default: "log" },
+      format: {
+        type: "string",
+        enum: ["log", "jsonl", "csv", "markdown"],
+        default: "log"
+      },
       includeStructuredCopy: { type: "boolean" },
       includeSecrets: { type: "boolean" }
     }
@@ -148,7 +153,7 @@ export const CONTEXT_PROJECT_TOOL = Object.freeze({
   name: "effectgate_project",
   title: "Project Context Artifact",
   description:
-    "Returns a bounded JSON/JSONL field, equality-filter, and slice projection.",
+    "Returns a bounded JSON/JSONL, CSV/TSV, or Markdown projection.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -158,7 +163,10 @@ export const CONTEXT_PROJECT_TOOL = Object.freeze({
         type: "string",
         pattern: "^art_[a-f0-9]{64}$"
       },
-      format: { type: "string", enum: ["json", "jsonl"] },
+      format: {
+        type: "string",
+        enum: ["json", "jsonl", "csv", "tsv", "markdown"]
+      },
       fields: {
         type: "array",
         maxItems: CONTEXT_PROJECT_MAX_FIELDS,
@@ -169,20 +177,44 @@ export const CONTEXT_PROJECT_TOOL = Object.freeze({
           pattern: "^(?:/(?:[^~]|~[01])*)*$"
         }
       },
+      columns: {
+        type: "array",
+        maxItems: CONTEXT_PROJECT_MAX_FIELDS,
+        uniqueItems: true,
+        items: {
+          type: "string",
+          minLength: 1,
+          maxLength: CONTEXT_PROJECT_MAX_POINTER_LENGTH
+        }
+      },
       filter: {
         type: "object",
         additionalProperties: false,
-        required: ["pointer", "equals"],
+        required: ["equals"],
+        oneOf: [
+          { required: ["pointer"] },
+          { required: ["column"] }
+        ],
         properties: {
           pointer: {
             type: "string",
             maxLength: CONTEXT_PROJECT_MAX_POINTER_LENGTH,
             pattern: "^(?:/(?:[^~]|~[01])*)*$"
           },
+          column: {
+            type: "string",
+            minLength: 1,
+            maxLength: CONTEXT_PROJECT_MAX_POINTER_LENGTH
+          },
           equals: {
             type: ["string", "number", "boolean", "null"]
           }
         }
+      },
+      heading: {
+        type: "string",
+        minLength: 1,
+        maxLength: CONTEXT_PROJECT_MAX_POINTER_LENGTH
       },
       offset: {
         type: "integer",
@@ -207,13 +239,17 @@ export const CONTEXT_PROJECT_TOOL = Object.freeze({
   annotations: FIXTURE_TOOL.annotations
 });
 
-export function buildFixtureLog(lines, includeSecrets = false) {
+function validateFixtureArguments(lines, includeSecrets) {
   if (!Number.isSafeInteger(lines) || lines < 1 || lines > 6000) {
     throw new RangeError("lines must be an integer from 1 through 6000");
   }
   if (typeof includeSecrets !== "boolean") {
     throw new TypeError("includeSecrets must be a boolean");
   }
+}
+
+export function buildFixtureLog(lines, includeSecrets = false) {
+  validateFixtureArguments(lines, includeSecrets);
   return Array.from(
     { length: lines },
     (_, index) => {
@@ -234,12 +270,7 @@ export function buildFixtureLog(lines, includeSecrets = false) {
 }
 
 export function buildFixtureJsonl(lines, includeSecrets = false) {
-  if (!Number.isSafeInteger(lines) || lines < 1 || lines > 6000) {
-    throw new RangeError("lines must be an integer from 1 through 6000");
-  }
-  if (typeof includeSecrets !== "boolean") {
-    throw new TypeError("includeSecrets must be a boolean");
-  }
+  validateFixtureArguments(lines, includeSecrets);
   return Array.from({ length: lines }, (_, index) => {
     const record = {
       line: index + 1,
@@ -259,6 +290,67 @@ export function buildFixtureJsonl(lines, includeSecrets = false) {
     }
     return `${JSON.stringify(record)}\n`;
   }).join("");
+}
+
+function csvCell(value) {
+  return /[",\r\n]/u.test(value)
+    ? `"${value.replaceAll('"', '""')}"`
+    : value;
+}
+
+export function buildFixtureCsv(lines, includeSecrets = false) {
+  validateFixtureArguments(lines, includeSecrets);
+  const header = [
+    "line",
+    "level",
+    "component",
+    "message",
+    "note",
+    "password",
+    "authorization",
+    "token"
+  ];
+  const rows = Array.from({ length: lines }, (_, index) => {
+    const values = [
+      String(index + 1),
+      index % 5 === 0 ? "WARN" : "INFO",
+      "fixture",
+      "bounded, context evidence",
+      index === 2 ? "two\nlines" : 'quote "proof"',
+      includeSecrets && index === 4 ? FIXTURE_SECRETS[0] : "",
+      includeSecrets && index === Math.floor(lines / 2)
+        ? `Bearer ${FIXTURE_SECRETS[1]}`
+        : "",
+      includeSecrets && index === lines - 2 ? FIXTURE_SECRETS[2] : ""
+    ];
+    return `${values.map(csvCell).join(",")}\r\n`;
+  });
+  return `${header.join(",")}\r\n${rows.join("")}`;
+}
+
+export function buildFixtureMarkdown(lines, includeSecrets = false) {
+  validateFixtureArguments(lines, includeSecrets);
+  return [
+    "# Fixture report\n",
+    "Deterministic bounded-context evidence.\n\n",
+    ...Array.from({ length: lines }, (_, index) => {
+      let secret = "";
+      if (includeSecrets && index === 4) {
+        secret = `password=${FIXTURE_SECRETS[0]}\n`;
+      } else if (includeSecrets && index === Math.floor(lines / 2)) {
+        secret = `authorization=Bearer ${FIXTURE_SECRETS[1]}\n`;
+      } else if (includeSecrets && index === lines - 2) {
+        secret = `token=${FIXTURE_SECRETS[2]}\n`;
+      }
+      return (
+        `## Event ${String(index + 1).padStart(6, "0")}\n` +
+        `level=${index % 5 === 0 ? "WARN" : "INFO"} component=fixture\n` +
+        'message="bounded context evidence" marker=✓\n' +
+        secret +
+        "\n"
+      );
+    })
+  ].join("");
 }
 
 function serializedBytes(value) {
@@ -484,7 +576,9 @@ function fixtureResponse(request) {
           args.lines > 6000 ||
           (args.format !== undefined &&
             args.format !== "log" &&
-            args.format !== "jsonl") ||
+            args.format !== "jsonl" &&
+            args.format !== "csv" &&
+            args.format !== "markdown") ||
           (args.includeStructuredCopy !== undefined &&
             typeof args.includeStructuredCopy !== "boolean") ||
           (args.includeSecrets !== undefined &&
@@ -502,7 +596,14 @@ function fixtureResponse(request) {
         const text =
           args.format === "jsonl"
             ? buildFixtureJsonl(args.lines, args.includeSecrets === true)
-            : buildFixtureLog(args.lines, args.includeSecrets === true);
+            : args.format === "csv"
+              ? buildFixtureCsv(args.lines, args.includeSecrets === true)
+              : args.format === "markdown"
+                ? buildFixtureMarkdown(
+                    args.lines,
+                    args.includeSecrets === true
+                  )
+                : buildFixtureLog(args.lines, args.includeSecrets === true);
         return {
           jsonrpc: "2.0",
           id,
@@ -1114,6 +1215,7 @@ export function runProxy(args) {
           if (publicName === CONTEXT_PROJECT_TOOL.name) {
             const callArguments = message.params?.arguments;
             const fields = callArguments?.fields ?? [];
+            const columns = callArguments?.columns ?? [];
             const filter = callArguments?.filter;
             if (
               callArguments === null ||
@@ -1121,22 +1223,13 @@ export function runProxy(args) {
               Array.isArray(callArguments) ||
               typeof callArguments.artifact_id !== "string" ||
               !/^art_[a-f0-9]{64}$/.test(callArguments.artifact_id) ||
-              (callArguments.format !== "json" &&
-                callArguments.format !== "jsonl") ||
-              !Array.isArray(fields) ||
-              fields.length > CONTEXT_PROJECT_MAX_FIELDS ||
-              fields.some((pointer) => !isValidJsonPointer(pointer)) ||
-              new Set(fields).size !== fields.length ||
-              (filter !== undefined &&
-                (filter === null ||
-                  typeof filter !== "object" ||
-                  Array.isArray(filter) ||
-                  !isValidJsonPointer(filter.pointer) ||
-                  !Object.hasOwn(filter, "equals") ||
-                  !isValidProjectionScalar(filter.equals) ||
-                  Object.keys(filter).some(
-                    (key) => key !== "pointer" && key !== "equals"
-                  ))) ||
+              !isValidProjectionOptions({
+                format: callArguments.format,
+                fields,
+                columns,
+                filter,
+                heading: callArguments.heading
+              }) ||
               (callArguments.offset !== undefined &&
                 (!Number.isSafeInteger(callArguments.offset) ||
                   callArguments.offset < 0 ||
@@ -1154,7 +1247,9 @@ export function runProxy(args) {
                   key !== "artifact_id" &&
                   key !== "format" &&
                   key !== "fields" &&
+                  key !== "columns" &&
                   key !== "filter" &&
+                  key !== "heading" &&
                   key !== "offset" &&
                   key !== "limit" &&
                   key !== "max_tokens"
@@ -1177,7 +1272,11 @@ export function runProxy(args) {
                   contextStore.project(callArguments.artifact_id, {
                     format: callArguments.format,
                     fields,
+                    columns,
                     ...(filter ? { filter } : {}),
+                    ...(callArguments.heading !== undefined
+                      ? { heading: callArguments.heading }
+                      : {}),
                     offset: callArguments.offset ?? 0,
                     limit: callArguments.limit ?? 100,
                     maxTokens: callArguments.max_tokens ?? 512

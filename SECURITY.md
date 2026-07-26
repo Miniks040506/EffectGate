@@ -115,6 +115,15 @@ The current preview assumes:
 - Malformed JSON falls back to bounded redacted text without repair. Malformed
   JSONL lines and records larger than the projection budget become cited
   diagnostics rather than model-visible raw data.
+- CSV/TSV projection reparses at most a 1 MiB artifact per page with a strict
+  dependency-free parser. It limits columns, fields, and records; treats the
+  first row as a unique non-empty header; and structurally redacts common
+  credential columns. It does not infer dialects or types, evaluate formulas,
+  or support comparison and membership predicates. Malformed tables fail
+  closed rather than falling back to text.
+- Markdown projection recognizes ATX headings only, ignores headings inside
+  fenced code blocks, and selects sections by exact case-sensitive title. It
+  does not render HTML or implement full CommonMark or Setext headings.
 - The 4 KiB Context View budget covers source content; the surrounding MCP/JSON
   tool-result value is capped at 64 KiB and the complete frame at 1 MiB.
 - Artifacts with an unfetched continuation are pinned until the cursor expires;

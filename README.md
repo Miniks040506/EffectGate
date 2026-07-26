@@ -7,7 +7,7 @@
 **Design goal:** Spend tokens on reasoning, not tool noise.
 
 [![Phase](https://img.shields.io/badge/status-Phase%201%20preview-7c3aed?style=flat-square)](#current-boundary)
-[![Version](https://img.shields.io/badge/version-0.5.0-0f766e?style=flat-square)](poc/package.json)
+[![Version](https://img.shields.io/badge/version-0.6.0-0f766e?style=flat-square)](poc/package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25-111827?style=flat-square)](#protocol-surface)
 [![License](https://img.shields.io/badge/license-Apache--2.0-D22128?style=flat-square)](LICENSE)
@@ -38,7 +38,7 @@ product direction combines two controls that normally live far apart:
 The preview proves the narrow transport and admission spine, then exercises the
 first context-control paths end to end: large deterministic text becomes
 bounded, deterministically redacted, cited pages, literal search windows, or
-JSON/JSONL projections retrieved through opaque cursors.
+JSON/JSONL, CSV/TSV, and Markdown projections retrieved through opaque cursors.
 
 ## Quick start
 
@@ -66,7 +66,7 @@ flowchart LR
         Input["UTF-8 line parser<br/>1 MiB frame guard"]
         Router["JSON-RPC / MCP router"]
         Catalog["Read-only admission map<br/>public name → fixture name"]
-        Views["Context View service<br/>paging · search · JSON projection"]
+        Views["Context View service<br/>paging · search · structured projection"]
         Store["Temporary filesystem CAS<br/>SHA-256 · 4 MiB logical quota"]
         Output["Error sanitizer<br/>output guard + backpressure"]
 
@@ -110,7 +110,7 @@ namespace; it does not select a backend.
 | Tool-result output | Every serialized tool-result value is capped at 64 KiB |
 | Retrieval | Random 192-bit cursors; process/session-local with a 10-minute expiry |
 | Search | Case-sensitive literal search: 64-character query, five context lines, 1,024-token maximum, and one cited source-ordered window per page |
-| Projection | JSON/JSONL field selection with RFC 6901 pointers, scalar equality, a 1,000-item slice, 100 logical items per page, and a 1,024-token maximum |
+| Projection | JSON/JSONL pointer selection, CSV/TSV column selection, and Markdown heading extraction with a 1,000-item slice, 100 logical items per page, and a 1,024-token maximum |
 | Continuity | Artifacts with an unfetched cursor are pinned; recent same-session retries use a bounded page cache |
 | Page bound | At most 4,096 source bytes, cut only at a valid UTF-8 boundary |
 | Redaction | Versioned assignment, bearer-token, and common token-prefix rules run before every emitted page; more than 4,096 detected spans fails closed |
@@ -162,13 +162,23 @@ Search is case-sensitive and source-ordered. It does not run regexes, semantic
 ranking, or generated summaries. A context line too large for the requested
 budget is labeled `partial_view` with an explicit clipping diagnostic.
 
-Call `effectgate_project` with an `artifact_id`, `format` (`json` or `jsonl`),
-optional RFC 6901 `fields`, optional scalar-equality `filter`, and an
-`offset`/`limit` slice. Output is bounded JSONL with `record_citations`
-mapping each emitted record to a citation. `max_tokens` ranges from 64 through
-1,024 and defaults to 512. JSONL lines are parsed independently; malformed
-lines become cited diagnostics. Malformed JSON is never repaired and falls
-back to the bounded redacted text view. A single projected record larger than
+Call `effectgate_project` with an `artifact_id`, a supported `format`, and an
+optional `offset`/`limit` slice:
+
+- `json` and `jsonl` accept RFC 6901 `fields` and scalar equality through
+  `filter.pointer`;
+- `csv` and `tsv` accept visible header `columns` and string equality through
+  `filter.column`;
+- `markdown` returns an ATX heading index by default, or the exact heading
+  section selected by `heading`.
+
+Structured output is bounded JSONL; Markdown sections remain Markdown.
+`record_citations` maps every emitted item to raw source evidence, and
+continuation uses `effectgate_fetch`. `max_tokens` ranges from 64 through
+1,024 and defaults to 512. Malformed JSONL lines become cited diagnostics;
+malformed JSON falls back to bounded redacted text without repair. Malformed
+CSV/TSV fails closed because safe column-aware redaction cannot be guaranteed.
+Markdown headings inside fenced code blocks are ignored. An item larger than
 the requested budget is explicitly omitted with a cited diagnostic.
 
 > [!NOTE]
@@ -193,7 +203,7 @@ conformance claim.
 | `tools/call` | Client → EffectGate | Accepts only an admitted public name; eligible large text is converted to a Context View |
 | `effectgate_fetch` | Client → proxy | Consumes an opaque cursor locally and returns the next cited page |
 | `effectgate_search` | Client → proxy | Searches a session-owned artifact for a bounded literal context window |
-| `effectgate_project` | Client → proxy | Applies bounded JSON/JSONL field, equality-filter, and slice projection |
+| `effectgate_project` | Client → proxy | Applies bounded JSON/JSONL, CSV/TSV, or Markdown projection with source citations |
 | `notifications/cancelled` | Client → fixture | Remaps the client request ID to its fixture request |
 | `notifications/tools/list_changed` | Fixture → client | Clears stale admission before forwarding; active Context View chains remain valid |
 | Other requests | Client → proxy | Return JSON-RPC `-32601` |
@@ -201,8 +211,8 @@ conformance claim.
 
 The bundled fixture publishes `fixture__echo`, `fixture__echo_again`, and
 `fixture__large_log`. The first two prove typed-result fidelity and catalog
-pagination. The last one supplies deterministic multibyte UTF-8 evidence for
-paging tests and an opt-in set of synthetic secret sentinels.
+pagination. The last one supplies deterministic multibyte UTF-8, JSONL, CSV,
+and Markdown evidence plus an opt-in set of synthetic secret sentinels.
 
 ## Security model
 
@@ -257,6 +267,8 @@ After discovery:
    returned cursor.
 4. Call `effectgate_search` with the returned `artifact_id` and a literal query
    to retrieve cited context without paging through unrelated evidence.
+5. Request `format: "jsonl"`, `"csv"`, or `"markdown"` from the fixture, then
+   pass the returned `artifact_id` and matching format to `effectgate_project`.
 
 For the redaction demonstration, add `"includeSecrets": true`. The fixture
 inserts synthetic sentinels only; never substitute real credentials.
@@ -287,6 +299,11 @@ The dependency-free suite directly verifies:
   per-record citation mapping;
 - quoted JSON secret redaction, malformed JSON fallback, cited malformed JSONL
   diagnostics, and oversized-record omission;
+- CSV quoting, escaped quotes, embedded newlines, TSV parsing, column
+  selection/filtering, structural sensitive-column redaction, and malformed
+  table rejection;
+- Markdown ATX heading indexes, exact section extraction, fenced-code
+  exclusion, secret redaction, paging, and source citation mapping;
 - indistinguishable invented and cross-session projection denials;
 - same-session cursor retry with a byte-identical cached page;
 - cursor expiry and cross-store rejection with a non-disclosing public error;
@@ -309,7 +326,7 @@ The dependency-free suite directly verifies:
 | Fixture-only stdio proxy | Reviewed stdio MCP backend adapters |
 | Typed read-only admission | Signed/pinned backend capability passports |
 | Quota-limited temporary filesystem CAS | Durable metadata, shared-writer locking, crash-root recovery, and production GC |
-| Cited text paging, literal search, and bounded JSON/JSONL projection | Ranked multi-window search, safe regex policy, streaming indexes, richer scalar predicates, and CSV/Markdown projection |
+| Cited text paging, literal search, and bounded JSON/JSONL, CSV/TSV, and ATX Markdown projection | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
 | Opaque session-local fetch cursors | Authenticated principal/client/policy bindings |
 | Byte-proxy counts in each view | Token ledger and host comparison benchmarks |
 | Deterministic local tests | Compatibility, fuzz, latency, and crash qualification |
@@ -328,10 +345,14 @@ acceptance evidence exists.
 ├── SECURITY.md
 └── poc/
     ├── context-view.mjs     # bounded store, paging, citations, and cursors
+    ├── document-project.mjs # structured projection validation and routing
     ├── effectgate.mjs       # MCP proxy, fixture, and command entry point
     ├── effectgate.test.mjs  # protocol, paging, isolation, and failure checks
     ├── filesystem-cas.mjs   # chunked writes, atomic finalize, and verification
+    ├── json-project.mjs     # JSON/JSONL projection
+    ├── markdown-project.mjs # ATX heading index and section extraction
     ├── package.json         # Node version, license, and scripts
+    ├── tabular-project.mjs  # strict CSV/TSV projection
     └── README.md            # focused preview operating notes
 ```
 

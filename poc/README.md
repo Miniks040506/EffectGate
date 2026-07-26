@@ -6,6 +6,7 @@ This dependency-free Node.js preview proves two narrow paths:
 small typed result  -> unchanged MCP result
 large text result   -> temporary filesystem CAS -> redacted view
 retained artifact   -> fetch / literal search / JSON or JSONL projection
+                    -> CSV or TSV projection / Markdown heading extraction
 ```
 
 It remains fixture-only. Arbitrary backends, protected effects, real
@@ -31,10 +32,10 @@ The fixture exposes:
 |---|---|
 | `fixture__echo` | Typed small-result pass-through |
 | `fixture__echo_again` | Catalog pagination |
-| `fixture__large_log` | Deterministic multibyte log or JSONL data and synthetic redaction sentinels |
+| `fixture__large_log` | Deterministic multibyte log, JSONL, CSV, or Markdown data and synthetic redaction sentinels |
 | `effectgate_fetch` | Local continuation using an opaque cursor |
 | `effectgate_search` | Bounded literal context search over a retained artifact |
-| `effectgate_project` | Bounded JSON/JSONL field, equality-filter, and slice projection |
+| `effectgate_project` | Bounded JSON/JSONL, CSV/TSV, or Markdown projection |
 
 Try `fixture__large_log` with `{"lines": 200}`. If the returned Context View
 reports `retrieval.more_available: true`, pass its cursor to
@@ -55,6 +56,17 @@ returns JSONL plus `record_citations`; continuation uses `effectgate_fetch`.
 Malformed JSONL lines become cited diagnostics. Malformed JSON falls back to a
 bounded redacted text view without repair.
 
+For tables, request `{"lines": 200, "format": "csv"}`, then project with
+`format: "csv"`, optional header `columns`, optional string-equality
+`filter.column`, and the same slice and token controls. TSV uses
+`format: "tsv"` for projection. Quoted fields, escaped quotes, and embedded
+newlines are supported. Malformed tables fail closed.
+
+For Markdown, request `{"lines": 200, "format": "markdown"}`. Project without
+`heading` for a cited ATX heading index, or provide an exact, case-sensitive
+heading title for that bounded section. Headings inside fenced code blocks are
+ignored.
+
 ## Bounds
 
 | Resource | Limit |
@@ -65,8 +77,10 @@ bounded redacted text view without repair.
 | Search query | 64 Unicode characters / 256 UTF-8 bytes |
 | Search context | 0–5 lines / 64–1,024 byte-proxy tokens |
 | Projection fields | 16 unique JSON Pointers / 256 characters each |
+| Projection columns | 16 unique headers / 256 characters each |
 | Projection slice | Offset ≤1,048,576 / limit ≤1,000 |
 | Projection page | 100 logical items / 64–1,024 byte-proxy tokens |
+| Tabular record shape | 256 columns / 64 KiB field / 256 KiB record |
 | CAS write chunk | 64 KiB |
 | Stored artifact | 1 MiB |
 | Logical artifact store | 4 MiB / 16 artifacts |
@@ -79,5 +93,5 @@ The filesystem objects are atomically finalized and verified before every
 page read. Session metadata remains volatile and process-local, and backend
 results still arrive as complete strings. The preview has no durable index,
 end-to-end streaming adapter, comprehensive secret/PII detection, regex/ranked
-search, JSONPath or richer predicates, CSV/Markdown projection, token ledger,
-approval flow, or production support claim.
+search, JSONPath or richer predicates, full CommonMark structure, token ledger,
+approval flow, fuzz qualification, or production support claim.
