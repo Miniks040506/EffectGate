@@ -104,8 +104,12 @@ The current preview assumes:
   production claims. Network filesystems are unsupported.
 - Artifact identifiers expose a SHA-256 content digest. Do not use this preview
   with secret-bearing or attacker-controlled real-world results.
-- Cursor binding is achieved by random server-side, process-local state. There
-  is no principal, client identity, or durable policy-generation binding yet.
+- Cursor envelopes use HMAC-SHA256 and bind artifact, source view, next
+  position, operation digest, budget, binding digests, expiry, and nonce to
+  process-local replay state. The preview uses a local-user label, random
+  process/client and session identifiers, and a fixed read-only policy version;
+  it does not authenticate an OS principal or host client and has no durable
+  policy-generation binding.
 - Search is a bounded, case-sensitive literal scan over at most a 1 MiB
   artifact. It has no regex, semantic ranking, persistent index, or untrusted
   query logging, and it decodes the complete artifact for each search page.

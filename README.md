@@ -7,7 +7,7 @@
 **Design goal:** Spend tokens on reasoning, not tool noise.
 
 [![Phase](https://img.shields.io/badge/status-Phase%201%20preview-7c3aed?style=flat-square)](#current-boundary)
-[![Version](https://img.shields.io/badge/version-0.6.0-0f766e?style=flat-square)](poc/package.json)
+[![Version](https://img.shields.io/badge/version-0.7.0-0f766e?style=flat-square)](poc/package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25-111827?style=flat-square)](#protocol-surface)
 [![License](https://img.shields.io/badge/license-Apache--2.0-D22128?style=flat-square)](LICENSE)
@@ -108,7 +108,7 @@ namespace; it does not select a backend.
 | Finalization | File `fsync`, same-volume atomic rename, startup `.part` cleanup, deduplication, and full-hash read verification |
 | Corruption | A missing, truncated, or hash-mismatched object fails closed; corrupt objects are moved to quarantine |
 | Tool-result output | Every serialized tool-result value is capped at 64 KiB |
-| Retrieval | Random 192-bit cursors; process/session-local with a 10-minute expiry |
+| Retrieval | HMAC-SHA256 authenticated cursors bind artifact, source view, next position, operation digest, budget, local-principal/client/session/policy digests, expiry, and nonce |
 | Search | Case-sensitive literal search: 64-character query, five context lines, 1,024-token maximum, and one cited source-ordered window per page |
 | Projection | JSON/JSONL pointer selection, CSV/TSV column selection, and Markdown heading extraction with a 1,000-item slice, 100 logical items per page, and a 1,024-token maximum |
 | Continuity | Artifacts with an unfetched cursor are pinned; recent same-session retries use a bounded page cache |
@@ -151,8 +151,9 @@ Call `effectgate_fetch` with the returned cursor to retrieve the next page.
 Raw citation ranges are contiguous. Pages reconstruct the original result byte
 for byte only when no rule matches; matched bytes are replaced before the first
 page or any fetched page leaves EffectGate. A same-session retry returns the
-cached page while its bounded cursor state is retained. Expired, modified,
-cross-process, and unknown cursors all return the same public error.
+cached page while its bounded cursor state is retained. Cursor envelopes expire
+after 10 minutes and contain no raw query or projection arguments. Expired,
+modified, cross-process, and unknown cursors all return the same public error.
 
 Call `effectgate_search` with an `artifact_id` and literal `query` to retrieve a
 bounded redacted context window. Optional `context_lines` ranges from zero
@@ -306,7 +307,8 @@ The dependency-free suite directly verifies:
   exclusion, secret redaction, paging, and source citation mapping;
 - indistinguishable invented and cross-session projection denials;
 - same-session cursor retry with a byte-identical cached page;
-- cursor expiry and cross-store rejection with a non-disclosing public error;
+- authenticated cursor claims, payload/MAC tamper denial, raw-query
+  containment, expiry, and cross-store rejection with one public error;
 - pinning of artifacts that still have a live continuation;
 - atomic filesystem finalization, interrupted `.part` recovery, and
   cross-instance content deduplication;
@@ -327,7 +329,7 @@ The dependency-free suite directly verifies:
 | Typed read-only admission | Signed/pinned backend capability passports |
 | Quota-limited temporary filesystem CAS | Durable metadata, shared-writer locking, crash-root recovery, and production GC |
 | Cited text paging, literal search, and bounded JSON/JSONL, CSV/TSV, and ATX Markdown projection | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
-| Opaque session-local fetch cursors | Authenticated principal/client/policy bindings |
+| HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |
 | Byte-proxy counts in each view | Token ledger and host comparison benchmarks |
 | Deterministic local tests | Compatibility, fuzz, latency, and crash qualification |
 | Sanitized public errors | Intent approval, durable journal, verification, and reconciliation |
@@ -345,6 +347,7 @@ acceptance evidence exists.
 ├── SECURITY.md
 └── poc/
     ├── context-view.mjs     # bounded store, paging, citations, and cursors
+    ├── cursor-service.mjs   # authenticated cursor envelopes and replay state
     ├── document-project.mjs # structured projection validation and routing
     ├── effectgate.mjs       # MCP proxy, fixture, and command entry point
     ├── effectgate.test.mjs  # protocol, paging, isolation, and failure checks

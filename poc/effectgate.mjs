@@ -16,6 +16,10 @@ import {
   InvalidCursorError
 } from "./context-view.mjs";
 import {
+  CURSOR_MAX_BYTES,
+  CURSOR_PATTERN
+} from "./cursor-service.mjs";
+import {
   isValidProjectionOptions
 } from "./document-project.mjs";
 import {
@@ -30,9 +34,10 @@ import {
 export const MAX_FRAME_BYTES = 1024 * 1024;
 export const MAX_TOOL_RESULT_BYTES = 64 * 1024;
 export const MCP_VERSION = "2025-11-25";
-export const EFFECTGATE_VERSION = "0.6.0";
+export const EFFECTGATE_VERSION = "0.7.0";
 const MAX_PENDING_REQUESTS = 64;
 const MAX_ID_BYTES = 128;
+const CURSOR_INPUT_PATTERN = new RegExp(CURSOR_PATTERN, "u");
 
 class FrameTooLargeError extends Error {}
 
@@ -73,7 +78,7 @@ export const FIXTURE_SECOND_TOOL = Object.freeze({
 export const FIXTURE_LARGE_LOG_TOOL = Object.freeze({
   name: "large_log",
   title: "Deterministic Large Result",
-  description: "Returns deterministic UTF-8 log or JSONL bounded-view data.",
+  description: "Returns deterministic log or structured bounded-view data.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -101,13 +106,19 @@ export const FIXTURE_SECRETS = Object.freeze([
 export const CONTEXT_FETCH_TOOL = Object.freeze({
   name: "effectgate_fetch",
   title: "Fetch Context View",
-  description: "Fetches the next bounded page using an opaque EffectGate cursor.",
+  description:
+    "Fetches the next bounded page using an authenticated EffectGate cursor.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
     required: ["cursor"],
     properties: {
-      cursor: { type: "string", minLength: 32, maxLength: 4096 }
+      cursor: {
+        type: "string",
+        minLength: 32,
+        maxLength: CURSOR_MAX_BYTES,
+        pattern: CURSOR_PATTERN
+      }
     }
   },
   annotations: FIXTURE_TOOL.annotations
@@ -1100,8 +1111,9 @@ export function runProxy(args) {
               typeof callArguments !== "object" ||
               Array.isArray(callArguments) ||
               typeof callArguments.cursor !== "string" ||
-              Buffer.byteLength(callArguments.cursor, "utf8") < 32 ||
-              Buffer.byteLength(callArguments.cursor, "utf8") > 4096 ||
+              Buffer.byteLength(callArguments.cursor, "utf8") >
+                CURSOR_MAX_BYTES ||
+              !CURSOR_INPUT_PATTERN.test(callArguments.cursor) ||
               Object.keys(callArguments).some((key) => key !== "cursor")
             ) {
               reply(

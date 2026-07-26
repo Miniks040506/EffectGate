@@ -20,6 +20,7 @@ import {
   InvalidArtifactError,
   InvalidCursorError
 } from "./context-view.mjs";
+import { CURSOR_PATTERN } from "./cursor-service.mjs";
 import {
   CONTEXT_FETCH_TOOL,
   CONTEXT_PROJECT_TOOL,
@@ -293,6 +294,10 @@ test("large text is losslessly paged through opaque Context View cursors", async
   });
   let view = JSON.parse(response.result.content[0].text);
   const firstCursor = view.retrieval.cursor;
+  const firstViewId = view.view_id;
+  const firstNextPosition = view.citations[0].byte_end;
+  const firstBudget = view.budget.max_bytes;
+  const firstExpiry = view.retrieval.expires_at;
   const artifactId = view.artifact_id;
   const sessionId = view.session_id;
   const expectedDigest = `sha256:${createHash("sha256")
@@ -355,7 +360,7 @@ test("large text is losslessly paged through opaque Context View cursors", async
       "project",
       "search"
     ]);
-    assert.match(view.retrieval.cursor, /^cur_[A-Za-z0-9_-]{32,}$/);
+    assert.match(view.retrieval.cursor, new RegExp(CURSOR_PATTERN, "u"));
     assert.ok(Number.isFinite(Date.parse(view.retrieval.expires_at)));
     const cursor = view.retrieval.cursor;
     response = await proxy.request("tools/call", {
@@ -368,6 +373,31 @@ test("large text is losslessly paged through opaque Context View cursors", async
 
   assert.equal(reconstructed, expected);
   assert.equal(expectedStart, Buffer.byteLength(expected, "utf8"));
+
+  const [encodedClaims, mac] = firstCursor.slice(4).split(".");
+  const claims = JSON.parse(
+    Buffer.from(encodedClaims, "base64url").toString("utf8")
+  );
+  assert.equal(claims[0], 1);
+  assert.equal(claims[1], artifactId);
+  assert.equal(claims[2], firstViewId);
+  assert.equal(claims[3], firstNextPosition);
+  assert.equal(
+    claims[4],
+    `sha256:${createHash("sha256")
+      .update(JSON.stringify({ type: "text" }))
+      .digest("hex")}`
+  );
+  assert.equal(claims[5], firstBudget);
+  assert.equal(
+    claims.slice(6, 10).every(
+      (binding) => /^[A-Za-z0-9_-]{43}$/u.test(binding)
+    ),
+    true
+  );
+  assert.equal(claims[10], Date.parse(firstExpiry));
+  assert.match(claims[11], /^[A-Za-z0-9_-]{22}$/u);
+  assert.equal(JSON.stringify(claims).includes(sessionId), false);
 
   const replayed = await proxy.request("tools/call", {
     name: CONTEXT_FETCH_TOOL.name,
@@ -385,11 +415,34 @@ test("large text is losslessly paged through opaque Context View cursors", async
     name: CONTEXT_FETCH_TOOL.name,
     arguments: { cursor: "cur_short" }
   });
+  const oversized = await proxy.request("tools/call", {
+    name: CONTEXT_FETCH_TOOL.name,
+    arguments: { cursor: `cur_${"A".repeat(2048)}.${"A".repeat(43)}` }
+  });
+  const alteredClaims = [...claims];
+  alteredClaims[3] += 1;
+  const alteredPayload = Buffer.from(
+    JSON.stringify(alteredClaims),
+    "utf8"
+  ).toString("base64url");
+  const tamperedPayload = await proxy.request("tools/call", {
+    name: CONTEXT_FETCH_TOOL.name,
+    arguments: { cursor: `cur_${alteredPayload}.${mac}` }
+  });
+  const tamperedMac = await proxy.request("tools/call", {
+    name: CONTEXT_FETCH_TOOL.name,
+    arguments: {
+      cursor: `cur_${encodedClaims}.${mac[0] === "A" ? "B" : "A"}${mac.slice(1)}`
+    }
+  });
   assert.deepEqual(invented.error, {
     code: -32602,
     message: "The retrieval cursor is invalid."
   });
   assert.deepEqual(tooShort.error, invented.error);
+  assert.deepEqual(oversized.error, invented.error);
+  assert.deepEqual(tamperedPayload.error, invented.error);
+  assert.deepEqual(tamperedMac.error, invented.error);
   assert.equal(proxy.stderr, "");
 });
 
@@ -467,6 +520,13 @@ test("literal artifact search returns bounded cited windows", async (context) =>
     "search"
   ]);
   const searchCursor = repeatedView.retrieval.cursor;
+  assert.equal(
+    Buffer.from(
+      searchCursor.slice(4).split(".")[0],
+      "base64url"
+    ).toString("utf8").includes("bounded context evidence"),
+    false
+  );
   const next = await proxy.request("tools/call", {
     name: CONTEXT_FETCH_TOOL.name,
     arguments: { cursor: searchCursor }
@@ -494,6 +554,16 @@ test("literal artifact search returns bounded cited windows", async (context) =>
   assert.deepEqual(absentView.citations, []);
 
   await isolated.request("tools/list");
+  const crossCursor = await isolated.request("tools/call", {
+    name: CONTEXT_FETCH_TOOL.name,
+    arguments: { cursor: searchCursor }
+  });
+  const inventedCursor = await isolated.request("tools/call", {
+    name: CONTEXT_FETCH_TOOL.name,
+    arguments: {
+      cursor: `cur_${"A".repeat(64)}.${"A".repeat(43)}`
+    }
+  });
   const crossSession = await isolated.request("tools/call", {
     name: CONTEXT_SEARCH_TOOL.name,
     arguments: { artifact_id: artifactId, query: uniqueQuery }
@@ -506,6 +576,11 @@ test("literal artifact search returns bounded cited windows", async (context) =>
     }
   });
   assert.deepEqual(crossSession.error, invented.error);
+  assert.deepEqual(crossCursor.error, inventedCursor.error);
+  assert.deepEqual(inventedCursor.error, {
+    code: -32602,
+    message: "The retrieval cursor is invalid."
+  });
   assert.deepEqual(invented.error, {
     code: -32602,
     message: "The artifact reference is invalid."

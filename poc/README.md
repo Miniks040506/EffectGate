@@ -33,7 +33,7 @@ The fixture exposes:
 | `fixture__echo` | Typed small-result pass-through |
 | `fixture__echo_again` | Catalog pagination |
 | `fixture__large_log` | Deterministic multibyte log, JSONL, CSV, or Markdown data and synthetic redaction sentinels |
-| `effectgate_fetch` | Local continuation using an opaque cursor |
+| `effectgate_fetch` | Local continuation using an authenticated opaque cursor |
 | `effectgate_search` | Bounded literal context search over a retained artifact |
 | `effectgate_project` | Bounded JSON/JSONL, CSV/TSV, or Markdown projection |
 
@@ -85,6 +85,7 @@ ignored.
 | Stored artifact | 1 MiB |
 | Logical artifact store | 4 MiB / 16 artifacts |
 | Detected redaction spans | 4,096 per artifact; excess fails closed |
+| Cursor token | 2 KiB maximum / HMAC-SHA256 authenticated |
 | Cursor states | 64; live continuations are pinned |
 | Cursor lifetime | 10 minutes; recent same-session retries are cached |
 | Forwarded backend requests | 64 pending / 10 seconds each |
