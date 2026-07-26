@@ -53,15 +53,26 @@ export function createSessionOutputGuard({
   }
 
   return Object.freeze({
-    admit(content) {
+    admit(content, beforeCommit = () => {}) {
+      if (typeof beforeCommit !== "function") {
+        throw new TypeError("session output commit hook must be a function");
+      }
       const bytes = contentBytes(content);
       const measured = counter.measure({ content: bytes });
       if (emittedTokens + measured.value > maxTokens) {
         throw new SessionOutputLimitError();
       }
+      const admission = Object.freeze({
+        bytes: bytes.length,
+        token_count: measured
+      });
+      beforeCommit(admission);
       emittedBytes += bytes.length;
       emittedTokens += measured.value;
-      return snapshot();
+      return Object.freeze({
+        ...admission,
+        session: snapshot()
+      });
     },
     snapshot
   });

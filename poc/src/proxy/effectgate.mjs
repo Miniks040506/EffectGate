@@ -37,21 +37,39 @@ import {
   SessionOutputLimitError,
   createSessionOutputGuard
 } from "../budget/session-output-guard.mjs";
+import {
+  TokenLedger,
+  TokenLedgerWriteError
+} from "../budget/token-ledger.mjs";
+import { BYTE_PROXY_COUNTER } from "../budget/token-counter.mjs";
 
 export const MAX_FRAME_BYTES = 1024 * 1024;
 export const MAX_TOOL_RESULT_BYTES = 64 * 1024;
 export const DEFAULT_MAX_SESSION_EMITTED_TOKENS = 256 * 1024;
 export const MCP_VERSION = "2025-11-25";
-export const EFFECTGATE_VERSION = "0.11.0";
+export const EFFECTGATE_VERSION = "0.12.0";
 const MAX_PENDING_REQUESTS = 64;
 const MAX_ID_BYTES = 128;
 const CURSOR_INPUT_PATTERN = new RegExp(CURSOR_PATTERN, "u");
 const SESSION_OUTPUT_LIMIT_MESSAGE =
   "EffectGate's local emitted-output limit is exhausted; " +
   "host total context usage is not measured.";
+const TOKEN_LEDGER_FAILURE_MESSAGE =
+  "EffectGate could not persist local token provenance.";
+const contextViewProvenance = new WeakMap();
 
 class FrameTooLargeError extends Error {}
 class ResultTooLargeError extends RangeError {}
+
+function accountingFailure(error) {
+  if (error instanceof SessionOutputLimitError) {
+    return { code: -32008, message: SESSION_OUTPUT_LIMIT_MESSAGE };
+  }
+  if (error instanceof TokenLedgerWriteError) {
+    return { code: -32009, message: TOKEN_LEDGER_FAILURE_MESSAGE };
+  }
+  return null;
+}
 
 export const FIXTURE_TOOL = Object.freeze({
   name: "echo",
@@ -398,6 +416,10 @@ function contextViewResult(view, isError = false) {
       "Context View result exceeds the output limit"
     );
   }
+  contextViewProvenance.set(result, {
+    artifactId: view.artifact_id,
+    viewId: view.view_id
+  });
   return result;
 }
 
@@ -826,6 +848,7 @@ export function runFixture() {
 function parseServeArguments(args) {
   let source = "fixture";
   let maxSessionEmittedTokens = DEFAULT_MAX_SESSION_EMITTED_TOKENS;
+  let tokenLedgerFile;
 
   for (let index = 0; index < args.length; index += 1) {
     const option = args[index];
@@ -833,7 +856,7 @@ function parseServeArguments(args) {
     if (value === undefined) {
       throw new Error(
         "Usage: effectgate.mjs mcp serve [--source NAME] " +
-          "[--max-session-emitted-tokens COUNT]"
+          "[--max-session-emitted-tokens COUNT] [--token-ledger FILE]"
       );
     }
     if (option === "--source") {
@@ -844,10 +867,17 @@ function parseServeArguments(args) {
       Number(value) <= MAX_SESSION_EMITTED_TOKENS
     ) {
       maxSessionEmittedTokens = Number(value);
+    } else if (
+      option === "--token-ledger" &&
+      value.length > 0 &&
+      Buffer.byteLength(value, "utf8") <= 1024 &&
+      !value.includes("\0")
+    ) {
+      tokenLedgerFile = value;
     } else {
       throw new Error(
         "Usage: effectgate.mjs mcp serve [--source NAME] " +
-          "[--max-session-emitted-tokens COUNT]"
+          "[--max-session-emitted-tokens COUNT] [--token-ledger FILE]"
       );
     }
     index += 1;
@@ -857,7 +887,7 @@ function parseServeArguments(args) {
     throw new Error("Backend source must match [A-Za-z0-9_.-] and be <=64 chars.");
   }
 
-  return { source, maxSessionEmittedTokens };
+  return { source, maxSessionEmittedTokens, tokenLedgerFile };
 }
 
 function backendEnvironment() {
@@ -880,19 +910,30 @@ function backendEnvironment() {
 }
 
 export function runProxy(args) {
-  const { source, maxSessionEmittedTokens } = parseServeArguments(args);
+  const {
+    source,
+    maxSessionEmittedTokens,
+    tokenLedgerFile
+  } = parseServeArguments(args);
   const prefix = `${source}__`;
-  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "fixture"], {
-    env: backendEnvironment(),
-    shell: false,
-    stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: true
-  });
   const pending = new Map();
   let toolNames = new Map();
   const contextStore = new ContextStore();
   const sessionOutput = createSessionOutputGuard({
     maxTokens: maxSessionEmittedTokens
+  });
+  const tokenLedger = tokenLedgerFile === undefined
+    ? null
+    : new TokenLedger({
+        file: tokenLedgerFile,
+        runId: contextStore.sessionId,
+        sessionId: contextStore.sessionId
+      });
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "fixture"], {
+    env: backendEnvironment(),
+    shell: false,
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true
   });
   let lifecycle = "new";
   let sequence = 0;
@@ -901,8 +942,22 @@ export function runProxy(args) {
   let backendInputBlocked = false;
   let outputBlocked = false;
 
-  function guardModelVisible(result) {
-    sessionOutput.admit(serialize(result));
+  function guardModelVisible(result, provenance) {
+    const view = contextViewProvenance.get(result);
+    sessionOutput.admit(serialize(result), ({ bytes, token_count }) => {
+      tokenLedger?.append({
+        ...provenance,
+        ...(view === undefined
+          ? {}
+          : {
+              ...view,
+              category: "context_view_tokens_emitted"
+            }),
+        direction: "to_host",
+        tokenCount: token_count,
+        bytes
+      });
+    });
     return result;
   }
 
@@ -997,7 +1052,12 @@ export function runProxy(args) {
       reply(errorMessage(clientRequest.id, -32003, "The backend request timed out."));
     }, 10_000);
     timeout.unref();
-    pending.set(backendId, { clientId: clientRequest.id, timeout, transform });
+    pending.set(backendId, {
+      clientId: clientRequest.id,
+      timeout,
+      transform,
+      method
+    });
     if (!sendBackend({
       jsonrpc: "2.0",
       id: backendId,
@@ -1054,18 +1114,28 @@ export function runProxy(args) {
       }
 
       try {
+        if (tokenLedger && waiting.method === "tools/call") {
+          const raw = serialize(message.result);
+          tokenLedger.append({
+            stage: "backend_raw_result",
+            direction: "from_host",
+            tokenCount: BYTE_PROXY_COUNTER.measure({ content: raw }),
+            bytes: Buffer.byteLength(raw, "utf8")
+          });
+        }
         reply({
           jsonrpc: "2.0",
           id: waiting.clientId,
           result: waiting.transform(message.result)
         });
       } catch (error) {
-        if (error instanceof SessionOutputLimitError) {
+        const accounting = accountingFailure(error);
+        if (accounting) {
           reply(
             errorMessage(
               waiting.clientId,
-              -32008,
-              SESSION_OUTPUT_LIMIT_MESSAGE
+              accounting.code,
+              accounting.message
             )
           );
           return;
@@ -1274,7 +1344,10 @@ export function runProxy(args) {
                 "tool catalog exceeds the output limit"
               );
             }
-            const guardedCatalog = guardModelVisible(publicCatalog);
+            const guardedCatalog = guardModelVisible(publicCatalog, {
+              stage: "tool_metadata",
+              category: "tool_schema_tokens_emitted"
+            });
             toolNames = nextNames;
             return guardedCatalog;
           });
@@ -1310,23 +1383,25 @@ export function runProxy(args) {
                 result: guardModelVisible(
                   contextViewResult(
                     contextStore.fetch(callArguments.cursor)
-                  )
+                  ),
+                  {
+                    stage: "fetch_page",
+                    category: "context_view_tokens_emitted"
+                  }
                 )
               });
             } catch (error) {
+              const accounting = accountingFailure(error);
               reply(
                 errorMessage(
                   message.id,
                   error instanceof InvalidCursorError
                     ? -32602
-                    : error instanceof SessionOutputLimitError
-                      ? -32008
-                      : -32603,
+                    : accounting?.code ?? -32603,
                   error instanceof InvalidCursorError
                     ? "The retrieval cursor is invalid."
-                    : error instanceof SessionOutputLimitError
-                      ? SESSION_OUTPUT_LIMIT_MESSAGE
-                    : "The Context View could not be created."
+                    : accounting?.message ??
+                      "The Context View could not be created."
                 )
               );
             }
@@ -1390,26 +1465,28 @@ export function runProxy(args) {
                       callArguments.context_lines ?? 1,
                       callArguments.max_tokens ?? 512
                     )
-                  )
+                  ),
+                  {
+                    stage: "first_view",
+                    category: "context_view_tokens_emitted"
+                  }
                 )
               });
             } catch (error) {
+              const accounting = accountingFailure(error);
               reply(
                 errorMessage(
                   message.id,
                   error instanceof InvalidArtifactError ||
                     error instanceof TypeError
                     ? -32602
-                    : error instanceof SessionOutputLimitError
-                      ? -32008
-                    : -32603,
+                    : accounting?.code ?? -32603,
                   error instanceof InvalidArtifactError
                     ? "The artifact reference is invalid."
                     : error instanceof TypeError
                       ? "The search arguments are invalid."
-                      : error instanceof SessionOutputLimitError
-                        ? SESSION_OUTPUT_LIMIT_MESSAGE
-                      : "The Context View could not be created."
+                      : accounting?.message ??
+                        "The Context View could not be created."
                 )
               );
             }
@@ -1486,26 +1563,28 @@ export function runProxy(args) {
                       limit: callArguments.limit ?? 100,
                       maxTokens: callArguments.max_tokens ?? 512
                     })
-                  )
+                  ),
+                  {
+                    stage: "first_view",
+                    category: "context_view_tokens_emitted"
+                  }
                 )
               });
             } catch (error) {
+              const accounting = accountingFailure(error);
               reply(
                 errorMessage(
                   message.id,
                   error instanceof InvalidArtifactError ||
                     error instanceof TypeError
                     ? -32602
-                    : error instanceof SessionOutputLimitError
-                      ? -32008
-                    : -32603,
+                    : accounting?.code ?? -32603,
                   error instanceof InvalidArtifactError
                     ? "The artifact reference is invalid."
                     : error instanceof TypeError
                       ? "The projection arguments are invalid."
-                      : error instanceof SessionOutputLimitError
-                        ? SESSION_OUTPUT_LIMIT_MESSAGE
-                      : "The Context View could not be created."
+                      : accounting?.message ??
+                        "The Context View could not be created."
                 )
               );
             }
@@ -1534,7 +1613,11 @@ export function runProxy(args) {
               boundToolResult(result, {
                 contextStore,
                 contextViewEligible: admittedTool.contextViewEligible
-              })
+              }),
+              {
+                stage: "first_view",
+                category: "tool_result_tokens_emitted"
+              }
             )
           );
           break;
@@ -1559,6 +1642,7 @@ export function runProxy(args) {
       reply(errorMessage(null, code, message));
     },
     onEnd() {
+      tokenLedger?.close();
       contextStore.close();
       child.kill();
     }
@@ -1578,7 +1662,7 @@ export async function main(args = process.argv.slice(2)) {
 
   throw new Error(
     "Usage: effectgate.mjs fixture | mcp serve [--source NAME] " +
-      "[--max-session-emitted-tokens COUNT]"
+      "[--max-session-emitted-tokens COUNT] [--token-ledger FILE]"
   );
 }
 
