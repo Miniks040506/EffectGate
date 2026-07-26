@@ -333,6 +333,10 @@ test("large text is losslessly paged through opaque Context View cursors", async
     assert.equal(view.session_id, sessionId);
     assert.equal(view.status, "partial_view");
     assert.equal(view.budget.applied_bytes, pageBytes);
+    assert.equal(
+      view.budget.max_tokens,
+      Math.ceil(view.budget.max_bytes / 4)
+    );
     assert.ok(pageBytes <= view.budget.max_bytes);
     assert.equal(citation.byte_start, expectedStart);
     assert.equal(citation.byte_end, expectedStart + pageBytes);
@@ -346,6 +350,9 @@ test("large text is losslessly paged through opaque Context View cursors", async
       .digest("hex")}`;
     assert.equal(viewDigest, calculatedViewDigest);
     assert.equal(view.diagnostics[0].code, "EG-REDACT-001");
+    assert.ok(
+      view.diagnostics.some(({ code }) => code === "EG-VIEW-002")
+    );
     assert.deepEqual(view.redactions, []);
     reconstructed += view.content;
     expectedStart = citation.byte_end;
@@ -489,6 +496,7 @@ test("literal artifact search returns bounded cited windows", async (context) =>
   const lineStart = raw.indexOf(uniqueQuery);
   const lineEnd = raw.indexOf("\n", lineStart) + 1;
   assert.equal(uniqueView.status, "complete");
+  assert.equal(uniqueView.budget.overflow, "none");
   assert.equal(uniqueView.content, raw.slice(lineStart, lineEnd));
   assert.deepEqual(uniqueView.citations[0], {
     artifact_id: artifactId,
@@ -514,6 +522,9 @@ test("literal artifact search returns bounded cited windows", async (context) =>
   const repeatedView = JSON.parse(repeated.result.content[0].text);
   assert.equal(repeatedView.status, "partial_view");
   assert.ok(repeatedView.budget.applied_bytes <= 256);
+  assert.ok(
+    repeatedView.diagnostics.some(({ code }) => code === "EG-VIEW-002")
+  );
   assert.deepEqual(repeatedView.retrieval.operations, [
     "fetch",
     "project",
@@ -550,6 +561,7 @@ test("literal artifact search returns bounded cited windows", async (context) =>
   });
   const absentView = JSON.parse(absent.result.content[0].text);
   assert.equal(absentView.status, "complete");
+  assert.equal(absentView.budget.overflow, "none");
   assert.equal(absentView.content, "");
   assert.deepEqual(absentView.citations, []);
 
@@ -1157,9 +1169,8 @@ test("Context Store preserves UTF-8 boundaries and pins live continuations", () 
   assert.ok(searchView.citations[0].byte_start <= matchStart);
   assert.ok(searchView.citations[0].byte_end >= matchEnd);
   assert.match(searchView.content, /😀needle/);
-  assert.equal(
-    searchView.diagnostics.at(-1).code,
-    "EG-VIEW-001"
+  assert.ok(
+    searchView.diagnostics.some(({ code }) => code === "EG-VIEW-001")
   );
   assert.throws(
     () => new ContextStore().search(
@@ -1227,6 +1238,9 @@ test("JSON projection handles escaped pointers, malformed input, and record budg
       ({ code }) => code === "EG-PROJECT-BUDGET-001"
     )
   );
+  assert.ok(
+    oversized.diagnostics.some(({ code }) => code === "EG-VIEW-002")
+  );
 
   const malformedJson = store.ingest('{"ok":1', "application/json");
   const fallback = store.project(malformedJson.artifact_id, {
@@ -1235,6 +1249,30 @@ test("JSON projection handles escaped pointers, malformed input, and record budg
   });
   assert.equal(fallback.content, '{"ok":1');
   assert.equal(fallback.diagnostics[0].code, "EG-PROJECT-JSON-001");
+
+  const fallbackStore = new ContextStore({ pageBytes: 4096 });
+  const malformedRaw = `{"broken":"${"x".repeat(700)}`;
+  const malformedArtifact = fallbackStore.ingest(
+    malformedRaw,
+    "application/json"
+  );
+  let boundedFallback = fallbackStore.project(malformedArtifact.artifact_id, {
+    format: "json",
+    maxTokens: 64
+  });
+  let reconstructedFallback = "";
+  for (;;) {
+    assert.equal(boundedFallback.budget.max_tokens, 64);
+    assert.equal(boundedFallback.budget.max_bytes, 256);
+    assert.ok(boundedFallback.budget.applied_bytes <= 256);
+    reconstructedFallback += boundedFallback.content;
+    if (!boundedFallback.retrieval.more_available) break;
+    boundedFallback = fallbackStore.fetch(
+      boundedFallback.retrieval.cursor
+    );
+  }
+  assert.equal(reconstructedFallback, malformedRaw);
+  fallbackStore.close();
 
   const jsonl = '{"id":1}\r\nbad😀\n{"id":2}\n';
   const jsonlArtifact = store.ingest(jsonl, "application/x-ndjson");

@@ -257,7 +257,28 @@ function renderRedactedPage(artifact, page, start, end) {
   return { content: content.join(""), redactions: [...counts.values()] };
 }
 
-function attachIntegrity(view, artifact, projectionVersion) {
+function finalizeView(view, artifact, projectionVersion) {
+  const appliedBytes = Buffer.byteLength(view.content, "utf8");
+  const appliedTokens = Math.ceil(appliedBytes / 4);
+  if (
+    appliedBytes !== view.budget.applied_bytes ||
+    appliedTokens !== view.budget.applied_tokens ||
+    appliedBytes > view.budget.max_bytes ||
+    appliedTokens > view.budget.max_tokens
+  ) {
+    throw new RangeError("Context View exceeds its declared budget");
+  }
+  if (
+    (view.status === "partial_view" || view.status === "unavailable") &&
+    !view.diagnostics.some(({ code }) => code === "EG-VIEW-002")
+  ) {
+    view.diagnostics.push({
+      code: "EG-VIEW-002",
+      message: view.retrieval?.operations?.length
+        ? "Source data was omitted from this bounded view; use the listed retrieval operations when needed."
+        : "Source data was omitted from this bounded view and no model-visible retrieval is available."
+    });
+  }
   view.integrity = {
     artifact_digest: artifact.sourceDigest,
     view_digest: digest(
@@ -516,7 +537,12 @@ export class ContextStore {
             { ...position.operation.project, offset: position.offset },
             true
           )
-        : this.createView(artifact, position.offset, true);
+        : this.createView(
+            artifact,
+            position.offset,
+            true,
+            position.budget
+          );
     position.view = view;
     return view;
   }
@@ -617,13 +643,18 @@ export class ContextStore {
           : buildDocumentProjectionEntries(options);
     } catch (error) {
       if (error instanceof InvalidJsonProjectionError) {
-        const fallback = this.createView(artifact, 0, advancing);
+        const fallback = this.createView(
+          artifact,
+          0,
+          advancing,
+          maxTokens * 4
+        );
         fallback.diagnostics.unshift({
           code: "EG-PROJECT-JSON-001",
           message:
             "JSON projection failed without repair; bounded text fallback was applied."
         });
-        return attachIntegrity(
+        return finalizeView(
           fallback,
           artifact,
           JSON_PROJECTION_VERSION
@@ -649,10 +680,7 @@ export class ContextStore {
     const redactionCounts = new Map();
     const diagnostics = [
       projection.diagnostic,
-      {
-        code: "EG-REDACT-001",
-        message: `Deterministic redaction ruleset ${REDACTION_RULESET_VERSION} was applied.`
-      }
+      ...artifactDiagnostics(artifact)
     ];
     let appliedBytes = 0;
     let position = offset;
@@ -783,7 +811,7 @@ export class ContextStore {
         continuation.expiresAt
       ).toISOString();
     }
-    return attachIntegrity(
+    return finalizeView(
       view,
       artifact,
       format === "json" || format === "jsonl"
@@ -904,7 +932,7 @@ export class ContextStore {
         max_bytes: maxBytes,
         applied_tokens: Math.ceil(emittedBytes.length / 4),
         applied_bytes: emittedBytes.length,
-        overflow: "projected"
+        overflow: partial ? "projected" : "none"
       },
       token_count: tokenCount(emittedBytes.length, digest(emittedBytes)),
       citations,
@@ -915,10 +943,7 @@ export class ContextStore {
           message:
             "Deterministic case-sensitive literal search v1 was applied."
         },
-        {
-          code: "EG-REDACT-001",
-          message: `Deterministic redaction ruleset ${REDACTION_RULESET_VERSION} was applied.`
-        },
+        ...artifactDiagnostics(artifact),
         ...(windowClipped
           ? [
               {
@@ -949,12 +974,24 @@ export class ContextStore {
         continuation.expiresAt
       ).toISOString();
     }
-    return attachIntegrity(view, artifact, SEARCH_PROJECTION_VERSION);
+    return finalizeView(view, artifact, SEARCH_PROJECTION_VERSION);
   }
 
-  createView(artifact, start, advancing = false) {
+  createView(
+    artifact,
+    start,
+    advancing = false,
+    maxBytes = this.pageBytes
+  ) {
+    if (artifact.opaque) {
+      return this.createUnavailableView(
+        artifact,
+        maxBytes,
+        PROJECTION_VERSION
+      );
+    }
     const probeEnd = Math.min(
-      start + this.pageBytes + 1,
+      start + maxBytes + 1,
       artifact.byteLength
     );
     const probe = this.cas.readRange(
@@ -963,7 +1000,7 @@ export class ContextStore {
       probeEnd,
       artifact.byteLength
     );
-    const end = start + pageEnd(probe, 0, this.pageBytes);
+    const end = start + pageEnd(probe, 0, maxBytes);
     if (end < start || (end === start && start < artifact.byteLength)) {
       throw new Error("Context View paging made no progress");
     }
@@ -980,7 +1017,7 @@ export class ContextStore {
           artifact.artifactId,
           viewId,
           end,
-          this.pageBytes,
+          maxBytes,
           advancing
         )
       : null;
@@ -994,8 +1031,8 @@ export class ContextStore {
       media_type: artifact.mediaType,
       content: rendered.content,
       budget: {
-        max_tokens: this.pageBytes,
-        max_bytes: this.pageBytes,
+        max_tokens: Math.ceil(maxBytes / 4),
+        max_bytes: maxBytes,
         applied_tokens: Math.ceil(emittedBytes.length / 4),
         applied_bytes: emittedBytes.length,
         overflow: complete ? "none" : "paged"
@@ -1010,12 +1047,7 @@ export class ContextStore {
         }
       ],
       redactions: rendered.redactions,
-      diagnostics: [
-        {
-          code: "EG-REDACT-001",
-          message: `Deterministic redaction ruleset ${REDACTION_RULESET_VERSION} was applied.`
-        }
-      ],
+      diagnostics: artifactDiagnostics(artifact),
       retrieval: {
         more_available: moreAvailable,
         operations: moreAvailable
@@ -1035,6 +1067,6 @@ export class ContextStore {
       view.retrieval.cursor = continuation.cursor;
       view.retrieval.expires_at = new Date(continuation.expiresAt).toISOString();
     }
-    return attachIntegrity(view, artifact, PROJECTION_VERSION);
+    return finalizeView(view, artifact, PROJECTION_VERSION);
   }
 }
