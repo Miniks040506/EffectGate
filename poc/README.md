@@ -57,6 +57,11 @@ that data is encrypted or secret, and it never generates a summary. Typed
 results that match redaction or opacity rules return a bounded error rather
 than breaking their advertised `outputSchema`.
 
+All token measurements use the shared counter interface. Context Views retain
+their deterministic byte-proxy behavior, while exact tokenizer callbacks,
+calibrated estimates, and host-reported values remain explicitly separated by
+basis. The preview does not bundle a tokenizer or infer total host context.
+
 Use `effectgate_search` with the view's `artifact_id` and a literal `query`.
 Optional `context_lines` is `0..5`; `max_tokens` is `64..1024`. Repeated
 matches return an opaque cursor consumed by `effectgate_fetch`. A window
@@ -87,6 +92,7 @@ Runtime modules live under `src/`, grouped by responsibility:
 
 ```text
 src/
+├── budget/     # basis-aware token counters and calibration
 ├── context/    # Context Views and cursor state
 ├── projection/ # JSON, CSV/TSV, and Markdown projection
 ├── proxy/      # MCP entry point and fixture backend
