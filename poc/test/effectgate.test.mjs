@@ -312,6 +312,33 @@ test("proxy preserves the tool contract and namespaces only its name", async (co
   assert.equal(proxy.stderr, "");
 });
 
+test("proxy enforces a local-only session emitted-output limit", async (context) => {
+  const proxy = new RpcProcess([
+    "mcp",
+    "serve",
+    "--max-session-emitted-tokens",
+    "1"
+  ]);
+  context.after(() => proxy.stop());
+
+  await proxy.request("initialize", {
+    protocolVersion: MCP_VERSION,
+    capabilities: {},
+    clientInfo: { name: "preview-test", version: "1" }
+  });
+  proxy.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const listed = await proxy.request("tools/list");
+    assert.equal(listed.error.code, -32008);
+    assert.match(listed.error.message, /local emitted-output limit/);
+    assert.match(
+      listed.error.message,
+      /host total context usage is not measured/
+    );
+  }
+});
+
 test("large text is losslessly paged through opaque Context View cursors", async (context) => {
   const proxy = new RpcProcess(["mcp", "serve", "--source", "fixture"]);
   context.after(() => proxy.stop());
@@ -2056,4 +2083,18 @@ test("the preview refuses arbitrary backend commands", () => {
   assert.equal(result.status, 2);
   assert.equal(result.stdout, "");
   assert.match(result.stderr, /Usage:/);
+
+  const invalidBudget = spawnSync(
+    process.execPath,
+    [
+      PROGRAM,
+      "mcp",
+      "serve",
+      "--max-session-emitted-tokens",
+      "0"
+    ],
+    { encoding: "utf8", windowsHide: true }
+  );
+  assert.equal(invalidBudget.status, 2);
+  assert.match(invalidBudget.stderr, /Usage:/);
 });

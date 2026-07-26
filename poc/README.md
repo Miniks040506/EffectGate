@@ -28,6 +28,12 @@ Point an MCP stdio client at:
 node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp serve
 ```
 
+Optionally lower the default 262,144-token local output ceiling:
+
+```text
+node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp serve --max-session-emitted-tokens 8192
+```
+
 The fixture exposes:
 
 | Tool | Purpose |
@@ -64,6 +70,9 @@ basis. The preview does not bundle a tokenizer or infer total host context.
 Text, search, projection, and unavailable results share one hard budget
 controller. First views and fetched pages have separate byte/token ceilings;
 requested search or projection limits can lower, but never raise, them.
+Serialized tool catalogs and results also share a process-local cumulative
+guard. Replayed results count again and rejected output is not charged. This
+does not measure prompts, assistant output, JSON-RPC errors, or host context.
 
 Use `effectgate_search` with the view's `artifact_id` and a literal `query`.
 Optional `context_lines` is `0..5`; `max_tokens` is `64..1024`. Repeated
@@ -109,6 +118,7 @@ test/           # dependency-free integration and boundary checks
 |---|---:|
 | JSON-RPC frame | 1 MiB |
 | Serialized tool-result value | 64 KiB |
+| Local model-visible tool output | 262,144 byte-proxy tokens per process session |
 | Context View source content | 4,096 bytes per first view / fetched page |
 | Search query | 64 Unicode characters / 256 UTF-8 bytes |
 | Search context | 0–5 lines / 64–1,024 byte-proxy tokens |

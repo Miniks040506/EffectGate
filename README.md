@@ -7,7 +7,7 @@
 **Design goal:** Spend tokens on reasoning, not tool noise.
 
 [![Phase](https://img.shields.io/badge/status-Phase%201%20preview-7c3aed?style=flat-square)](#current-boundary)
-[![Version](https://img.shields.io/badge/version-0.10.0-0f766e?style=flat-square)](poc/package.json)
+[![Version](https://img.shields.io/badge/version-0.11.0-0f766e?style=flat-square)](poc/package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25-111827?style=flat-square)](#protocol-surface)
 [![License](https://img.shields.io/badge/license-Apache--2.0-D22128?style=flat-square)](LICENSE)
@@ -182,6 +182,13 @@ are distinct; a caller may request less but cannot raise either ceiling. Every
 view reports the applied limits, measured bytes and tokens, and one explicit
 overflow policy from the public schema.
 
+The proxy also guards cumulative model-visible tool catalogs and results. The
+default process-local ceiling is 262,144 byte-proxy tokens and can be lowered
+with `--max-session-emitted-tokens COUNT`. Identical retries count again;
+rejected output does not mutate usage. This is EffectGate output accounting,
+not a measurement or guarantee of prompts, assistant output, protocol errors,
+or the host's total conversation context.
+
 Call `effectgate_search` with an `artifact_id` and literal `query` to retrieve a
 bounded redacted context window. Optional `context_lines` ranges from zero
 through five; `max_tokens` ranges from 64 through 1,024 and defaults to 512.
@@ -219,9 +226,10 @@ can produce false positives; it is a fail-closed preview rule, not a secrecy
 classifier.
 
 > [!NOTE]
-> The 4 KiB budget measures source content inside the Context View. MCP and JSON
-> envelope bytes are covered by a 64 KiB tool-result limit and the separate
-> 1 MiB frame limit. Session metadata remains volatile. The proxy uses a
+> The 4 KiB default bounds model-visible Context View content; text paging also
+> bounds its cited source range. MCP and JSON envelope bytes are covered by a
+> 64 KiB tool-result limit and the separate 1 MiB frame limit. Session metadata
+> remains volatile. The proxy uses a
 > process-owned temporary CAS removed on safe eviction or normal shutdown;
 > cursors expire after 10 minutes.
 
@@ -328,6 +336,8 @@ The dependency-free suite directly verifies:
 - honest byte-proxy token ceilings plus explicit omission diagnostics;
 - exact, estimated, byte-proxy, and host-reported counter contracts plus
   deterministic estimate calibration;
+- atomic cumulative output admission, replay accounting, session isolation,
+  configurable exhaustion, and an explicit non-claim about host context;
 - byte-for-byte reconstruction across multibyte UTF-8 page boundaries;
 - assignment, bearer-token, and prefixed-token sentinel removal across every
   first/fetched page;
@@ -377,7 +387,7 @@ The dependency-free suite directly verifies:
 | Quota-limited temporary filesystem CAS | Durable metadata, shared-writer locking, crash-root recovery, and production GC |
 | Cited paging/search/projection plus fail-closed opaque-content withholding | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
 | HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |
-| Basis-aware counters plus shared first-view/page guards; Context Views use byte-proxy counts | Persistent token ledger and host comparison benchmarks |
+| Basis-aware counters plus first-view/page and local session-output guards | Persistent token ledger and host comparison benchmarks |
 | Deterministic local tests | Compatibility, fuzz, latency, and crash qualification |
 | Sanitized public errors | Intent approval, durable journal, verification, and reconciliation |
 | Node.js PoC | Tested installer and supported-platform matrix |
