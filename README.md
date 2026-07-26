@@ -7,7 +7,7 @@
 **Design goal:** Spend tokens on reasoning, not tool noise.
 
 [![Phase](https://img.shields.io/badge/status-Phase%201%20preview-7c3aed?style=flat-square)](#current-boundary)
-[![Version](https://img.shields.io/badge/version-0.16.0-0f766e?style=flat-square)](poc/package.json)
+[![Version](https://img.shields.io/badge/version-0.17.0-0f766e?style=flat-square)](poc/package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25-111827?style=flat-square)](#protocol-surface)
 [![License](https://img.shields.io/badge/license-Apache--2.0-D22128?style=flat-square)](LICENSE)
@@ -106,6 +106,7 @@ namespace; it does not select a backend.
 | Lifecycle | Exactly one successful initialization path per stdio process |
 | Catalog | Calls require a public name learned from a `tools/list` page that passed the 64 KiB public-result guard |
 | Compact mux | A session pinned to `compact_mux` exposes only bounded search, describe, call, and authenticated fetch tools; direct typed names are denied |
+| Native deferral evidence | Deferral metadata requires an unexpired `pass` manifest, observed Tool Search, and exact client name/version/build match; all other states keep ordinary typed exposure |
 | Name isolation | Backend names cannot be called directly or invented |
 | Eligible results | Exact text above 4 KiB and oversized untyped envelopes are retained; small text with a redaction or opacity match is bounded too |
 | Typed safety | A typed result that needs redaction or opaque handling fails closed instead of violating its `outputSchema` or exposing source bytes |
@@ -254,7 +255,7 @@ conformance claim.
 
 | Message | Direction | Behavior |
 |---|---|---|
-| `initialize` | Client → EffectGate | Requires the preview MCP version; exposes only the tools capability and starts a fresh cursor session |
+| `initialize` | Client → EffectGate | Requires the preview MCP version, pins the exposure/host-evidence decision, and starts a fresh cursor session |
 | `notifications/initialized` | Client → EffectGate | Completes the lifecycle gate and is forwarded to the fixture |
 | `ping` | Client → EffectGate | Forwarded under shared timeout and pending-work limits |
 | `tools/list` | Client → EffectGate | Validates and namespaces tools, enforces contract/result ceilings, preserves pagination, and publishes either typed tools or the four compact contracts pinned at startup |
@@ -361,6 +362,8 @@ The dependency-free suite directly verifies:
   oracles, byte-proxy schema/result events, and joined P1 token provenance;
 - exact compact search/describe/call/fetch contracts, paged admission,
   direct-name denial, Context View continuation, and real P2 ledger evidence;
+- strict host-evidence parsing, exact client/build matching, expiry and weak-state
+  denial, qualified metadata, and raw-event compatibility attribution;
 - byte-for-byte reconstruction across multibyte UTF-8 page boundaries;
 - assignment, bearer-token, and prefixed-token sentinel removal across every
   first/fetched page;
@@ -408,6 +411,7 @@ The dependency-free suite directly verifies:
 |---|---|
 | Fixture-only stdio proxy | Reviewed stdio MCP backend adapters |
 | Typed read-only admission | Signed/pinned backend capability passports |
+| Evidence-gated native-deferral metadata for the generic harness | Qualified Claude Code Tool Search adapter and exact-version RC evidence |
 | Quota-limited partitioned filesystem CAS with explicit invalidation | Durable metadata, shared-writer locking, crash-root recovery, and production GC |
 | Cited paging/search/projection plus fail-closed opaque-content withholding | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
 | HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |

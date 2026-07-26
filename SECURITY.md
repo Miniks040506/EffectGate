@@ -135,6 +135,11 @@ The current preview assumes:
   arguments against the described JSON Schema inside the proxy; the bundled
   fixture performs backend validation. Compact quality and arbitrary-backend
   behavior are not production claims.
+- Native-deferral metadata requires a local evidence file no larger than 16 KiB,
+  an unexpired `pass` state, observed-enabled Tool Search, and exact client
+  name/version/build digest supplied at initialization. The file path and raw
+  configuration are not model-visible. This preview assertion is not
+  authenticated client identity and is not Claude Code qualification.
 - Artifact identifiers expose a SHA-256 content digest. Do not use this preview
   with secret-bearing or attacker-controlled real-world results.
 - Cursor envelopes use HMAC-SHA256 and bind artifact, source view, next

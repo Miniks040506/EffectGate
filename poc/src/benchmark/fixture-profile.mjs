@@ -83,7 +83,7 @@ export async function runFixtureProfile(
   const startedAt = clock();
   const process = new RpcProcess(args);
   try {
-    resultOf(await process.request("initialize", {
+    const initialized = resultOf(await process.request("initialize", {
       protocolVersion: MCP_VERSION,
       capabilities: {},
       clientInfo: {
@@ -148,7 +148,22 @@ export async function runFixtureProfile(
       }),
       tool_result_tokens: BYTE_PROXY_COUNTER.measure({
         content: resultContent
-      })
+      }),
+      compatibility: proxied
+        ? {
+            native_deferral:
+              initialized._meta?.["dev.effectgate/nativeDeferral"]?.reason ??
+              "evidence_not_configured",
+            ...(initialized._meta?.["dev.effectgate/nativeDeferral"]
+              ?.evidence_digest === undefined
+              ? {}
+              : {
+                  evidence_digest:
+                    initialized._meta["dev.effectgate/nativeDeferral"]
+                      .evidence_digest
+                })
+          }
+        : { native_deferral: "not_applicable" }
     };
   } finally {
     await process.stop();

@@ -62,6 +62,9 @@ function metrics(inputDigest, profile) {
       counter_version: "1",
       input_digest: inputDigest
     },
+    compatibility: {
+      native_deferral: "not_applicable"
+    },
     total_input_tokens: {
       value: 100,
       basis: "host_reported",

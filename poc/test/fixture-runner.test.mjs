@@ -51,6 +51,14 @@ test("fixture benchmark runs all four real profile paths with joined ledgers", a
       assert.equal(event.metrics.total_input_tokens, undefined);
       assert.equal(event.metrics.tool_schema_tokens.basis, "byte_proxy");
       assert.equal(event.metrics.tool_result_tokens.basis, "byte_proxy");
+      assert.equal(
+        event.metrics.compatibility.native_deferral,
+        profile === "P1_EG_TYPED"
+          ? "evidence_not_configured"
+          : profile === "P2_EG_MUX"
+            ? "profile_not_native_deferred"
+            : "not_applicable"
+      );
     }
     assert.ok(
       byProfile.P3_EAGER_DIAGNOSTIC.metrics.tool_schema_tokens.value >

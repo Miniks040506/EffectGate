@@ -40,6 +40,46 @@ Persist safe token provenance for one proxy session with:
 node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp serve --token-ledger /absolute/path/to/tokens.jsonl
 ```
 
+Attach a previously qualified host-evidence manifest with:
+
+```text
+node effectgate.mjs mcp serve --host-evidence /absolute/path/to/host-evidence.json
+```
+
+Manifest shape:
+
+```json
+{
+  "kind": "effectgate_host_compatibility",
+  "schema_version": "1.0.0",
+  "client": {
+    "name": "qualified-host",
+    "version": "1.2.3",
+    "build_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "tool_search": {
+    "state": "enabled_observed",
+    "configuration_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "evidence_state": "pass",
+  "observed_at": "2026-07-27T00:00:00.000Z",
+  "expires_at": "2026-08-27T00:00:00.000Z"
+}
+```
+
+Replace the placeholder digests and dates with captured qualification
+evidence; never mark an assumed capability as `pass`.
+
+The strict manifest records an exact client name, version and SHA-256 build
+digest; Tool Search state and configuration digest; evidence state; observation
+time; and expiry. Native deferral metadata is added only when the manifest is
+an unexpired `pass`, Tool Search was observed enabled, and initialization
+supplies matching client identity plus
+`_meta["dev.effectgate/clientBuildDigest"]`. Otherwise typed tools remain
+available without deferral metadata and the safe reason is returned in the
+initialize result. This is a generic harness contract, not current Claude Code
+qualification.
+
 Run the deterministic `BENCH-SMALL-005` fixture adapter with:
 
 ```powershell
@@ -50,7 +90,9 @@ It executes the direct native fixture (P0), typed EffectGate proxy (P1),
 compact mux (P2), and eager direct fixture (P3) as real child processes. The
 output contains raw per-run latency, success, call count, and byte-proxy tool
 schema/result measurements. P1 and P2 create joined token ledgers. No total
-host-session token value or savings claim is produced.
+host-session token value or savings claim is produced. Each raw run also states
+whether native deferral was qualified, unavailable, mismatched, or not
+applicable.
 
 Benchmark adapters can import `runPairedBenchmark()` from
 `src/benchmark/paired-harness.mjs`. One call runs P0, P1, P2, and P3 for every
@@ -172,6 +214,7 @@ test/           # dependency-free integration and boundary checks
 | Serialized tool-result value | 64 KiB |
 | Local model-visible tool output | 262,144 byte-proxy tokens per process session |
 | Optional token ledger | 1,000,000 entries / 64 MiB / one process writer |
+| Host compatibility evidence | 16 KiB / strict JSON / exact client and build match / explicit expiry |
 | Paired benchmark | 1,000 repetitions / four fixed profiles / one exclusive evidence file |
 | Context View source content | 4,096 bytes per first view / fetched page |
 | Search query | 64 Unicode characters / 256 UTF-8 bytes |

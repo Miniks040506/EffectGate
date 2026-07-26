@@ -27,7 +27,8 @@ const METRIC_KEYS = new Set([
   "tool_call_count",
   "tool_schema_tokens",
   "tool_result_tokens",
-  "total_input_tokens"
+  "total_input_tokens",
+  "compatibility"
 ]);
 const TOKEN_KEYS = new Set([
   "value",
@@ -36,6 +37,19 @@ const TOKEN_KEYS = new Set([
   "counter_version",
   "input_digest",
   "calibration_error_bound"
+]);
+const COMPATIBILITY_KEYS = new Set([
+  "native_deferral",
+  "evidence_digest"
+]);
+const NATIVE_DEFERRAL_STATES = new Set([
+  "qualified",
+  "evidence_not_configured",
+  "evidence_expired",
+  "support_not_proven",
+  "client_identity_mismatch",
+  "profile_not_native_deferred",
+  "not_applicable"
 ]);
 
 function hash(value) {
@@ -79,6 +93,18 @@ function validTokenCount(value) {
   );
 }
 
+function validCompatibility(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).every((key) => COMPATIBILITY_KEYS.has(key)) &&
+    NATIVE_DEFERRAL_STATES.has(value.native_deferral) &&
+    (value.evidence_digest === undefined ||
+      DIGEST_PATTERN.test(value.evidence_digest))
+  );
+}
+
 function validatedMetrics(value) {
   if (
     value === null ||
@@ -95,7 +121,8 @@ function validatedMetrics(value) {
     !validTokenCount(value.tool_schema_tokens) ||
     !validTokenCount(value.tool_result_tokens) ||
     (value.total_input_tokens !== undefined &&
-      !validTokenCount(value.total_input_tokens))
+      !validTokenCount(value.total_input_tokens)) ||
+    !validCompatibility(value.compatibility)
   ) {
     throw new TypeError("invalid benchmark metrics");
   }
@@ -103,6 +130,7 @@ function validatedMetrics(value) {
     ...value,
     tool_schema_tokens: Object.freeze({ ...value.tool_schema_tokens }),
     tool_result_tokens: Object.freeze({ ...value.tool_result_tokens }),
+    compatibility: Object.freeze({ ...value.compatibility }),
     ...(value.total_input_tokens === undefined
       ? {}
       : {
