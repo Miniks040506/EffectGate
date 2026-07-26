@@ -7,7 +7,7 @@
 **Design goal:** Spend tokens on reasoning, not tool noise.
 
 [![Phase](https://img.shields.io/badge/status-Phase%201%20preview-7c3aed?style=flat-square)](#current-boundary)
-[![Version](https://img.shields.io/badge/version-0.12.0-0f766e?style=flat-square)](poc/package.json)
+[![Version](https://img.shields.io/badge/version-0.13.0-0f766e?style=flat-square)](poc/package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25-111827?style=flat-square)](#protocol-surface)
 [![License](https://img.shields.io/badge/license-Apache--2.0-D22128?style=flat-square)](LICENSE)
@@ -108,15 +108,15 @@ namespace; it does not select a backend.
 | Name isolation | Backend names cannot be called directly or invented |
 | Eligible results | Exact text above 4 KiB and oversized untyped envelopes are retained; small text with a redaction or opacity match is bounded too |
 | Typed safety | A typed result that needs redaction or opaque handling fails closed instead of violating its `outputSchema` or exposing source bytes |
-| Artifact storage | 64 KiB chunk writer into a SHA-256 filesystem CAS: 1 MiB per artifact, 4 MiB logical total, 16 artifacts |
-| Finalization | File `fsync`, same-volume atomic rename, startup `.part` cleanup, deduplication, and full-hash read verification |
+| Artifact storage | 64 KiB chunk writer into a privacy-partitioned SHA-256 filesystem CAS: 1 MiB per artifact, 4 MiB logical total, 16 artifacts |
+| Finalization | File `fsync`, same-volume atomic rename, startup `.part` cleanup, same-partition deduplication, and full-hash read verification |
 | Corruption | A missing, truncated, or hash-mismatched object fails closed; corrupt objects are moved to quarantine |
 | Tool-result output | Every serialized tool-result value is capped at 64 KiB |
 | Opaque content | Unsupported media, private-key armor, and conservative encoded-data matches return metadata-only `unavailable` views with no retrieval path or generated summary |
 | Retrieval | HMAC-SHA256 authenticated cursors bind artifact, source view, next position, operation digest, budget, local-principal/client/session/policy digests, expiry, and nonce |
 | Search | Case-sensitive literal search: 64-character query, five context lines, 1,024-token maximum, and one cited source-ordered window per page |
 | Projection | JSON/JSONL pointer selection, CSV/TSV column selection, and Markdown heading extraction with a 1,000-item slice, 100 logical items per page, and a 1,024-token maximum |
-| Continuity | Artifacts with an unfetched cursor are pinned; recent same-session retries use a bounded page cache |
+| Continuity | Artifacts with an unfetched cursor are pinned; recent retries use a bounded page cache; explicit invalidation revokes cached and live cursors |
 | Page bound | At most 4,096 source bytes, cut only at a valid UTF-8 boundary |
 | Redaction | Versioned assignment, bearer-token, and common token-prefix rules run before every emitted page; more than 4,096 detected spans fails closed |
 | Errors | Backend errors and stderr content are not passed through verbatim |
@@ -166,6 +166,10 @@ page or any fetched page leaves EffectGate. A same-session retry returns the
 cached page while its bounded cursor state is retained. Cursor envelopes expire
 after 10 minutes and contain no raw query or projection arguments. Expired,
 modified, cross-process, and unknown cursors all return the same public error.
+Repeated identical content reuses one logical artifact and one physical object
+only inside its hashed privacy partition. Explicit invalidation removes that
+partition's object and revokes every cached replay and live continuation for
+the artifact without touching an identical object in another partition.
 
 Token measurements now route through one basis-aware counter abstraction.
 Context Views deliberately keep the existing deterministic `byte_proxy`
@@ -370,8 +374,9 @@ The dependency-free suite directly verifies:
 - authenticated cursor claims, payload/MAC tamper denial, raw-query
   containment, expiry, and cross-store rejection with one public error;
 - pinning of artifacts that still have a live continuation;
-- atomic filesystem finalization, interrupted `.part` recovery, and
-  cross-instance content deduplication;
+- atomic filesystem finalization, interrupted `.part` recovery, same-partition
+  cross-instance deduplication, and cross-partition path isolation;
+- artifact invalidation with cached-replay and live-continuation revocation;
 - full-hash read verification, corruption quarantine, and physical deletion
   only after cursor pins are released;
 - whole-result output caps for errors, structured data, and typed results;
@@ -393,7 +398,7 @@ The dependency-free suite directly verifies:
 |---|---|
 | Fixture-only stdio proxy | Reviewed stdio MCP backend adapters |
 | Typed read-only admission | Signed/pinned backend capability passports |
-| Quota-limited temporary filesystem CAS | Durable metadata, shared-writer locking, crash-root recovery, and production GC |
+| Quota-limited partitioned filesystem CAS with explicit invalidation | Durable metadata, shared-writer locking, crash-root recovery, and production GC |
 | Cited paging/search/projection plus fail-closed opaque-content withholding | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
 | HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |
 | Basis-aware counters, output guards, and optional single-session JSONL ledger | SQLite-backed multi-writer ledger and host comparison benchmarks |

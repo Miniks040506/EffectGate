@@ -23,6 +23,20 @@ function validateDigest(digest) {
   }
 }
 
+function privacyPartitionDigest(value) {
+  if (
+    typeof value !== "string" ||
+    value.length < 1 ||
+    value.length > 128 ||
+    Buffer.byteLength(value, "utf8") > 512
+  ) {
+    throw new TypeError("privacyPartition must be a bounded string");
+  }
+  return createHash("sha256")
+    .update(`effectgate.cas.partition.v1\0${value}`)
+    .digest("hex");
+}
+
 function writeAll(file, chunk) {
   let offset = 0;
   while (offset < chunk.length) {
@@ -62,7 +76,11 @@ function registerOwnedRoot(root) {
 }
 
 export class FilesystemCas {
-  constructor({ directory, maxObjectBytes = 1024 * 1024 } = {}) {
+  constructor({
+    directory,
+    maxObjectBytes = 1024 * 1024,
+    privacyPartition = "default"
+  } = {}) {
     if (!Number.isSafeInteger(maxObjectBytes) || maxObjectBytes < 1) {
       throw new TypeError("maxObjectBytes must be a positive integer");
     }
@@ -75,10 +93,15 @@ export class FilesystemCas {
     this.root = this.owned
       ? fs.mkdtempSync(join(tmpdir(), OWNED_ROOT_PREFIX))
       : resolve(directory);
+    this.partitionRoot = join(
+      this.root,
+      "partitions",
+      privacyPartitionDigest(privacyPartition)
+    );
     this.maxObjectBytes = maxObjectBytes;
-    this.tmpDirectory = join(this.root, "tmp");
-    this.objectsDirectory = join(this.root, "objects", "sha256");
-    this.quarantineDirectory = join(this.root, "quarantine");
+    this.tmpDirectory = join(this.partitionRoot, "tmp");
+    this.objectsDirectory = join(this.partitionRoot, "objects", "sha256");
+    this.quarantineDirectory = join(this.partitionRoot, "quarantine");
     this.closed = false;
 
     fs.mkdirSync(this.tmpDirectory, { recursive: true, mode: 0o700 });

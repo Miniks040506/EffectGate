@@ -111,6 +111,11 @@ The current preview assumes:
 - Finalized raw objects use a process-owned temporary filesystem CAS. Session
   metadata is memory-only, abrupt termination may leave an undiscovered
   temporary root, and there is no secure-erasure guarantee.
+- CAS object, temporary, and quarantine paths are separated by a SHA-256 hash
+  of the configured privacy partition; the raw partition label is not used as
+  a path. The default Context Store partition is session-specific. Explicitly
+  sharing a partition between processes remains a trusted single-writer
+  preview configuration without reference-counted deletion.
 - File data is synced before same-volume rename, but directory durability,
   shared-writer locking, durable metadata, and crash qualification are not yet
   production claims. Network filesystems are unsupported.

@@ -4,7 +4,6 @@ import { createHash } from "node:crypto";
 import { once } from "node:events";
 import {
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -1310,6 +1309,10 @@ test("Context Store preserves UTF-8 boundaries and pins live continuations", () 
     () => new ContextStore({ pageBytes: 262145 }),
     /pageBytes/
   );
+  assert.throws(
+    () => new ContextStore({ privacyPartition: "" }),
+    /privacyPartition/
+  );
 
   const capacity = new ContextStore({
     pageBytes: 4,
@@ -1841,8 +1844,9 @@ test("document projection handles CSV quoting, TSV, and fenced Markdown", () => 
 test("filesystem CAS finalizes, recovers, deduplicates, and quarantines", (context) => {
   const directory = mkdtempSync(join(tmpdir(), "effectgate-cas-test-"));
   context.after(() => rmSync(directory, { recursive: true, force: true }));
-  const temporaryDirectory = join(directory, "tmp");
-  mkdirSync(temporaryDirectory, { recursive: true });
+  const seed = new FilesystemCas({ directory, maxObjectBytes: 1024 });
+  const temporaryDirectory = seed.tmpDirectory;
+  seed.close();
   writeFileSync(
     join(temporaryDirectory, `upload_${"x".repeat(20)}.part`),
     "interrupted"
@@ -1891,13 +1895,93 @@ test("filesystem CAS finalizes, recovers, deduplicates, and quarantines", (conte
     CorruptArtifactError
   );
   assert.equal(existsSync(objectPath), false);
-  assert.equal(readdirSync(join(directory, "quarantine")).length, 1);
+  assert.equal(readdirSync(reopened.quarantineDirectory).length, 1);
   reopened.close();
 
   const ephemeral = new FilesystemCas();
   const ephemeralRoot = ephemeral.root;
   ephemeral.close();
   assert.equal(existsSync(ephemeralRoot), false);
+});
+
+test("CAS reuse and invalidation stay inside the privacy partition", (context) => {
+  const directory = mkdtempSync(join(tmpdir(), "effectgate-partition-test-"));
+  context.after(() => rmSync(directory, { recursive: true, force: true }));
+  const bytes = Buffer.from("partitioned artifact", "utf8");
+  const expectedDigest = `sha256:${createHash("sha256")
+    .update(bytes)
+    .digest("hex")}`;
+  const first = new FilesystemCas({
+    directory,
+    privacyPartition: "tenant-a"
+  });
+  const same = new FilesystemCas({
+    directory,
+    privacyPartition: "tenant-a"
+  });
+  const isolated = new FilesystemCas({
+    directory,
+    privacyPartition: "tenant-b"
+  });
+  assert.throws(
+    () => new FilesystemCas({ directory, privacyPartition: "" }),
+    /privacyPartition/
+  );
+
+  assert.equal(first.put([bytes], {
+    expectedBytes: bytes.length,
+    expectedDigest
+  }).deduplicated, false);
+  assert.equal(same.put([bytes], {
+    expectedBytes: bytes.length,
+    expectedDigest
+  }).deduplicated, true);
+  assert.equal(isolated.put([bytes], {
+    expectedBytes: bytes.length,
+    expectedDigest
+  }).deduplicated, false);
+  assert.equal(first.objectPath(expectedDigest), same.objectPath(expectedDigest));
+  assert.notEqual(first.objectPath(expectedDigest), isolated.objectPath(expectedDigest));
+
+  assert.equal(first.remove(expectedDigest), true);
+  assert.equal(existsSync(same.objectPath(expectedDigest)), false);
+  assert.deepEqual(
+    isolated.readRange(expectedDigest, 0, bytes.length, bytes.length),
+    bytes
+  );
+  for (const cas of [first, same, isolated]) cas.close();
+});
+
+test("artifact invalidation revokes cached and live retrieval cursors", () => {
+  const store = new ContextStore({ pageBytes: 4 });
+  const first = store.ingest("abcdefghijkl");
+  const cursor = first.retrieval.cursor;
+
+  const duplicate = store.ingest("abcdefghijkl");
+  assert.equal(duplicate.artifact_id, first.artifact_id);
+  assert.equal(store.artifacts.size, 1);
+  const fetched = store.fetch(cursor);
+  assert.equal(store.fetch(cursor), fetched);
+  assert.equal(store.invalidate(first.artifact_id), true);
+  assert.equal(store.invalidate(first.artifact_id), false);
+  assert.throws(() => store.fetch(cursor), InvalidCursorError);
+  assert.throws(
+    () => store.fetch(fetched.retrieval.cursor),
+    InvalidCursorError
+  );
+  assert.throws(
+    () => store.fetch(duplicate.retrieval.cursor),
+    InvalidCursorError
+  );
+  assert.throws(
+    () => store.invalidate("not-an-artifact"),
+    InvalidArtifactError
+  );
+
+  const reloaded = store.ingest("abcdefghijkl");
+  assert.equal(reloaded.artifact_id, first.artifact_id);
+  assert.notEqual(reloaded.view_id, first.view_id);
+  store.close();
 });
 
 test("tool-result bounding fails closed and preserves error semantics", () => {

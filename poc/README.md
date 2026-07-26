@@ -141,6 +141,7 @@ test/           # dependency-free integration and boundary checks
 | CAS write chunk | 64 KiB |
 | Stored artifact | 1 MiB |
 | Logical artifact store | 4 MiB / 16 artifacts |
+| Privacy partition key | 128 characters / 512 UTF-8 bytes; stored as SHA-256 path |
 | Detected redaction spans | 4,096 per artifact; excess fails closed |
 | Opacity screening | Private-key markers, integer-only encoded blocks, 1,024-byte windows, and 128-byte token runs over the capped artifact |
 | Cursor token | 2 KiB maximum / HMAC-SHA256 authenticated |
@@ -149,8 +150,11 @@ test/           # dependency-free integration and boundary checks
 | Forwarded backend requests | 64 pending / 10 seconds each |
 
 The filesystem objects are atomically finalized and verified before every
-page read. Session metadata remains volatile and process-local, and backend
-results still arrive as complete strings. The preview has no durable index,
+page read. Identical content reuses storage only within the same hashed privacy
+partition. `ContextStore.invalidate()` removes that partition's object and
+revokes cached and live cursors. Session metadata remains volatile and
+process-local, and backend results still arrive as complete strings. The
+preview has no durable index,
 end-to-end streaming adapter, comprehensive secret/PII detection, regex/ranked
 search, JSONPath or richer predicates, full CommonMark structure, SQLite
 ledger/multi-writer recovery, approval flow, fuzz qualification, or production

@@ -514,7 +514,8 @@ export class ContextStore {
     maxCursors = 64,
     cursorTtlMs = CONTEXT_CURSOR_TTL_MS,
     now = Date.now,
-    casDirectory
+    casDirectory,
+    privacyPartition
   } = {}) {
     for (const [name, value, minimum] of [
       ["pageBytes", pageBytes, 4],
@@ -545,6 +546,15 @@ export class ContextStore {
       );
     }
     if (typeof now !== "function") throw new TypeError("now must be a function");
+    if (
+      privacyPartition !== undefined &&
+      (typeof privacyPartition !== "string" ||
+        privacyPartition.length < 1 ||
+        privacyPartition.length > 128 ||
+        Buffer.byteLength(privacyPartition, "utf8") > 512)
+    ) {
+      throw new TypeError("privacyPartition must be a bounded string");
+    }
 
     this.resultBudget = createResultBudgetController({
       firstViewBytes,
@@ -556,11 +566,12 @@ export class ContextStore {
     this.maxStoreBytes = maxStoreBytes;
     this.maxArtifacts = maxArtifacts;
     this.now = now;
+    this.sessionId = randomId("sess");
     this.cas = new FilesystemCas({
       directory: casDirectory,
-      maxObjectBytes: maxArtifactBytes
+      maxObjectBytes: maxArtifactBytes,
+      privacyPartition: privacyPartition ?? this.sessionId
     });
-    this.sessionId = randomId("sess");
     this.cursorService = new CursorService({
       maxCursors,
       ttlMs: cursorTtlMs,
@@ -817,6 +828,20 @@ export class ContextStore {
     this.cas.remove(artifact.sourceDigest);
     this.artifacts.delete(artifactId);
     this.storedBytes -= artifact.byteLength;
+  }
+
+  invalidate(artifactId) {
+    if (
+      typeof artifactId !== "string" ||
+      !/^art_[a-f0-9]{64}$/u.test(artifactId)
+    ) {
+      throw new InvalidArtifactError();
+    }
+    const invalidatedCursors =
+      this.cursorService.invalidateArtifact(artifactId);
+    const existed = this.artifacts.has(artifactId);
+    if (existed) this.dropArtifact(artifactId);
+    return existed || invalidatedCursors > 0;
   }
 
   close() {

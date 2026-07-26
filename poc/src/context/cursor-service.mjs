@@ -270,6 +270,19 @@ export class CursorService {
     );
   }
 
+  invalidateArtifact(artifactId) {
+    if (typeof artifactId !== "string" || !ARTIFACT_PATTERN.test(artifactId)) {
+      throw new TypeError("artifactId is invalid");
+    }
+    let invalidated = 0;
+    for (const [nonce, state] of this.states) {
+      if (state.artifactId !== artifactId) continue;
+      this.states.delete(nonce);
+      invalidated += 1;
+    }
+    return invalidated;
+  }
+
   clear() {
     this.states.clear();
     this.key.fill(0);
