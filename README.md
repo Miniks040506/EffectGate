@@ -7,7 +7,7 @@
 **Design goal:** Spend tokens on reasoning, not tool noise.
 
 [![Phase](https://img.shields.io/badge/status-Phase%201%20preview-7c3aed?style=flat-square)](#current-boundary)
-[![Version](https://img.shields.io/badge/version-0.7.0-0f766e?style=flat-square)](poc/package.json)
+[![Version](https://img.shields.io/badge/version-0.8.0-0f766e?style=flat-square)](poc/package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25-111827?style=flat-square)](#protocol-surface)
 [![License](https://img.shields.io/badge/license-Apache--2.0-D22128?style=flat-square)](LICENSE)
@@ -39,6 +39,9 @@ The preview proves the narrow transport and admission spine, then exercises the
 first context-control paths end to end: large deterministic text becomes
 bounded, deterministically redacted, cited pages, literal search windows, or
 JSON/JSONL, CSV/TSV, and Markdown projections retrieved through opaque cursors.
+Oversized untyped result envelopes are retained as serialized JSON, while
+unsupported or deterministically opaque content is withheld without inventing
+a summary.
 
 ## Quick start
 
@@ -101,13 +104,15 @@ namespace; it does not select a backend.
 | Work bound | At most 64 pending backend requests |
 | Timeout | Each forwarded request expires after 10 seconds |
 | Lifecycle | Exactly one successful initialization path per stdio process |
-| Catalog | Calls require a public name learned from an admitted `tools/list` |
+| Catalog | Calls require a public name learned from a `tools/list` page that passed the 64 KiB public-result guard |
 | Name isolation | Backend names cannot be called directly or invented |
-| Large text | Exact single-text results without an `outputSchema` are paged above 4 KiB |
+| Eligible results | Exact text above 4 KiB and oversized untyped envelopes are retained; small text with a redaction or opacity match is bounded too |
+| Typed safety | A typed result that needs redaction or opaque handling fails closed instead of violating its `outputSchema` or exposing source bytes |
 | Artifact storage | 64 KiB chunk writer into a SHA-256 filesystem CAS: 1 MiB per artifact, 4 MiB logical total, 16 artifacts |
 | Finalization | File `fsync`, same-volume atomic rename, startup `.part` cleanup, deduplication, and full-hash read verification |
 | Corruption | A missing, truncated, or hash-mismatched object fails closed; corrupt objects are moved to quarantine |
 | Tool-result output | Every serialized tool-result value is capped at 64 KiB |
+| Opaque content | Unsupported media, private-key armor, and conservative encoded-data matches return metadata-only `unavailable` views with no retrieval path or generated summary |
 | Retrieval | HMAC-SHA256 authenticated cursors bind artifact, source view, next position, operation digest, budget, local-principal/client/session/policy digests, expiry, and nonce |
 | Search | Case-sensitive literal search: 64-character query, five context lines, 1,024-token maximum, and one cited source-ordered window per page |
 | Projection | JSON/JSONL pointer selection, CSV/TSV column selection, and Markdown heading extraction with a 1,000-item slice, 100 logical items per page, and a 1,024-token maximum |
@@ -133,16 +138,23 @@ is why external backends remain disabled.
 
 ## Context View contract
 
-`fixture__large_log` demonstrates the first bounded-result path. An exact
-single-text result at or below 4 KiB passes through unchanged. A larger exact
-single-text result is retained in the temporary CAS and replaced with a v1
-Context View containing:
+The published [Context View JSON Schema](contracts/context-view.schema.json)
+and its [token-count definition](contracts/token-ledger.schema.json) are the
+machine-readable runtime contract.
+
+`fixture__large_log` demonstrates the first bounded-result path. An eligible
+exact single-text result at or below 4 KiB passes through unchanged only when
+no redaction or opacity rule matches. Larger exact text and oversized untyped
+result envelopes are retained in the temporary CAS; non-text envelopes use
+deterministic JSON serialization. The model receives a v1 Context View
+containing:
 
 - a deterministically redacted UTF-8 projection and its exclusive raw byte
   range;
 - stable artifact and SHA-256 integrity digests;
 - an explicit source-byte ceiling and honestly labeled byte-proxy token count;
 - `partial_view` status whenever the page is not the whole artifact;
+- an explicit `EG-VIEW-002` diagnostic whenever source data was omitted;
 - an opaque continuation cursor when more bytes remain;
 - redaction class, rule ID, and per-page occurrence counts plus the applied
   ruleset diagnostic.
@@ -182,6 +194,15 @@ CSV/TSV fails closed because safe column-aware redaction cannot be guaranteed.
 Markdown headings inside fenced code blocks are ignored. An item larger than
 the requested budget is explicitly omitted with a cited diagnostic.
 
+Unknown media types and content matched by the bounded
+`opaque-byte-distribution-v1` screen are retained but return an empty
+`unavailable` view. Fetch, search, and projection cannot reveal that artifact,
+and EffectGate never labels the withheld bytes as encrypted or generates a
+summary. The screen covers private-key headers, long tokens, wrapped base64-like
+blocks, wrapped hexadecimal blocks, and bounded byte-distribution windows. It
+can produce false positives; it is a fail-closed preview rule, not a secrecy
+classifier.
+
 > [!NOTE]
 > The 4 KiB budget measures source content inside the Context View. MCP and JSON
 > envelope bytes are covered by a 64 KiB tool-result limit and the separate
@@ -200,8 +221,8 @@ conformance claim.
 | `initialize` | Client → EffectGate | Requires the preview MCP version; exposes only the tools capability and starts a fresh cursor session |
 | `notifications/initialized` | Client → EffectGate | Completes the lifecycle gate and is forwarded to the fixture |
 | `ping` | Client → EffectGate | Forwarded under shared timeout and pending-work limits |
-| `tools/list` | Client → EffectGate | Validates name and `inputSchema`, applies admission metadata, namespaces names, preserves pagination, and advertises local fetch/search/project tools |
-| `tools/call` | Client → EffectGate | Accepts only an admitted public name; eligible large text is converted to a Context View |
+| `tools/list` | Client → EffectGate | Validates and namespaces tools, enforces the public-result ceiling before admission, preserves pagination, and advertises local fetch/search/project tools |
+| `tools/call` | Client → EffectGate | Accepts only an admitted public name; eligible untyped output is bounded, while typed sensitive/opaque output fails closed |
 | `effectgate_fetch` | Client → proxy | Consumes an opaque cursor locally and returns the next cited page |
 | `effectgate_search` | Client → proxy | Searches a session-owned artifact for a bounded literal context window |
 | `effectgate_project` | Client → proxy | Applies bounded JSON/JSONL, CSV/TSV, or Markdown projection with source citations |
@@ -288,9 +309,11 @@ The dependency-free suite directly verifies:
 - 4,096 Unicode code points at the fixture input limit;
 - unchanged pass-through for small text results;
 - v1 Context View fields, exact byte citations, and hard page limits;
+- honest byte-proxy token ceilings plus explicit omission diagnostics;
 - byte-for-byte reconstruction across multibyte UTF-8 page boundaries;
 - assignment, bearer-token, and prefixed-token sentinel removal across every
   first/fetched page;
+- fail-closed typed-result handling for all three synthetic secret classes;
 - cross-page secret masking and fail-closed redaction-span limits;
 - unique, repeated, absent, Unicode, and hard-budget literal searches;
 - search-cursor replay plus indistinguishable invented/cross-session artifact
@@ -299,7 +322,7 @@ The dependency-free suite directly verifies:
 - JSON/JSONL pointer selection, equality filtering, slicing, cursor replay, and
   per-record citation mapping;
 - quoted JSON secret redaction, malformed JSON fallback, cited malformed JSONL
-  diagnostics, and oversized-record omission;
+  diagnostics, requested-budget continuation, and oversized-record omission;
 - CSV quoting, escaped quotes, embedded newlines, TSV parsing, column
   selection/filtering, structural sensitive-column redaction, and malformed
   table rejection;
@@ -315,6 +338,12 @@ The dependency-free suite directly verifies:
 - full-hash read verification, corruption quarantine, and physical deletion
   only after cursor pins are released;
 - whole-result output caps for errors, structured data, and typed results;
+- deterministic JSON retention of oversized untyped envelopes and bounded retention
+  failure without source-data reflection;
+- deterministic opaque-content withholding across initial, search, and
+  projection paths, including exact detector boundaries, private-key armor,
+  wrapped base64/hex data, final-tail data, and the 1 MiB artifact ceiling;
+- oversized catalog-page rejection before tool admission;
 - malformed and oversized frame rejection with parser recovery;
 - invalid request-ID sanitization without reflecting hidden values;
 - direct and invented backend-name rejection;
@@ -328,7 +357,7 @@ The dependency-free suite directly verifies:
 | Fixture-only stdio proxy | Reviewed stdio MCP backend adapters |
 | Typed read-only admission | Signed/pinned backend capability passports |
 | Quota-limited temporary filesystem CAS | Durable metadata, shared-writer locking, crash-root recovery, and production GC |
-| Cited text paging, literal search, and bounded JSON/JSONL, CSV/TSV, and ATX Markdown projection | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
+| Cited paging/search/projection plus fail-closed opaque-content withholding | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
 | HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |
 | Byte-proxy counts in each view | Token ledger and host comparison benchmarks |
 | Deterministic local tests | Compatibility, fuzz, latency, and crash qualification |
@@ -345,6 +374,9 @@ acceptance evidence exists.
 ├── LICENSE
 ├── README.md
 ├── SECURITY.md
+├── contracts/
+│   ├── context-view.schema.json # public model-visible result contract
+│   └── token-ledger.schema.json # shared token-count definition
 └── poc/
     ├── context-view.mjs     # bounded store, paging, citations, and cursors
     ├── cursor-service.mjs   # authenticated cursor envelopes and replay state

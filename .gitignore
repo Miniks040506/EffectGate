@@ -10,7 +10,9 @@
 /02-compatibility-matrix.yaml
 /03-policy-effect-matrix.yaml
 /05-benchmark-corpus.yaml
-/contracts/
+/contracts/*
+!/contracts/context-view.schema.json
+!/contracts/token-ledger.schema.json
 /tools/
 
 # Local runtime/editor output

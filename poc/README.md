@@ -5,6 +5,8 @@ This dependency-free Node.js preview proves two narrow paths:
 ```text
 small typed result  -> unchanged MCP result
 large text result   -> temporary filesystem CAS -> redacted view
+other large result  -> serialized JSON in CAS -> bounded view
+opaque/unknown data -> retained in CAS -> metadata-only unavailable view
 retained artifact   -> fetch / literal search / JSON or JSONL projection
                     -> CSV or TSV projection / Markdown heading extraction
 ```
@@ -42,6 +44,18 @@ reports `retrieval.more_available: true`, pass its cursor to
 `effectgate_fetch`. Without redaction matches, concatenating each cited page
 reconstructs the original log exactly. Add `"includeSecrets": true` to verify
 that documented synthetic sentinels are removed from every emitted page.
+
+Eligible untyped results with multiple content items or structured data are
+serialized once as JSON when they exceed the 64 KiB result ceiling.
+If retention cannot fit the 1 MiB artifact limit, EffectGate returns a bounded
+`EG-CAS-001` error without reflecting source content.
+
+Unsupported media and deterministic opacity matches are retained but withheld.
+Their Context View has empty content, `status: "unavailable"`, a failed budget,
+and no retrieval operations. The detector is conservative: it does not claim
+that data is encrypted or secret, and it never generates a summary. Typed
+results that match redaction or opacity rules return a bounded error rather
+than breaking their advertised `outputSchema`.
 
 Use `effectgate_search` with the view's `artifact_id` and a literal `query`.
 Optional `context_lines` is `0..5`; `max_tokens` is `64..1024`. Repeated
@@ -85,6 +99,7 @@ ignored.
 | Stored artifact | 1 MiB |
 | Logical artifact store | 4 MiB / 16 artifacts |
 | Detected redaction spans | 4,096 per artifact; excess fails closed |
+| Opacity screening | Private-key markers, integer-only encoded blocks, 1,024-byte windows, and 128-byte token runs over the capped artifact |
 | Cursor token | 2 KiB maximum / HMAC-SHA256 authenticated |
 | Cursor states | 64; live continuations are pinned |
 | Cursor lifetime | 10 minutes; recent same-session retries are cached |

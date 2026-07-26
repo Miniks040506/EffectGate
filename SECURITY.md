@@ -4,9 +4,9 @@
 
 EffectGate is currently a fixture-only Phase 1 preview. It includes a bounded,
 filesystem-backed Context View path with deterministic high-signal credential
-redaction and volatile session metadata. It is not production-ready and must
-not be used to protect real tool effects, secrets, or untrusted external
-backends.
+redaction, conservative opaque-content withholding, and volatile session
+metadata. It is not production-ready and must not be used to protect real tool
+effects, secrets, or untrusted external backends.
 
 ## Supported versions
 
@@ -61,6 +61,8 @@ Reports are especially useful when they demonstrate:
 - cross-session artifact search or search-result existence oracles;
 - cross-session artifact projection or projection-result existence oracles;
 - uncited, invented, skipped, duplicated, or secret-bearing projected records;
+- retrieval of content classified as unsupported or opaque through any
+  model-visible first, fetch, search, or projection path;
 - bypass of artifact, store, or active-cursor quotas;
 - escape from the intended child-process or environment boundary;
 - a reproducible resource-exhaustion path beyond documented limitations.
@@ -94,6 +96,16 @@ The current preview assumes:
   bearer tokens, and selected token prefixes. It is not comprehensive
   secret/PII detection or protection. More than 4,096 detected spans fails
   closed.
+- Opacity screening is a deterministic, integer-only preview heuristic over a
+  maximum 1 MiB artifact. It may withhold generated, minified, or encoded text
+  that is not secret. It does not identify encryption, replace redaction, or
+  prove that unflagged content is safe. It checks selected private-key markers,
+  long token runs, wrapped base64-like/hexadecimal blocks, and bounded
+  byte-distribution windows. Flagged artifacts expose metadata only, with no
+  model-visible fetch, search, or projection path.
+- Typed results are screened too. If redaction or opacity handling would violate
+  an advertised `outputSchema`, EffectGate returns a bounded safe error rather
+  than source content.
 - Backend results still arrive at the proxy as complete strings; ingestion is
   not yet end-to-end bounded-memory streaming.
 - Finalized raw objects use a process-owned temporary filesystem CAS. Session
@@ -130,6 +142,9 @@ The current preview assumes:
   does not render HTML or implement full CommonMark or Setext headings.
 - The 4 KiB Context View budget covers source content; the surrounding MCP/JSON
   tool-result value is capped at 64 KiB and the complete frame at 1 MiB.
+- Oversized untyped tool-result envelopes are retained as serialized JSON when
+  possible. Retention or capacity failure returns a bounded `EG-CAS-001` error
+  without reflecting the rejected source.
 - Artifacts with an unfetched continuation are pinned until the cursor expires;
   new ingestion fails closed when only pinned artifacts occupy the quota.
 - Frame and pending-request limits reduce resource risk but are not complete

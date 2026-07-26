@@ -253,6 +253,23 @@ test("proxy preserves the tool contract and namespaces only its name", async (co
   const secondPage = await proxy.request("tools/list", { cursor: "page-2" });
   assert.equal(secondPage.result.tools[0].name, "fixture__echo_again");
 
+  const oversizedCatalog = await proxy.request("tools/list", {
+    cursor: "oversized"
+  });
+  assert.deepEqual(oversizedCatalog.error, {
+    code: -32005,
+    message: `The response exceeds the ${MAX_TOOL_RESULT_BYTES}-byte result limit.`
+  });
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(oversizedCatalog), "utf8") <=
+      MAX_TOOL_RESULT_BYTES
+  );
+  const unlisted = await proxy.request("tools/call", {
+    name: "fixture__oversized_catalog",
+    arguments: { text: "must not be admitted" }
+  });
+  assert.equal(unlisted.error.code, -32602);
+
   const firstPageStillCallable = await proxy.request("tools/call", {
     name,
     arguments: { text: "page one remains admitted" }
@@ -342,13 +359,22 @@ test("large text is losslessly paged through opaque Context View cursors", async
     name: largeLog.name,
     arguments: { lines: 1000, includeStructuredCopy: true }
   });
-  assert.deepEqual(oversizedStructured.error, {
-    code: -32004,
-    message: "The backend returned an invalid response."
-  });
-  assert.doesNotMatch(
-    JSON.stringify(oversizedStructured),
-    /bounded context evidence/
+  const structuredView = JSON.parse(
+    oversizedStructured.result.content[0].text
+  );
+  assert.equal(structuredView.status, "partial_view");
+  assert.equal(structuredView.media_type, "application/json");
+  assert.ok(
+    structuredView.diagnostics.some(
+      ({ code }) => code === "EG-VIEW-RESULT-001"
+    )
+  );
+  assert.ok(
+    structuredView.diagnostics.some(({ code }) => code === "EG-VIEW-002")
+  );
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(oversizedStructured.result), "utf8") <=
+      MAX_TOOL_RESULT_BYTES
   );
   assert.deepEqual((await proxy.request("ping")).result, {});
 
@@ -1044,10 +1070,27 @@ test("secret sentinels are redacted from every Context View page", async (contex
   const searchTool = catalog.result.tools.find(
     (tool) => tool.name === CONTEXT_SEARCH_TOOL.name
   );
+  const echo = catalog.result.tools.find(
+    (tool) => tool.name === "fixture__echo"
+  );
   const listed = await proxy.request("tools/list", { cursor: "page-2" });
   const largeLog = listed.result.tools.find(
     (tool) => tool.name === "fixture__large_log"
   );
+
+  for (const text of [
+    `api_key=${FIXTURE_SECRETS[0]}`,
+    `Bearer ${FIXTURE_SECRETS[1]}`,
+    FIXTURE_SECRETS[2]
+  ]) {
+    const typed = await proxy.request("tools/call", {
+      name: echo.name,
+      arguments: { text }
+    });
+    assert.equal(typed.result.isError, true);
+    assert.match(typed.result.content[0].text, /^EG-VIEW-002:/);
+    assert.equal(JSON.stringify(typed).includes(text), false);
+  }
 
   const raw = buildFixtureLog(200, true);
   for (const secret of FIXTURE_SECRETS) assert.ok(raw.includes(secret));
