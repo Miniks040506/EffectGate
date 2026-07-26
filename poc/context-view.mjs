@@ -1,5 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
 
+import {
+  CursorService,
+  InvalidCursorTokenError
+} from "./cursor-service.mjs";
 import { FilesystemCas } from "./filesystem-cas.mjs";
 import {
   buildDocumentProjectionEntries,
@@ -310,16 +314,22 @@ export class ContextStore {
     this.maxArtifactBytes = maxArtifactBytes;
     this.maxStoreBytes = maxStoreBytes;
     this.maxArtifacts = maxArtifacts;
-    this.maxCursors = maxCursors;
-    this.cursorTtlMs = cursorTtlMs;
     this.now = now;
     this.cas = new FilesystemCas({
       directory: casDirectory,
       maxObjectBytes: maxArtifactBytes
     });
     this.sessionId = randomId("sess");
+    this.cursorService = new CursorService({
+      maxCursors,
+      ttlMs: cursorTtlMs,
+      now,
+      principalId: "preview-local-user",
+      clientId: randomId("client"),
+      sessionId: this.sessionId,
+      policyGeneration: "preview-readonly-v1"
+    });
     this.artifacts = new Map();
-    this.cursors = new Map();
     this.storedBytes = 0;
   }
 
@@ -481,11 +491,11 @@ export class ContextStore {
   }
 
   fetch(cursor) {
-    if (typeof cursor !== "string") throw new InvalidCursorError();
-    const position = this.cursors.get(cursor);
-    if (!position) throw new InvalidCursorError();
-    if (position.expiresAt <= this.now()) {
-      this.cursors.delete(cursor);
+    let position;
+    try {
+      position = this.cursorService.resolve(cursor);
+    } catch (error) {
+      if (!(error instanceof InvalidCursorTokenError)) throw error;
       throw new InvalidCursorError();
     }
     if (position.view) return position.view;
@@ -494,16 +504,16 @@ export class ContextStore {
     if (!artifact) throw new InvalidCursorError();
     this.artifacts.delete(artifact.artifactId);
     this.artifacts.set(artifact.artifactId, artifact);
-    const view = position.search
+    const view = position.operation.search
       ? this.createSearchView(
           artifact,
-          { ...position.search, offset: position.offset },
+          { ...position.operation.search, offset: position.offset },
           true
         )
-      : position.project
+      : position.operation.project
         ? this.createProjectView(
             artifact,
-            { ...position.project, offset: position.offset },
+            { ...position.operation.project, offset: position.offset },
             true
           )
         : this.createView(artifact, position.offset, true);
@@ -520,50 +530,36 @@ export class ContextStore {
   }
 
   close() {
-    this.cursors.clear();
+    this.cursorService.clear();
     this.artifacts.clear();
     this.storedBytes = 0;
     this.cas.close();
   }
 
   pruneExpiredCursors() {
-    const currentTime = this.now();
-    for (const [cursor, position] of this.cursors) {
-      if (position.expiresAt <= currentTime) this.cursors.delete(cursor);
-    }
+    this.cursorService.prune();
   }
 
   isPinned(artifactId) {
-    return [...this.cursors.values()].some(
-      (position) =>
-        position.artifactId === artifactId && position.view === undefined
-    );
+    return this.cursorService.isPinned(artifactId);
   }
 
-  createCursor(artifactId, offset, advancing, operation = {}) {
-    const currentTime = this.now();
-    this.pruneExpiredCursors();
-    const limit = advancing ? this.maxCursors : this.maxCursors - 1;
-    while (this.cursors.size >= limit) {
-      const replay = [...this.cursors].find(([, position]) => position.view);
-      if (!replay) {
-        throw new RangeError("retrieval cursor capacity is full");
-      }
-      this.cursors.delete(replay[0]);
-    }
-
-    let cursor;
-    do {
-      cursor = randomId("cur", 24);
-    } while (this.cursors.has(cursor));
-    const expiresAt = currentTime + this.cursorTtlMs;
-    this.cursors.set(cursor, {
+  createCursor(
+    artifactId,
+    viewId,
+    offset,
+    budget,
+    advancing,
+    operation = { type: "text" }
+  ) {
+    return this.cursorService.issue({
       artifactId,
+      viewId,
       offset,
-      expiresAt,
-      ...operation
+      budget,
+      advancing,
+      operation
     });
-    return { cursor, expiresAt };
   }
 
   createProjectView(
@@ -723,25 +719,33 @@ export class ContextStore {
 
     const moreAvailable = position < selected.length;
     const partial = moreAvailable || omitted;
+    const viewId = randomId("view");
     const continuation = moreAvailable
-      ? this.createCursor(artifact.artifactId, position, advancing, {
-          project: {
-            format,
-            fields,
-            columns,
-            filter,
-            heading,
-            sliceOffset,
-            sliceLimit,
-            maxTokens
+      ? this.createCursor(
+          artifact.artifactId,
+          viewId,
+          position,
+          maxBytes,
+          advancing,
+          {
+            project: {
+              format,
+              fields,
+              columns,
+              filter,
+              heading,
+              sliceOffset,
+              sliceLimit,
+              maxTokens
+            }
           }
-        })
+        )
       : null;
     const content = chunks.join("");
     const emittedDigest = digest(Buffer.from(content, "utf8"));
     const view = {
       schema_version: "1.0.0",
-      view_id: randomId("view"),
+      view_id: viewId,
       artifact_id: artifact.artifactId,
       session_id: this.sessionId,
       status: partial ? "partial_view" : "complete",
@@ -870,18 +874,26 @@ export class ContextStore {
     const emittedBytes = Buffer.from(content, "utf8");
     const moreAvailable = nextMatch !== -1;
     const partial = moreAvailable || windowClipped;
+    const viewId = randomId("view");
     const continuation = moreAvailable
-      ? this.createCursor(artifact.artifactId, nextMatch, advancing, {
-          search: {
-            query,
-            contextLines,
-            maxTokens
+      ? this.createCursor(
+          artifact.artifactId,
+          viewId,
+          nextMatch,
+          maxBytes,
+          advancing,
+          {
+            search: {
+              query,
+              contextLines,
+              maxTokens
+            }
           }
-        })
+        )
       : null;
     const view = {
       schema_version: "1.0.0",
-      view_id: randomId("view"),
+      view_id: viewId,
       artifact_id: artifact.artifactId,
       session_id: this.sessionId,
       status: partial ? "partial_view" : "complete",
@@ -962,13 +974,20 @@ export class ContextStore {
     const emittedDigest = digest(emittedBytes);
     const complete = start === 0 && end === artifact.byteLength;
     const moreAvailable = end < artifact.byteLength;
+    const viewId = randomId("view");
     const continuation = moreAvailable
-      ? this.createCursor(artifact.artifactId, end, advancing)
+      ? this.createCursor(
+          artifact.artifactId,
+          viewId,
+          end,
+          this.pageBytes,
+          advancing
+        )
       : null;
 
     const view = {
       schema_version: "1.0.0",
-      view_id: randomId("view"),
+      view_id: viewId,
       artifact_id: artifact.artifactId,
       session_id: this.sessionId,
       status: complete ? "complete" : "partial_view",
