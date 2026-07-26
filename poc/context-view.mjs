@@ -910,7 +910,9 @@ export class ContextStore {
       ],
       retrieval: {
         more_available: moreAvailable,
-        operations: moreAvailable ? ["fetch", "search"] : ["search"]
+        operations: moreAvailable
+          ? ["fetch", "project", "search"]
+          : ["project", "search"]
       },
       integrity: {}
     };
@@ -988,7 +990,9 @@ export class ContextStore {
       ],
       retrieval: {
         more_available: moreAvailable,
-        operations: moreAvailable ? ["fetch", "search"] : ["search"]
+        operations: moreAvailable
+          ? ["fetch", "project", "search"]
+          : ["project", "search"]
       },
       integrity: {}
     };

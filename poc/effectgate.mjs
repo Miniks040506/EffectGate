@@ -15,11 +15,21 @@ import {
   InvalidArtifactError,
   InvalidCursorError
 } from "./context-view.mjs";
+import {
+  CONTEXT_PROJECT_MAX_FIELDS,
+  CONTEXT_PROJECT_MAX_LIMIT,
+  CONTEXT_PROJECT_MAX_OFFSET,
+  CONTEXT_PROJECT_MAX_POINTER_LENGTH,
+  CONTEXT_PROJECT_MAX_TOKENS,
+  CONTEXT_PROJECT_MIN_TOKENS,
+  isValidJsonPointer,
+  isValidProjectionScalar
+} from "./json-project.mjs";
 
 export const MAX_FRAME_BYTES = 1024 * 1024;
 export const MAX_TOOL_RESULT_BYTES = 64 * 1024;
 export const MCP_VERSION = "2025-11-25";
-export const EFFECTGATE_VERSION = "0.4.0";
+export const EFFECTGATE_VERSION = "0.5.0";
 const MAX_PENDING_REQUESTS = 64;
 const MAX_ID_BYTES = 128;
 
@@ -61,14 +71,15 @@ export const FIXTURE_SECOND_TOOL = Object.freeze({
 
 export const FIXTURE_LARGE_LOG_TOOL = Object.freeze({
   name: "large_log",
-  title: "Deterministic Large Log",
-  description: "Returns a deterministic UTF-8 log for bounded-view testing.",
+  title: "Deterministic Large Result",
+  description: "Returns deterministic UTF-8 log or JSONL bounded-view data.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
     required: ["lines"],
     properties: {
       lines: { type: "integer", minimum: 1, maximum: 6000 },
+      format: { type: "string", enum: ["log", "jsonl"], default: "log" },
       includeStructuredCopy: { type: "boolean" },
       includeSecrets: { type: "boolean" }
     }
@@ -133,6 +144,69 @@ export const CONTEXT_SEARCH_TOOL = Object.freeze({
   annotations: FIXTURE_TOOL.annotations
 });
 
+export const CONTEXT_PROJECT_TOOL = Object.freeze({
+  name: "effectgate_project",
+  title: "Project Context Artifact",
+  description:
+    "Returns a bounded JSON/JSONL field, equality-filter, and slice projection.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["artifact_id", "format"],
+    properties: {
+      artifact_id: {
+        type: "string",
+        pattern: "^art_[a-f0-9]{64}$"
+      },
+      format: { type: "string", enum: ["json", "jsonl"] },
+      fields: {
+        type: "array",
+        maxItems: CONTEXT_PROJECT_MAX_FIELDS,
+        uniqueItems: true,
+        items: {
+          type: "string",
+          maxLength: CONTEXT_PROJECT_MAX_POINTER_LENGTH,
+          pattern: "^(?:/(?:[^~]|~[01])*)*$"
+        }
+      },
+      filter: {
+        type: "object",
+        additionalProperties: false,
+        required: ["pointer", "equals"],
+        properties: {
+          pointer: {
+            type: "string",
+            maxLength: CONTEXT_PROJECT_MAX_POINTER_LENGTH,
+            pattern: "^(?:/(?:[^~]|~[01])*)*$"
+          },
+          equals: {
+            type: ["string", "number", "boolean", "null"]
+          }
+        }
+      },
+      offset: {
+        type: "integer",
+        minimum: 0,
+        maximum: CONTEXT_PROJECT_MAX_OFFSET,
+        default: 0
+      },
+      limit: {
+        type: "integer",
+        minimum: 1,
+        maximum: CONTEXT_PROJECT_MAX_LIMIT,
+        default: 100
+      },
+      max_tokens: {
+        type: "integer",
+        minimum: CONTEXT_PROJECT_MIN_TOKENS,
+        maximum: CONTEXT_PROJECT_MAX_TOKENS,
+        default: 512
+      }
+    }
+  },
+  annotations: FIXTURE_TOOL.annotations
+});
+
 export function buildFixtureLog(lines, includeSecrets = false) {
   if (!Number.isSafeInteger(lines) || lines < 1 || lines > 6000) {
     throw new RangeError("lines must be an integer from 1 through 6000");
@@ -157,6 +231,34 @@ export function buildFixtureLog(lines, includeSecrets = false) {
       );
     }
   ).join("");
+}
+
+export function buildFixtureJsonl(lines, includeSecrets = false) {
+  if (!Number.isSafeInteger(lines) || lines < 1 || lines > 6000) {
+    throw new RangeError("lines must be an integer from 1 through 6000");
+  }
+  if (typeof includeSecrets !== "boolean") {
+    throw new TypeError("includeSecrets must be a boolean");
+  }
+  return Array.from({ length: lines }, (_, index) => {
+    const record = {
+      line: index + 1,
+      level: index % 5 === 0 ? "WARN" : "INFO",
+      component: "fixture",
+      details: {
+        message: "bounded context evidence",
+        marker: "✓"
+      }
+    };
+    if (includeSecrets && index === 4) record.api_key = FIXTURE_SECRETS[0];
+    if (includeSecrets && index === Math.floor(lines / 2)) {
+      record.authorization = `Bearer ${FIXTURE_SECRETS[1]}`;
+    }
+    if (includeSecrets && index === lines - 2) {
+      record.token = FIXTURE_SECRETS[2];
+    }
+    return `${JSON.stringify(record)}\n`;
+  }).join("");
 }
 
 function serializedBytes(value) {
@@ -380,6 +482,9 @@ function fixtureResponse(request) {
           !Number.isSafeInteger(args.lines) ||
           args.lines < 1 ||
           args.lines > 6000 ||
+          (args.format !== undefined &&
+            args.format !== "log" &&
+            args.format !== "jsonl") ||
           (args.includeStructuredCopy !== undefined &&
             typeof args.includeStructuredCopy !== "boolean") ||
           (args.includeSecrets !== undefined &&
@@ -387,16 +492,17 @@ function fixtureResponse(request) {
           Object.keys(args).some(
             (key) =>
               key !== "lines" &&
+              key !== "format" &&
               key !== "includeStructuredCopy" &&
               key !== "includeSecrets"
           )
         ) {
           return errorMessage(id, -32602, "The tool arguments are invalid.");
         }
-        const text = buildFixtureLog(
-          args.lines,
-          args.includeSecrets === true
-        );
+        const text =
+          args.format === "jsonl"
+            ? buildFixtureJsonl(args.lines, args.includeSecrets === true)
+            : buildFixtureLog(args.lines, args.includeSecrets === true);
         return {
           jsonrpc: "2.0",
           id,
@@ -873,7 +979,12 @@ export function runProxy(args) {
               ...result,
               tools:
                 message.params?.cursor === undefined
-                  ? [...tools, CONTEXT_FETCH_TOOL, CONTEXT_SEARCH_TOOL]
+                  ? [
+                      ...tools,
+                      CONTEXT_FETCH_TOOL,
+                      CONTEXT_SEARCH_TOOL,
+                      CONTEXT_PROJECT_TOOL
+                    ]
                   : tools
             };
           });
@@ -993,6 +1104,98 @@ export function runProxy(args) {
                     ? "The artifact reference is invalid."
                     : error instanceof TypeError
                       ? "The search arguments are invalid."
+                      : "The Context View could not be created."
+                )
+              );
+            }
+            return;
+          }
+
+          if (publicName === CONTEXT_PROJECT_TOOL.name) {
+            const callArguments = message.params?.arguments;
+            const fields = callArguments?.fields ?? [];
+            const filter = callArguments?.filter;
+            if (
+              callArguments === null ||
+              typeof callArguments !== "object" ||
+              Array.isArray(callArguments) ||
+              typeof callArguments.artifact_id !== "string" ||
+              !/^art_[a-f0-9]{64}$/.test(callArguments.artifact_id) ||
+              (callArguments.format !== "json" &&
+                callArguments.format !== "jsonl") ||
+              !Array.isArray(fields) ||
+              fields.length > CONTEXT_PROJECT_MAX_FIELDS ||
+              fields.some((pointer) => !isValidJsonPointer(pointer)) ||
+              new Set(fields).size !== fields.length ||
+              (filter !== undefined &&
+                (filter === null ||
+                  typeof filter !== "object" ||
+                  Array.isArray(filter) ||
+                  !isValidJsonPointer(filter.pointer) ||
+                  !Object.hasOwn(filter, "equals") ||
+                  !isValidProjectionScalar(filter.equals) ||
+                  Object.keys(filter).some(
+                    (key) => key !== "pointer" && key !== "equals"
+                  ))) ||
+              (callArguments.offset !== undefined &&
+                (!Number.isSafeInteger(callArguments.offset) ||
+                  callArguments.offset < 0 ||
+                  callArguments.offset > CONTEXT_PROJECT_MAX_OFFSET)) ||
+              (callArguments.limit !== undefined &&
+                (!Number.isSafeInteger(callArguments.limit) ||
+                  callArguments.limit < 1 ||
+                  callArguments.limit > CONTEXT_PROJECT_MAX_LIMIT)) ||
+              (callArguments.max_tokens !== undefined &&
+                (!Number.isSafeInteger(callArguments.max_tokens) ||
+                  callArguments.max_tokens < CONTEXT_PROJECT_MIN_TOKENS ||
+                  callArguments.max_tokens > CONTEXT_PROJECT_MAX_TOKENS)) ||
+              Object.keys(callArguments).some(
+                (key) =>
+                  key !== "artifact_id" &&
+                  key !== "format" &&
+                  key !== "fields" &&
+                  key !== "filter" &&
+                  key !== "offset" &&
+                  key !== "limit" &&
+                  key !== "max_tokens"
+              )
+            ) {
+              reply(
+                errorMessage(
+                  message.id,
+                  -32602,
+                  "The projection arguments are invalid."
+                )
+              );
+              return;
+            }
+            try {
+              reply({
+                jsonrpc: "2.0",
+                id: message.id,
+                result: contextViewResult(
+                  contextStore.project(callArguments.artifact_id, {
+                    format: callArguments.format,
+                    fields,
+                    ...(filter ? { filter } : {}),
+                    offset: callArguments.offset ?? 0,
+                    limit: callArguments.limit ?? 100,
+                    maxTokens: callArguments.max_tokens ?? 512
+                  })
+                )
+              });
+            } catch (error) {
+              reply(
+                errorMessage(
+                  message.id,
+                  error instanceof InvalidArtifactError ||
+                    error instanceof TypeError
+                    ? -32602
+                    : -32603,
+                  error instanceof InvalidArtifactError
+                    ? "The artifact reference is invalid."
+                    : error instanceof TypeError
+                      ? "The projection arguments are invalid."
                       : "The Context View could not be created."
                 )
               );

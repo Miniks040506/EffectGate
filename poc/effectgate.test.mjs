@@ -22,6 +22,7 @@ import {
 } from "./context-view.mjs";
 import {
   CONTEXT_FETCH_TOOL,
+  CONTEXT_PROJECT_TOOL,
   CONTEXT_SEARCH_TOOL,
   EFFECTGATE_VERSION,
   FIXTURE_LARGE_LOG_TOOL,
@@ -249,6 +250,12 @@ test("large text is losslessly paged through opaque Context View cursors", async
     ),
     CONTEXT_SEARCH_TOOL
   );
+  assert.deepEqual(
+    firstPage.result.tools.find(
+      (tool) => tool.name === CONTEXT_PROJECT_TOOL.name
+    ),
+    CONTEXT_PROJECT_TOOL
+  );
   const secondPage = await proxy.request("tools/list", { cursor: "page-2" });
   const largeLog = secondPage.result.tools.find(
     (tool) => tool.name === "fixture__large_log"
@@ -336,11 +343,15 @@ test("large text is losslessly paged through opaque Context View cursors", async
     expectedStart = citation.byte_end;
 
     if (!view.retrieval.more_available) {
-      assert.deepEqual(view.retrieval.operations, ["search"]);
+      assert.deepEqual(view.retrieval.operations, ["project", "search"]);
       assert.equal(view.retrieval.cursor, undefined);
       break;
     }
-    assert.deepEqual(view.retrieval.operations, ["fetch", "search"]);
+    assert.deepEqual(view.retrieval.operations, [
+      "fetch",
+      "project",
+      "search"
+    ]);
     assert.match(view.retrieval.cursor, /^cur_[A-Za-z0-9_-]{32,}$/);
     assert.ok(Number.isFinite(Date.parse(view.retrieval.expires_at)));
     const cursor = view.retrieval.cursor;
@@ -432,7 +443,7 @@ test("literal artifact search returns bounded cited windows", async (context) =>
   assert.equal(uniqueView.diagnostics[0].code, "EG-SEARCH-001");
   assert.deepEqual(uniqueView.retrieval, {
     more_available: false,
-    operations: ["search"]
+    operations: ["project", "search"]
   });
 
   const repeated = await proxy.request("tools/call", {
@@ -447,7 +458,11 @@ test("literal artifact search returns bounded cited windows", async (context) =>
   const repeatedView = JSON.parse(repeated.result.content[0].text);
   assert.equal(repeatedView.status, "partial_view");
   assert.ok(repeatedView.budget.applied_bytes <= 256);
-  assert.deepEqual(repeatedView.retrieval.operations, ["fetch", "search"]);
+  assert.deepEqual(repeatedView.retrieval.operations, [
+    "fetch",
+    "project",
+    "search"
+  ]);
   const searchCursor = repeatedView.retrieval.cursor;
   const next = await proxy.request("tools/call", {
     name: CONTEXT_FETCH_TOOL.name,
