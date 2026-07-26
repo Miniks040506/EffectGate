@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effectgate.dev/v1/context-view.schema.json",
+  "title": "EffectGate V1 Context View",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "view_id", "artifact_id", "session_id", "status", "media_type", "content", "budget", "token_count", "citations", "redactions", "integrity"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "view_id": {"type": "string", "pattern": "^view_[A-Za-z0-9_-]{16,128}$"},
+    "artifact_id": {"type": "string", "pattern": "^art_[A-Za-z0-9_-]{16,128}$"},
+    "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "status": {"enum": ["complete", "partial_view", "unavailable"]},
+    "media_type": {"type": "string", "minLength": 1, "maxLength": 128},
+    "content": {
+      "oneOf": [
+        {"type": "string", "maxLength": 262144},
+        {"type": "object"},
+        {"type": "array", "maxItems": 10000}
+      ]
+    },
+    "budget": {"$ref": "#/$defs/budget"},
+    "token_count": {"$ref": "token-ledger.schema.json#/$defs/tokenCount"},
+    "estimated_raw_token_count": {"$ref": "token-ledger.schema.json#/$defs/tokenCount"},
+    "citations": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {"$ref": "#/$defs/citation"}
+    },
+    "record_citations": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {"type": "integer", "minimum": 0, "maximum": 4095}
+    },
+    "redactions": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {"$ref": "#/$defs/redaction"}
+    },
+    "retrieval": {"$ref": "#/$defs/retrieval"},
+    "diagnostics": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {"$ref": "#/$defs/diagnostic"}
+    },
+    "integrity": {"$ref": "#/$defs/integrity"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "partial_view"}}, "required": ["status"]},
+      "then": {"required": ["retrieval", "estimated_raw_token_count"]}
+    },
+    {
+      "if": {"properties": {"status": {"const": "complete"}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "retrieval": {
+            "properties": {"more_available": {"const": false}},
+            "required": ["more_available"]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_tokens", "max_bytes", "applied_tokens", "applied_bytes", "overflow"],
+      "properties": {
+        "max_tokens": {"type": "integer", "minimum": 1, "maximum": 1000000},
+        "max_bytes": {"type": "integer", "minimum": 1, "maximum": 268435456},
+        "applied_tokens": {"type": "integer", "minimum": 0},
+        "applied_bytes": {"type": "integer", "minimum": 0},
+        "overflow": {"enum": ["none", "projected", "paged", "failed", "bounded_passthrough"]}
+      }
+    },
+    "citation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "source_digest"],
+      "properties": {
+        "artifact_id": {"type": "string", "pattern": "^art_[A-Za-z0-9_-]{16,128}$"},
+        "source_digest": {"$ref": "#/$defs/digest"},
+        "byte_start": {"type": "integer", "minimum": 0},
+        "byte_end": {"type": "integer", "minimum": 0},
+        "line_start": {"type": "integer", "minimum": 1},
+        "line_end": {"type": "integer", "minimum": 1},
+        "item_hash": {"$ref": "#/$defs/digest"},
+        "json_pointer": {"type": "string", "maxLength": 2048}
+      },
+      "anyOf": [
+        {"required": ["byte_start", "byte_end"]},
+        {"required": ["line_start", "line_end"]},
+        {"required": ["item_hash"]},
+        {"required": ["json_pointer"]}
+      ]
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class", "count", "rule_id"],
+      "properties": {
+        "class": {"enum": ["secret", "credential", "pii", "policy", "custom"]},
+        "count": {"type": "integer", "minimum": 1},
+        "rule_id": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    },
+    "retrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["more_available", "operations"],
+      "properties": {
+        "more_available": {"type": "boolean"},
+        "cursor": {"type": "string", "minLength": 32, "maxLength": 4096},
+        "operations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["fetch", "search", "project"]}
+        },
+        "expires_at": {"type": "string", "format": "date-time"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"more_available": {"const": true}}, "required": ["more_available"]},
+          "then": {"required": ["cursor", "expires_at"]}
+        }
+      ]
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {"type": "string", "pattern": "^EG(?:-[A-Z]+)+-[0-9]{3}$"},
+        "message": {"type": "string", "maxLength": 2048},
+        "citation_index": {"type": "integer", "minimum": 0, "maximum": 4095}
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_digest", "view_digest", "projection_version"],
+      "properties": {
+        "artifact_digest": {"$ref": "#/$defs/digest"},
+        "view_digest": {"$ref": "#/$defs/digest"},
+        "projection_version": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    }
+  }
+}

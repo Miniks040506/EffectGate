@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effectgate.dev/v1/token-ledger.schema.json",
+  "title": "EffectGate V1 Token Ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "ledger_id", "run_id", "entries", "created_at"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "ledger_id": {"type": "string", "pattern": "^led_[A-Za-z0-9_-]{16,128}$"},
+    "run_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "session_id": {"type": "string", "maxLength": 128},
+    "profile": {"enum": ["native_default", "native_deferred", "compact_mux", "direct_bypass", "eager_diagnostic"]},
+    "entries": {
+      "type": "array",
+      "maxItems": 1000000,
+      "items": {"$ref": "#/$defs/entry"}
+    },
+    "summary": {"$ref": "#/$defs/summary"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "integrity_digest": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "tokenCount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "basis", "counter_id", "counter_version", "input_digest"],
+      "properties": {
+        "value": {"type": "integer", "minimum": 0},
+        "basis": {"enum": ["host_reported", "tokenizer_exact", "tokenizer_estimate", "byte_proxy", "counterfactual"]},
+        "counter_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "counter_version": {"type": "string", "minLength": 1, "maxLength": 128},
+        "input_digest": {"$ref": "#/$defs/digest"},
+        "calibration_error_bound": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry_id", "stage", "direction", "token_count", "bytes", "observed_at"],
+      "properties": {
+        "entry_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "operation_id": {"type": "string", "maxLength": 128},
+        "artifact_id": {"type": "string", "maxLength": 128},
+        "view_id": {"type": "string", "maxLength": 128},
+        "stage": {"enum": ["tool_metadata", "backend_raw_result", "redacted_artifact", "first_view", "fetch_page", "public_error", "receipt", "host_turn", "host_session", "paired_baseline"]},
+        "direction": {"enum": ["to_host", "from_host", "internal", "counterfactual"]},
+        "token_count": {"$ref": "#/$defs/tokenCount"},
+        "bytes": {"type": "integer", "minimum": 0},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "safe_metadata": {"type": "object", "maxProperties": 64}
+      }
+    },
+    "interval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["low", "high", "confidence"],
+      "properties": {
+        "low": {"type": "number"},
+        "high": {"type": "number"},
+        "confidence": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1}
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["measurement_basis_groups"],
+      "properties": {
+        "measurement_basis_groups": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "host_reported": {"type": "integer", "minimum": 0},
+            "tokenizer_exact": {"type": "integer", "minimum": 0},
+            "tokenizer_estimate": {"type": "integer", "minimum": 0},
+            "byte_proxy": {"type": "integer", "minimum": 0},
+            "counterfactual": {"type": "integer", "minimum": 0}
+          }
+        },
+        "paired_reduction": {"type": "number", "minimum": -100, "maximum": 1},
+        "paired_reduction_interval": {"$ref": "#/$defs/interval"},
+        "task_success_delta_points": {"type": "number", "minimum": -100, "maximum": 100},
+        "additional_fetch_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "sample_count": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}
+
