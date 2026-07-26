@@ -51,12 +51,17 @@ import {
   describeCompactCapability,
   searchCompactCapabilities
 } from "./compact-mux.mjs";
+import {
+  decideNativeDeferral,
+  loadHostCompatibilityEvidence,
+  withNativeDeferralMetadata
+} from "./host-compatibility.mjs";
 
 export const MAX_FRAME_BYTES = 1024 * 1024;
 export const MAX_TOOL_RESULT_BYTES = 64 * 1024;
 export const DEFAULT_MAX_SESSION_EMITTED_TOKENS = 256 * 1024;
 export const MCP_VERSION = "2025-11-25";
-export const EFFECTGATE_VERSION = "0.16.0";
+export const EFFECTGATE_VERSION = "0.17.0";
 const MAX_PENDING_REQUESTS = 64;
 const MAX_ID_BYTES = 128;
 const CURSOR_INPUT_PATTERN = new RegExp(CURSOR_PATTERN, "u");
@@ -70,7 +75,7 @@ const TOKEN_LEDGER_PROFILES = new Set([
 const SERVE_USAGE =
   "Usage: effectgate.mjs fixture | mcp serve [--source NAME] " +
   "[--max-session-emitted-tokens COUNT] [--token-ledger FILE] " +
-  "[--run-id ID] [--profile PROFILE]";
+  "[--run-id ID] [--profile PROFILE] [--host-evidence FILE]";
 const SESSION_OUTPUT_LIMIT_MESSAGE =
   "EffectGate's local emitted-output limit is exhausted; " +
   "host total context usage is not measured.";
@@ -871,6 +876,7 @@ function parseServeArguments(args) {
   let tokenLedgerFile;
   let runId;
   let profile = "native_deferred";
+  let hostEvidenceFile;
 
   for (let index = 0; index < args.length; index += 1) {
     const option = args[index];
@@ -903,6 +909,13 @@ function parseServeArguments(args) {
       TOKEN_LEDGER_PROFILES.has(value)
     ) {
       profile = value;
+    } else if (
+      option === "--host-evidence" &&
+      value.length > 0 &&
+      Buffer.byteLength(value, "utf8") <= 1024 &&
+      !value.includes("\0")
+    ) {
+      hostEvidenceFile = value;
     } else {
       throw new Error(SERVE_USAGE);
     }
@@ -913,7 +926,14 @@ function parseServeArguments(args) {
     throw new Error("Backend source must match [A-Za-z0-9_.-] and be <=64 chars.");
   }
 
-  return { source, maxSessionEmittedTokens, tokenLedgerFile, runId, profile };
+  return {
+    source,
+    maxSessionEmittedTokens,
+    tokenLedgerFile,
+    runId,
+    profile,
+    hostEvidenceFile
+  };
 }
 
 function backendEnvironment() {
@@ -941,13 +961,18 @@ export function runProxy(args) {
     maxSessionEmittedTokens,
     tokenLedgerFile,
     runId,
-    profile
+    profile,
+    hostEvidenceFile
   } = parseServeArguments(args);
   const compactMux = profile === "compact_mux";
+  const hostEvidence = hostEvidenceFile === undefined
+    ? undefined
+    : loadHostCompatibilityEvidence(hostEvidenceFile);
   const prefix = `${source}__`;
   const pending = new Map();
   let toolNames = new Map();
   let catalogComplete = false;
+  let deferralDecision = decideNativeDeferral(undefined);
   const contextStore = new ContextStore();
   const sessionOutput = createSessionOutputGuard({
     maxTokens: maxSessionEmittedTokens
@@ -1270,7 +1295,7 @@ export function runProxy(args) {
       }
 
       switch (message.method) {
-        case "initialize":
+        case "initialize": {
           if (lifecycle !== "new") {
             reply(
               errorMessage(
@@ -1291,6 +1316,17 @@ export function runProxy(args) {
             );
             break;
           }
+          const evaluatedDeferral = decideNativeDeferral(hostEvidence, {
+            clientInfo: message.params?.clientInfo,
+            clientBuildDigest:
+              message.params?._meta?.["dev.effectgate/clientBuildDigest"]
+          });
+          deferralDecision = profile === "native_deferred"
+            ? evaluatedDeferral
+            : Object.freeze({
+                eligible: false,
+                reason: "profile_not_native_deferred"
+              });
           lifecycle = "initializing";
           toolNames = new Map();
           forward(message, "initialize", {
@@ -1320,10 +1356,14 @@ export function runProxy(args) {
               serverInfo: {
                 name: "effectgate-preview",
                 version: EFFECTGATE_VERSION
+              },
+              _meta: {
+                "dev.effectgate/nativeDeferral": deferralDecision
               }
             };
           });
           break;
+        }
 
         case "ping":
           forward(message, "ping", message.params);
@@ -1364,7 +1404,10 @@ export function runProxy(args) {
               if (!isSafeReadTool(tool)) return [];
               const publicName = publicToolName(tool.name);
               if (nextNames.has(publicName)) throw new Error("tool name collision");
-              const publicContract = { ...tool, name: publicName };
+              const publicContract = withNativeDeferralMetadata(
+                { ...tool, name: publicName },
+                deferralDecision
+              );
               if (serializedBytes(publicContract) > MAX_TOOL_RESULT_BYTES) {
                 throw new ResultTooLargeError(
                   "tool contract exceeds the output limit"
