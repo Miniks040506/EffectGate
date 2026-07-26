@@ -283,7 +283,7 @@ test("proxy persists token provenance without raw result content", async (contex
     "--run-id",
     "run_benchmark_fixture",
     "--profile",
-    "compact_mux"
+    "native_deferred"
   ]);
   context.after(async () => {
     await proxy.stop();
@@ -315,7 +315,7 @@ test("proxy persists token provenance without raw result content", async (contex
   }
   const records = persisted.trimEnd().split("\n").map(JSON.parse);
   assert.equal(records[0].run_id, "run_benchmark_fixture");
-  assert.equal(records[0].profile, "compact_mux");
+  assert.equal(records[0].profile, "native_deferred");
   assert.deepEqual(
     records.slice(1).map(({ stage, direction }) => [stage, direction]),
     [

@@ -42,12 +42,21 @@ import {
   TokenLedgerWriteError
 } from "../budget/token-ledger.mjs";
 import { BYTE_PROXY_COUNTER } from "../budget/token-counter.mjs";
+import {
+  COMPACT_CALL_TOOL,
+  COMPACT_DESCRIBE_TOOL,
+  COMPACT_MUX_TOOLS,
+  COMPACT_SEARCH_TOOL,
+  compactCallArguments,
+  describeCompactCapability,
+  searchCompactCapabilities
+} from "./compact-mux.mjs";
 
 export const MAX_FRAME_BYTES = 1024 * 1024;
 export const MAX_TOOL_RESULT_BYTES = 64 * 1024;
 export const DEFAULT_MAX_SESSION_EMITTED_TOKENS = 256 * 1024;
 export const MCP_VERSION = "2025-11-25";
-export const EFFECTGATE_VERSION = "0.15.0";
+export const EFFECTGATE_VERSION = "0.16.0";
 const MAX_PENDING_REQUESTS = 64;
 const MAX_ID_BYTES = 128;
 const CURSOR_INPUT_PATTERN = new RegExp(CURSOR_PATTERN, "u");
@@ -934,9 +943,11 @@ export function runProxy(args) {
     runId,
     profile
   } = parseServeArguments(args);
+  const compactMux = profile === "compact_mux";
   const prefix = `${source}__`;
   const pending = new Map();
   let toolNames = new Map();
+  let catalogComplete = false;
   const contextStore = new ContextStore();
   const sessionOutput = createSessionOutputGuard({
     maxTokens: maxSessionEmittedTokens
@@ -1106,6 +1117,7 @@ export function runProxy(args) {
       ) {
         if (message.method === "notifications/tools/list_changed") {
           toolNames = new Map();
+          catalogComplete = false;
           reply(message);
         }
         return;
@@ -1318,7 +1330,10 @@ export function runProxy(args) {
           break;
 
         case "tools/list":
-          if (message.params?.cursor === undefined) toolNames = new Map();
+          if (message.params?.cursor === undefined) {
+            toolNames = new Map();
+            catalogComplete = false;
+          }
           forward(message, "tools/list", message.params, (result) => {
             if (!Array.isArray(result?.tools)) throw new Error("invalid tools");
             const nextNames =
@@ -1332,25 +1347,43 @@ export function runProxy(args) {
                 Array.isArray(tool) ||
                 typeof tool.name !== "string" ||
                 !/^[A-Za-z0-9_.-]{1,128}$/.test(tool.name) ||
+                (tool.title !== undefined &&
+                  typeof tool.title !== "string") ||
+                (tool.description !== undefined &&
+                  typeof tool.description !== "string") ||
                 tool.inputSchema === null ||
                 typeof tool.inputSchema !== "object" ||
-                Array.isArray(tool.inputSchema)
+                Array.isArray(tool.inputSchema) ||
+                (tool.outputSchema !== undefined &&
+                  (tool.outputSchema === null ||
+                    typeof tool.outputSchema !== "object" ||
+                    Array.isArray(tool.outputSchema)))
               ) {
                 throw new Error("invalid tool contract");
               }
               if (!isSafeReadTool(tool)) return [];
               const publicName = publicToolName(tool.name);
               if (nextNames.has(publicName)) throw new Error("tool name collision");
+              const publicContract = { ...tool, name: publicName };
+              if (serializedBytes(publicContract) > MAX_TOOL_RESULT_BYTES) {
+                throw new ResultTooLargeError(
+                  "tool contract exceeds the output limit"
+                );
+              }
               nextNames.set(publicName, {
                 backendName: tool.name,
-                contextViewEligible: tool.outputSchema === undefined
+                contextViewEligible: tool.outputSchema === undefined,
+                contract: publicContract
               });
-              return [{ ...tool, name: publicName }];
+              return [publicContract];
             });
             const publicCatalog = {
               ...result,
-              tools:
-                message.params?.cursor === undefined
+              tools: compactMux
+                ? message.params?.cursor === undefined
+                  ? [...COMPACT_MUX_TOOLS, CONTEXT_FETCH_TOOL]
+                  : []
+                : message.params?.cursor === undefined
                   ? [
                       ...tools,
                       CONTEXT_FETCH_TOOL,
@@ -1369,6 +1402,7 @@ export function runProxy(args) {
               category: "tool_schema_tokens_emitted"
             });
             toolNames = nextNames;
+            catalogComplete = result.nextCursor === undefined;
             return guardedCatalog;
           });
           break;
@@ -1428,7 +1462,105 @@ export function runProxy(args) {
             return;
           }
 
-          if (publicName === CONTEXT_SEARCH_TOOL.name) {
+          if (compactMux && publicName === COMPACT_SEARCH_TOOL.name) {
+            try {
+              reply({
+                jsonrpc: "2.0",
+                id: message.id,
+                result: guardModelVisible(
+                  searchCompactCapabilities(
+                    toolNames,
+                    message.params?.arguments,
+                    catalogComplete
+                  ),
+                  {
+                    stage: "tool_metadata",
+                    category: "tool_schema_tokens_emitted"
+                  }
+                )
+              });
+            } catch {
+              reply(
+                errorMessage(
+                  message.id,
+                  -32602,
+                  "The compact search arguments are invalid."
+                )
+              );
+            }
+            return;
+          }
+
+          if (compactMux && publicName === COMPACT_DESCRIBE_TOOL.name) {
+            try {
+              const described = describeCompactCapability(
+                toolNames,
+                message.params?.arguments
+              );
+              if (serializedBytes(described) > MAX_TOOL_RESULT_BYTES) {
+                throw new ResultTooLargeError(
+                  "compact description exceeds the output limit"
+                );
+              }
+              reply({
+                jsonrpc: "2.0",
+                id: message.id,
+                result: guardModelVisible(
+                  described,
+                  {
+                    stage: "tool_metadata",
+                    category: "tool_schema_tokens_emitted"
+                  }
+                )
+              });
+            } catch (error) {
+              reply(
+                errorMessage(
+                  message.id,
+                  error instanceof ResultTooLargeError ? -32005 : -32602,
+                  error instanceof ResultTooLargeError
+                    ? `The response exceeds the ${MAX_TOOL_RESULT_BYTES}-byte result limit.`
+                    : "The compact capability reference is invalid."
+                )
+              );
+            }
+            return;
+          }
+
+          if (compactMux && publicName === COMPACT_CALL_TOOL.name) {
+            try {
+              const call = compactCallArguments(
+                toolNames,
+                message.params?.arguments
+              );
+              forward(message, "tools/call", {
+                name: call.backendName,
+                arguments: call.arguments
+              }, (result) =>
+                guardModelVisible(
+                  boundToolResult(result, {
+                    contextStore,
+                    contextViewEligible: call.contextViewEligible
+                  }),
+                  {
+                    stage: "first_view",
+                    category: "tool_result_tokens_emitted"
+                  }
+                )
+              );
+            } catch {
+              reply(
+                errorMessage(
+                  message.id,
+                  -32602,
+                  "The compact call arguments are invalid."
+                )
+              );
+            }
+            return;
+          }
+
+          if (!compactMux && publicName === CONTEXT_SEARCH_TOOL.name) {
             const callArguments = message.params?.arguments;
             const queryLength =
               typeof callArguments?.query === "string"
@@ -1513,7 +1645,7 @@ export function runProxy(args) {
             return;
           }
 
-          if (publicName === CONTEXT_PROJECT_TOOL.name) {
+          if (!compactMux && publicName === CONTEXT_PROJECT_TOOL.name) {
             const callArguments = message.params?.arguments;
             const fields = callArguments?.fields ?? [];
             const columns = callArguments?.columns ?? [];
@@ -1608,6 +1740,17 @@ export function runProxy(args) {
                 )
               );
             }
+            return;
+          }
+
+          if (compactMux) {
+            reply(
+              errorMessage(
+                message.id,
+                -32602,
+                "The compact tool name is invalid."
+              )
+            );
             return;
           }
 
