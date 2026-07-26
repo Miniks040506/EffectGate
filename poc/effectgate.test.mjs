@@ -14,6 +14,7 @@ import {
   CONTEXT_FETCH_TOOL,
   EFFECTGATE_VERSION,
   FIXTURE_LARGE_LOG_TOOL,
+  FIXTURE_SECRETS,
   FIXTURE_SECOND_TOOL,
   FIXTURE_TOOL,
   MAX_FRAME_BYTES,
@@ -354,6 +355,71 @@ test("large text is losslessly paged through opaque Context View cursors", async
     message: "The retrieval cursor is invalid."
   });
   assert.deepEqual(tooShort.error, invented.error);
+  assert.equal(proxy.stderr, "");
+});
+
+test("secret sentinels are redacted from every Context View page", async (context) => {
+  const proxy = new RpcProcess(["mcp", "serve", "--source", "fixture"]);
+  context.after(() => proxy.stop());
+
+  await proxy.request("initialize", {
+    protocolVersion: MCP_VERSION,
+    capabilities: {},
+    clientInfo: { name: "redaction-test", version: "1" }
+  });
+  proxy.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  await proxy.request("tools/list");
+  const listed = await proxy.request("tools/list", { cursor: "page-2" });
+  const largeLog = listed.result.tools.find(
+    (tool) => tool.name === "fixture__large_log"
+  );
+
+  const raw = buildFixtureLog(200, true);
+  for (const secret of FIXTURE_SECRETS) assert.ok(raw.includes(secret));
+  const rawDigest = `sha256:${createHash("sha256").update(raw).digest("hex")}`;
+  let response = await proxy.request("tools/call", {
+    name: largeLog.name,
+    arguments: { lines: 200, includeSecrets: true }
+  });
+  let expectedStart = 0;
+  const appliedRules = new Set();
+
+  for (;;) {
+    const serialized = JSON.stringify(response);
+    for (const secret of FIXTURE_SECRETS) {
+      assert.equal(serialized.includes(secret), false);
+    }
+
+    const view = JSON.parse(response.result.content[0].text);
+    const citation = view.citations[0];
+    assert.equal(citation.byte_start, expectedStart);
+    assert.equal(citation.source_digest, rawDigest);
+    assert.equal(view.integrity.artifact_digest, rawDigest);
+    assert.equal(
+      view.budget.applied_bytes,
+      Buffer.byteLength(view.content, "utf8")
+    );
+    assert.equal(view.diagnostics[0].code, "EG-REDACT-001");
+    for (const redaction of view.redactions) {
+      assert.match(redaction.class, /^(credential|secret)$/);
+      assert.ok(redaction.count >= 1);
+      appliedRules.add(redaction.rule_id);
+    }
+    expectedStart = citation.byte_end;
+
+    if (!view.retrieval.more_available) break;
+    response = await proxy.request("tools/call", {
+      name: CONTEXT_FETCH_TOOL.name,
+      arguments: { cursor: view.retrieval.cursor }
+    });
+  }
+
+  assert.equal(expectedStart, Buffer.byteLength(raw, "utf8"));
+  assert.deepEqual(appliedRules, new Set([
+    "bearer-token-v1",
+    "prefixed-token-v1",
+    "secret-assignment-v1"
+  ]));
   assert.equal(proxy.stderr, "");
 });
 

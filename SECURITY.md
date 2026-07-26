@@ -3,8 +3,9 @@
 ## Project status
 
 EffectGate is currently a fixture-only Phase 1 preview. It includes a bounded,
-in-memory Context View path, but is not production-ready and must not be used
-to protect real tool effects, secrets, or untrusted external backends.
+in-memory Context View path with deterministic high-signal credential
+redaction, but is not production-ready and must not be used to protect real
+tool effects, secrets, or untrusted external backends.
 
 ## Supported versions
 
@@ -72,7 +73,8 @@ The current preview assumes:
 - the operating-system user, local Node.js runtime, and checkout are trusted;
 - only the bundled deterministic fixture is launched;
 - MCP clients may send malformed or adversarial protocol input;
-- the fixture's generated log contains no secrets or personal data;
+- the fixture may generate documented synthetic secret sentinels but contains
+  no real credentials or personal data;
 - one proxy process represents one cursor session;
 - tool annotations are admission inputs, not proof that an unknown backend is
   safe.
@@ -81,8 +83,12 @@ The current preview assumes:
 
 - The fixture child runs with the current user's operating-system permissions;
   EffectGate is not an OS sandbox.
-- There is no authentication, encryption, tenant isolation, secret redaction,
-  persistent audit journal, approval flow, or reconciliation.
+- There is no authentication, encryption, tenant isolation, persistent audit
+  journal, approval flow, or reconciliation.
+- Redaction is a versioned preview heuristic limited to assignment values,
+  bearer tokens, and selected token prefixes. It is not comprehensive
+  secret/PII detection or protection. More than 4,096 detected spans fails
+  closed.
 - Artifacts are buffered and retained only in process memory. The store is
   neither streaming nor crash-safe and provides no secure-erasure guarantee.
 - Artifact identifiers expose a SHA-256 content digest. Do not use this preview

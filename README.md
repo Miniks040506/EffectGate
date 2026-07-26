@@ -7,6 +7,7 @@
 **Design goal:** Spend tokens on reasoning, not tool noise.
 
 [![Phase](https://img.shields.io/badge/status-Phase%201%20preview-7c3aed?style=flat-square)](#current-boundary)
+[![Version](https://img.shields.io/badge/version-0.2.0-0f766e?style=flat-square)](poc/package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25-111827?style=flat-square)](#protocol-surface)
 [![License](https://img.shields.io/badge/license-Apache--2.0-D22128?style=flat-square)](LICENSE)
@@ -22,8 +23,9 @@
 
 > [!CAUTION]
 > **This is a fixture-only Phase 1 preview.** Its bounded Context View path is
-> real and tested, but it cannot launch arbitrary backends, protect secrets,
-> execute writes, or provide a production security boundary.
+> real and tested, but its small heuristic ruleset is not comprehensive secret
+> protection. It cannot launch arbitrary backends, execute writes, or provide a
+> production security boundary.
 
 EffectGate is being built to sit between an AI host and its MCP tools. The
 product direction combines two controls that normally live far apart:
@@ -35,7 +37,8 @@ product direction combines two controls that normally live far apart:
 
 The preview proves the narrow transport and admission spine, then exercises the
 first context-control path end to end: a large deterministic log becomes
-lossless, cited pages retrieved through opaque cursors.
+bounded, deterministically redacted, cited pages retrieved through opaque
+cursors.
 
 ## Quick start
 
@@ -63,7 +66,7 @@ flowchart LR
         Input["UTF-8 line parser<br/>1 MiB frame guard"]
         Router["JSON-RPC / MCP router"]
         Catalog["Read-only admission map<br/>public name → fixture name"]
-        Views["Context View pager<br/>4 KiB cited text pages"]
+        Views["Context View pager<br/>4 KiB redacted, cited text pages"]
         Store["In-memory artifact store<br/>SHA-256 · 4 MiB quota"]
         Output["Error sanitizer<br/>output guard + backpressure"]
 
@@ -106,6 +109,7 @@ namespace; it does not select a backend.
 | Retrieval | Random 192-bit cursors; process/session-local with a 10-minute expiry |
 | Continuity | Artifacts with an unfetched cursor are pinned; recent same-session retries use a bounded page cache |
 | Page bound | At most 4,096 source bytes, cut only at a valid UTF-8 boundary |
+| Redaction | Versioned assignment, bearer-token, and common token-prefix rules run before every emitted page; more than 4,096 detected spans fails closed |
 | Errors | Backend errors and stderr content are not passed through verbatim |
 | Flow control | Client input and fixture output pause while downstream writables are backpressured |
 
@@ -130,18 +134,21 @@ single-text result at or below 4 KiB passes through unchanged. A larger exact
 single-text result is retained in memory and replaced with a v1 Context View
 containing:
 
-- the exact UTF-8 source slice and its exclusive byte range;
+- a deterministically redacted UTF-8 projection and its exclusive raw byte
+  range;
 - stable artifact and SHA-256 integrity digests;
 - an explicit source-byte ceiling and honestly labeled byte-proxy token count;
 - `partial_view` status whenever the page is not the whole artifact;
 - an opaque continuation cursor when more bytes remain;
-- an empty redaction report plus a diagnostic that redaction was not performed.
+- redaction class, rule ID, and per-page occurrence counts plus the applied
+  ruleset diagnostic.
 
 Call `effectgate_fetch` with the returned cursor to retrieve the next page.
-Pages are contiguous and reconstruct the original result byte for byte. A
-same-session retry returns the cached page while its bounded cursor state is
-retained. Expired, modified, cross-process, and unknown cursors all return the
-same public error.
+Raw citation ranges are contiguous. Pages reconstruct the original result byte
+for byte only when no rule matches; matched bytes are replaced before the first
+page or any fetched page leaves EffectGate. A same-session retry returns the
+cached page while its bounded cursor state is retained. Expired, modified,
+cross-process, and unknown cursors all return the same public error.
 
 > [!NOTE]
 > The 4 KiB budget measures source content inside the Context View. MCP and JSON
@@ -171,7 +178,7 @@ conformance claim.
 The bundled fixture publishes `fixture__echo`, `fixture__echo_again`, and
 `fixture__large_log`. The first two prove typed-result fidelity and catalog
 pagination. The last one supplies deterministic multibyte UTF-8 evidence for
-lossless paging tests.
+paging tests and an opt-in set of synthetic secret sentinels.
 
 ## Security model
 
@@ -183,7 +190,7 @@ It is **not**:
 
 - an operating-system sandbox;
 - an authentication or encryption layer;
-- a secret-redaction or tenant-isolation system;
+- a comprehensive secret/PII detector or tenant-isolation system;
 - a persistent or streaming content-addressed store;
 - a durable audit journal;
 - an approval, verification, or reconciliation engine;
@@ -225,6 +232,9 @@ After discovery:
 3. While `retrieval.more_available` is true, call `effectgate_fetch` with the
    returned cursor.
 
+For the redaction demonstration, add `"includeSecrets": true`. The fixture
+inserts synthetic sentinels only; never substitute real credentials.
+
 ## Verification evidence
 
 ```powershell
@@ -240,6 +250,9 @@ The dependency-free suite directly verifies:
 - unchanged pass-through for small text results;
 - v1 Context View fields, exact byte citations, and hard page limits;
 - byte-for-byte reconstruction across multibyte UTF-8 page boundaries;
+- assignment, bearer-token, and prefixed-token sentinel removal across every
+  first/fetched page;
+- cross-page secret masking and fail-closed redaction-span limits;
 - same-session cursor retry with a byte-identical cached page;
 - cursor expiry and cross-store rejection with a non-disclosing public error;
 - pinning of artifacts that still have a live continuation;
@@ -257,7 +270,7 @@ The dependency-free suite directly verifies:
 | Fixture-only stdio proxy | Reviewed stdio MCP backend adapters |
 | Typed read-only admission | Signed/pinned backend capability passports |
 | Quota-limited in-memory artifact store | Streaming, crash-safe persistent CAS |
-| Lossless cited text paging | Search and deterministic JSON/JSONL/CSV projection |
+| Cited, deterministic text redaction and paging | Field-aware policy redaction, search, and deterministic JSON/JSONL/CSV projection |
 | Opaque session-local fetch cursors | Authenticated principal/client/policy bindings |
 | Byte-proxy counts in each view | Token ledger and host comparison benchmarks |
 | Deterministic local tests | Compatibility, fuzz, latency, and crash qualification |

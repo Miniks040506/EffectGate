@@ -4,11 +4,11 @@ This dependency-free Node.js preview proves two narrow paths:
 
 ```text
 small typed result  -> unchanged MCP result
-large text result   -> in-memory artifact -> cited Context View -> fetch pages
+large text result   -> in-memory artifact -> redacted Context View -> fetch pages
 ```
 
-It remains fixture-only. Arbitrary backends, protected effects, secret-bearing
-data, and production use are disabled.
+It remains fixture-only. Arbitrary backends, protected effects, real
+secret-bearing data, and production use are disabled.
 
 ## Run
 
@@ -30,13 +30,14 @@ The fixture exposes:
 |---|---|
 | `fixture__echo` | Typed small-result pass-through |
 | `fixture__echo_again` | Catalog pagination |
-| `fixture__large_log` | Deterministic multibyte text for bounded paging |
+| `fixture__large_log` | Deterministic multibyte text and synthetic redaction sentinels |
 | `effectgate_fetch` | Local continuation using an opaque cursor |
 
 Try `fixture__large_log` with `{"lines": 200}`. If the returned Context View
 reports `retrieval.more_available: true`, pass its cursor to
-`effectgate_fetch`. Concatenating each cited page reconstructs the original log
-exactly.
+`effectgate_fetch`. Without redaction matches, concatenating each cited page
+reconstructs the original log exactly. Add `"includeSecrets": true` to verify
+that documented synthetic sentinels are removed from every emitted page.
 
 ## Bounds
 
@@ -47,10 +48,11 @@ exactly.
 | Context View source content | 4,096 bytes per page |
 | Stored artifact | 1 MiB |
 | In-memory artifact store | 4 MiB / 16 artifacts |
+| Detected redaction spans | 4,096 per artifact; excess fails closed |
 | Cursor states | 64; live continuations are pinned |
 | Cursor lifetime | 10 minutes; recent same-session retries are cached |
 | Forwarded backend requests | 64 pending / 10 seconds each |
 
 The Context Store is volatile and process-local. It has no persistence,
-streaming ingestion, redaction, search, structured projection, token ledger,
-approval flow, or production support claim.
+streaming ingestion, comprehensive secret/PII detection, search, structured
+projection, token ledger, approval flow, or production support claim.
