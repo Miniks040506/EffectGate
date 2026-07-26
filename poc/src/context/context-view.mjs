@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 
+import { BYTE_PROXY_COUNTER } from "../budget/token-counter.mjs";
 import {
   CursorService,
   InvalidCursorTokenError
@@ -28,7 +29,6 @@ export const CONTEXT_SEARCH_MAX_CONTEXT_LINES = 5;
 export const CONTEXT_SEARCH_MIN_TOKENS = 64;
 export const CONTEXT_SEARCH_MAX_TOKENS = 1024;
 
-const TOKEN_COUNTER_ID = "utf8-bytes-ceil-div-4";
 const PROJECTION_VERSION = "text-byte-page-redact-v1";
 const SEARCH_PROJECTION_VERSION = "text-literal-search-redact-v1";
 const JSON_PROJECTION_VERSION = "json-pointer-equality-slice-redact-v1";
@@ -112,13 +112,10 @@ function randomId(prefix, bytes = 18) {
 }
 
 function tokenCount(bytes, inputDigest) {
-  return {
-    value: Math.ceil(bytes / 4),
-    basis: "byte_proxy",
-    counter_id: TOKEN_COUNTER_ID,
-    counter_version: "1",
-    input_digest: inputDigest
-  };
+  return BYTE_PROXY_COUNTER.measure({
+    byteLength: bytes,
+    inputDigest
+  });
 }
 
 function pageEnd(bytes, start, maxBytes) {
