@@ -2,16 +2,17 @@ import { createHash, randomBytes } from "node:crypto";
 
 import { FilesystemCas } from "./filesystem-cas.mjs";
 import {
-  CONTEXT_PROJECT_MAX_FIELDS,
+  buildDocumentProjectionEntries,
+  isValidProjectionOptions
+} from "./document-project.mjs";
+import {
   CONTEXT_PROJECT_MAX_LIMIT,
   CONTEXT_PROJECT_MAX_OFFSET,
   CONTEXT_PROJECT_MAX_TOKENS,
   CONTEXT_PROJECT_MIN_TOKENS,
   InvalidJsonProjectionError,
   buildJsonProjectionEntries,
-  isUnicodeScalarText,
-  isValidJsonPointer,
-  isValidProjectionScalar
+  isUnicodeScalarText
 } from "./json-project.mjs";
 
 export const CONTEXT_PAGE_BYTES = 4096;
@@ -27,6 +28,7 @@ const TOKEN_COUNTER_ID = "utf8-bytes-ceil-div-4";
 const PROJECTION_VERSION = "text-byte-page-redact-v1";
 const SEARCH_PROJECTION_VERSION = "text-literal-search-redact-v1";
 const JSON_PROJECTION_VERSION = "json-pointer-equality-slice-redact-v1";
+const DOCUMENT_PROJECTION_VERSION = "tabular-markdown-redact-v1";
 const MAX_SCHEMA_CONTENT_LENGTH = 262144;
 const MAX_REDACTION_SPANS = 4096;
 const MAX_PROJECT_PAGE_ITEMS = 100;
@@ -431,7 +433,9 @@ export class ContextStore {
     {
       format,
       fields = [],
+      columns = [],
       filter,
+      heading,
       offset = 0,
       limit = 100,
       maxTokens = 512
@@ -439,21 +443,13 @@ export class ContextStore {
   ) {
     if (typeof artifactId !== "string") throw new InvalidArtifactError();
     if (
-      (format !== "json" && format !== "jsonl") ||
-      !Array.isArray(fields) ||
-      fields.length > CONTEXT_PROJECT_MAX_FIELDS ||
-      fields.some((pointer) => !isValidJsonPointer(pointer)) ||
-      new Set(fields).size !== fields.length ||
-      (filter !== undefined &&
-        (filter === null ||
-          typeof filter !== "object" ||
-          Array.isArray(filter) ||
-          !isValidJsonPointer(filter.pointer) ||
-          !Object.hasOwn(filter, "equals") ||
-          !isValidProjectionScalar(filter.equals) ||
-          Object.keys(filter).some(
-            (key) => key !== "pointer" && key !== "equals"
-          ))) ||
+      !isValidProjectionOptions({
+        format,
+        fields,
+        columns,
+        filter,
+        heading
+      }) ||
       !Number.isSafeInteger(offset) ||
       offset < 0 ||
       offset > CONTEXT_PROJECT_MAX_OFFSET ||
@@ -474,7 +470,9 @@ export class ContextStore {
     return this.createProjectView(artifact, {
       format,
       fields: [...fields],
+      columns: [...columns],
       ...(filter ? { filter: { ...filter } } : {}),
+      ...(heading !== undefined ? { heading } : {}),
       sliceOffset: offset,
       sliceLimit: limit,
       maxTokens,
@@ -573,7 +571,9 @@ export class ContextStore {
     {
       format,
       fields,
+      columns,
       filter,
+      heading,
       sliceOffset,
       sliceLimit,
       maxTokens,
@@ -592,13 +592,15 @@ export class ContextStore {
     const text = new TextDecoder("utf-8", { fatal: true }).decode(raw);
     let projection;
     try {
-      projection = buildJsonProjectionEntries({
+      const options = {
         artifact,
         text,
         format,
         fields,
+        columns,
         filter,
-        ...(format === "jsonl"
+        heading,
+        ...(format !== "json"
           ? {
               starts: lineStarts(text),
               offsets: utf8ByteOffsets(text)
@@ -612,7 +614,11 @@ export class ContextStore {
             end
           );
         }
-      });
+      };
+      projection =
+        format === "json" || format === "jsonl"
+          ? buildJsonProjectionEntries(options)
+          : buildDocumentProjectionEntries(options);
     } catch (error) {
       if (error instanceof InvalidJsonProjectionError) {
         const fallback = this.createView(artifact, 0, advancing);
@@ -646,11 +652,7 @@ export class ContextStore {
     const recordCitations = [];
     const redactionCounts = new Map();
     const diagnostics = [
-      {
-        code: "EG-PROJECT-001",
-        message:
-          "Deterministic JSON Pointer, scalar equality, and slice projection v1 was applied."
-      },
+      projection.diagnostic,
       {
         code: "EG-REDACT-001",
         message: `Deterministic redaction ruleset ${REDACTION_RULESET_VERSION} was applied.`
@@ -686,15 +688,14 @@ export class ContextStore {
       pageItems < MAX_PROJECT_PAGE_ITEMS
     ) {
       const entry = selected[position];
-      if (entry.malformedLine !== undefined) {
+      if (entry.diagnostic) {
         const citationIndex = addCitation(entry.citation);
         diagnostics.push({
-          code: "EG-PROJECT-JSONL-001",
-          message: `JSONL line ${entry.malformedLine} is malformed.`,
+          ...entry.diagnostic,
           citation_index: citationIndex
         });
       } else {
-        const line = `${JSON.stringify(entry.value)}\n`;
+        const line = entry.text ?? `${JSON.stringify(entry.value)}\n`;
         const lineBytes = Buffer.byteLength(line, "utf8");
         if (lineBytes > maxBytes) {
           const citationIndex = addCitation(entry.citation);
@@ -727,7 +728,9 @@ export class ContextStore {
           project: {
             format,
             fields,
+            columns,
             filter,
+            heading,
             sliceOffset,
             sliceLimit,
             maxTokens
@@ -742,7 +745,7 @@ export class ContextStore {
       artifact_id: artifact.artifactId,
       session_id: this.sessionId,
       status: partial ? "partial_view" : "complete",
-      media_type: "application/x-ndjson",
+      media_type: projection.mediaType,
       content,
       budget: {
         max_tokens: maxTokens,
@@ -776,7 +779,13 @@ export class ContextStore {
         continuation.expiresAt
       ).toISOString();
     }
-    return attachIntegrity(view, artifact, JSON_PROJECTION_VERSION);
+    return attachIntegrity(
+      view,
+      artifact,
+      format === "json" || format === "jsonl"
+        ? JSON_PROJECTION_VERSION
+        : DOCUMENT_PROJECTION_VERSION
+    );
   }
 
   createSearchView(

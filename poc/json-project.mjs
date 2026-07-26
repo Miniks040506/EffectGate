@@ -149,7 +149,16 @@ export function buildJsonProjectionEntries({
         });
       }
     }
-    return { entries, commonRedactions };
+    return {
+      entries,
+      commonRedactions,
+      mediaType: "application/x-ndjson",
+      diagnostic: {
+        code: "EG-PROJECT-001",
+        message:
+          "Deterministic JSON Pointer, scalar equality, and slice projection v1 was applied."
+      }
+    };
   }
 
   for (let line = 0; line < starts.length; line += 1) {
@@ -177,7 +186,10 @@ export function buildJsonProjectionEntries({
           : JSON.parse(rendered.content);
     } catch {
       entries.push({
-        malformedLine: line + 1,
+        diagnostic: {
+          code: "EG-PROJECT-JSONL-001",
+          message: `JSONL line ${line + 1} is malformed.`
+        },
         citation,
         redactions: rendered.redactions
       });
@@ -188,5 +200,14 @@ export function buildJsonProjectionEntries({
       entries.push({ value, citation, redactions: rendered.redactions });
     }
   }
-  return { entries, commonRedactions };
+  return {
+    entries,
+    commonRedactions,
+    mediaType: "application/x-ndjson",
+    diagnostic: {
+      code: "EG-PROJECT-001",
+      message:
+        "Deterministic JSON Pointer, scalar equality, and slice projection v1 was applied."
+    }
+  };
 }
