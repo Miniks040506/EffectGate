@@ -26,8 +26,10 @@ export const CONTEXT_SEARCH_MAX_TOKENS = 1024;
 const TOKEN_COUNTER_ID = "utf8-bytes-ceil-div-4";
 const PROJECTION_VERSION = "text-byte-page-redact-v1";
 const SEARCH_PROJECTION_VERSION = "text-literal-search-redact-v1";
+const JSON_PROJECTION_VERSION = "json-pointer-equality-slice-redact-v1";
 const MAX_SCHEMA_CONTENT_LENGTH = 262144;
 const MAX_REDACTION_SPANS = 4096;
+const MAX_PROJECT_PAGE_ITEMS = 100;
 const REDACTION_MARKER = "[REDACTED]";
 
 const REDACTION_RULESET_VERSION = "preview-v1";
@@ -36,7 +38,7 @@ const REDACTION_RULES = Object.freeze([
     ruleId: "secret-assignment-v1",
     class: "secret",
     pattern:
-      /\b(?:api[_-]?key|access[_-]?token|password|secret)\s*[:=]\s*["']?([^\s"',;}\]]{16,})/dgi,
+      /\b(?:api[_-]?key|access[_-]?token|password|secret)["']?\s*[:=]\s*["']?([^\s"',;}\]]{16,})/dgi,
     group: 1
   },
   {
@@ -424,6 +426,62 @@ export class ContextStore {
     });
   }
 
+  project(
+    artifactId,
+    {
+      format,
+      fields = [],
+      filter,
+      offset = 0,
+      limit = 100,
+      maxTokens = 512
+    } = {}
+  ) {
+    if (typeof artifactId !== "string") throw new InvalidArtifactError();
+    if (
+      (format !== "json" && format !== "jsonl") ||
+      !Array.isArray(fields) ||
+      fields.length > CONTEXT_PROJECT_MAX_FIELDS ||
+      fields.some((pointer) => !isValidJsonPointer(pointer)) ||
+      new Set(fields).size !== fields.length ||
+      (filter !== undefined &&
+        (filter === null ||
+          typeof filter !== "object" ||
+          Array.isArray(filter) ||
+          !isValidJsonPointer(filter.pointer) ||
+          !Object.hasOwn(filter, "equals") ||
+          !isValidProjectionScalar(filter.equals) ||
+          Object.keys(filter).some(
+            (key) => key !== "pointer" && key !== "equals"
+          ))) ||
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      offset > CONTEXT_PROJECT_MAX_OFFSET ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > CONTEXT_PROJECT_MAX_LIMIT ||
+      !Number.isSafeInteger(maxTokens) ||
+      maxTokens < CONTEXT_PROJECT_MIN_TOKENS ||
+      maxTokens > CONTEXT_PROJECT_MAX_TOKENS
+    ) {
+      throw new TypeError("projection options are invalid");
+    }
+
+    const artifact = this.artifacts.get(artifactId);
+    if (!artifact) throw new InvalidArtifactError();
+    this.artifacts.delete(artifactId);
+    this.artifacts.set(artifactId, artifact);
+    return this.createProjectView(artifact, {
+      format,
+      fields: [...fields],
+      ...(filter ? { filter: { ...filter } } : {}),
+      sliceOffset: offset,
+      sliceLimit: limit,
+      maxTokens,
+      offset: 0
+    });
+  }
+
   fetch(cursor) {
     if (typeof cursor !== "string") throw new InvalidCursorError();
     const position = this.cursors.get(cursor);
@@ -439,11 +497,18 @@ export class ContextStore {
     this.artifacts.delete(artifact.artifactId);
     this.artifacts.set(artifact.artifactId, artifact);
     const view = position.search
-      ? this.createSearchView(artifact, {
-          ...position.search,
-          offset: position.offset
-        }, true)
-      : this.createView(artifact, position.offset, true);
+      ? this.createSearchView(
+          artifact,
+          { ...position.search, offset: position.offset },
+          true
+        )
+      : position.project
+        ? this.createProjectView(
+            artifact,
+            { ...position.project, offset: position.offset },
+            true
+          )
+        : this.createView(artifact, position.offset, true);
     position.view = view;
     return view;
   }
@@ -477,7 +542,7 @@ export class ContextStore {
     );
   }
 
-  createCursor(artifactId, offset, advancing, search) {
+  createCursor(artifactId, offset, advancing, operation = {}) {
     const currentTime = this.now();
     this.pruneExpiredCursors();
     const limit = advancing ? this.maxCursors : this.maxCursors - 1;
@@ -498,9 +563,220 @@ export class ContextStore {
       artifactId,
       offset,
       expiresAt,
-      ...(search ? { search } : {})
+      ...operation
     });
     return { cursor, expiresAt };
+  }
+
+  createProjectView(
+    artifact,
+    {
+      format,
+      fields,
+      filter,
+      sliceOffset,
+      sliceLimit,
+      maxTokens,
+      offset
+    },
+    advancing = false
+  ) {
+    // ponytail: artifacts are capped at 1 MiB; add a streaming index if that
+    // ceiling changes or projection latency becomes measurable.
+    const raw = this.cas.readRange(
+      artifact.sourceDigest,
+      0,
+      artifact.byteLength,
+      artifact.byteLength
+    );
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(raw);
+    let projection;
+    try {
+      projection = buildJsonProjectionEntries({
+        artifact,
+        text,
+        format,
+        fields,
+        filter,
+        ...(format === "jsonl"
+          ? {
+              starts: lineStarts(text),
+              offsets: utf8ByteOffsets(text)
+            }
+          : {}),
+        render(start, end) {
+          return renderRedactedPage(
+            artifact,
+            raw.subarray(start, end),
+            start,
+            end
+          );
+        }
+      });
+    } catch (error) {
+      if (error instanceof InvalidJsonProjectionError) {
+        const fallback = this.createView(artifact, 0, advancing);
+        fallback.diagnostics.unshift({
+          code: "EG-PROJECT-JSON-001",
+          message:
+            "JSON projection failed without repair; bounded text fallback was applied."
+        });
+        return attachIntegrity(
+          fallback,
+          artifact,
+          JSON_PROJECTION_VERSION
+        );
+      }
+      throw error;
+    }
+
+    const { entries, commonRedactions } = projection;
+    const selected = entries.slice(
+      sliceOffset,
+      sliceOffset + sliceLimit
+    );
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > selected.length) {
+      throw new InvalidCursorError();
+    }
+
+    const maxBytes = maxTokens * 4;
+    const chunks = [];
+    const citations = [];
+    const citationIndexes = new Map();
+    const recordCitations = [];
+    const redactionCounts = new Map();
+    const diagnostics = [
+      {
+        code: "EG-PROJECT-001",
+        message:
+          "Deterministic JSON Pointer, scalar equality, and slice projection v1 was applied."
+      },
+      {
+        code: "EG-REDACT-001",
+        message: `Deterministic redaction ruleset ${REDACTION_RULESET_VERSION} was applied.`
+      }
+    ];
+    let appliedBytes = 0;
+    let position = offset;
+    let pageItems = 0;
+    let omitted = false;
+
+    const addCitation = (citation) => {
+      const key = `${citation.byte_start}:${citation.byte_end}`;
+      if (citationIndexes.has(key)) return citationIndexes.get(key);
+      const index = citations.length;
+      citations.push(citation);
+      citationIndexes.set(key, index);
+      return index;
+    };
+    const addRedactions = (redactions) => {
+      for (const redaction of redactions) {
+        const key = `${redaction.class}:${redaction.rule_id}`;
+        const current = redactionCounts.get(key) ?? {
+          ...redaction,
+          count: 0
+        };
+        current.count += redaction.count;
+        redactionCounts.set(key, current);
+      }
+    };
+
+    while (
+      position < selected.length &&
+      pageItems < MAX_PROJECT_PAGE_ITEMS
+    ) {
+      const entry = selected[position];
+      if (entry.malformedLine !== undefined) {
+        const citationIndex = addCitation(entry.citation);
+        diagnostics.push({
+          code: "EG-PROJECT-JSONL-001",
+          message: `JSONL line ${entry.malformedLine} is malformed.`,
+          citation_index: citationIndex
+        });
+      } else {
+        const line = `${JSON.stringify(entry.value)}\n`;
+        const lineBytes = Buffer.byteLength(line, "utf8");
+        if (lineBytes > maxBytes) {
+          const citationIndex = addCitation(entry.citation);
+          omitted = true;
+          diagnostics.push({
+            code: "EG-PROJECT-BUDGET-001",
+            message:
+              "A projected record exceeded the page budget and was omitted.",
+            citation_index: citationIndex
+          });
+        } else if (appliedBytes + lineBytes > maxBytes) {
+          break;
+        } else {
+          const citationIndex = addCitation(entry.citation);
+          chunks.push(line);
+          recordCitations.push(citationIndex);
+          appliedBytes += lineBytes;
+        }
+      }
+      addRedactions(entry.redactions ?? []);
+      position += 1;
+      pageItems += 1;
+    }
+    if (pageItems > 0) addRedactions(commonRedactions);
+
+    const moreAvailable = position < selected.length;
+    const partial = moreAvailable || omitted;
+    const continuation = moreAvailable
+      ? this.createCursor(artifact.artifactId, position, advancing, {
+          project: {
+            format,
+            fields,
+            filter,
+            sliceOffset,
+            sliceLimit,
+            maxTokens
+          }
+        })
+      : null;
+    const content = chunks.join("");
+    const emittedDigest = digest(Buffer.from(content, "utf8"));
+    const view = {
+      schema_version: "1.0.0",
+      view_id: randomId("view"),
+      artifact_id: artifact.artifactId,
+      session_id: this.sessionId,
+      status: partial ? "partial_view" : "complete",
+      media_type: "application/x-ndjson",
+      content,
+      budget: {
+        max_tokens: maxTokens,
+        max_bytes: maxBytes,
+        applied_tokens: Math.ceil(appliedBytes / 4),
+        applied_bytes: appliedBytes,
+        overflow: partial ? "projected" : "none"
+      },
+      token_count: tokenCount(appliedBytes, emittedDigest),
+      citations,
+      record_citations: recordCitations,
+      redactions: [...redactionCounts.values()],
+      diagnostics,
+      retrieval: {
+        more_available: moreAvailable,
+        operations: moreAvailable
+          ? ["fetch", "project", "search"]
+          : ["project", "search"]
+      },
+      integrity: {}
+    };
+    if (partial) {
+      view.estimated_raw_token_count = tokenCount(
+        artifact.byteLength,
+        artifact.sourceDigest
+      );
+    }
+    if (continuation) {
+      view.retrieval.cursor = continuation.cursor;
+      view.retrieval.expires_at = new Date(
+        continuation.expiresAt
+      ).toISOString();
+    }
+    return attachIntegrity(view, artifact, JSON_PROJECTION_VERSION);
   }
 
   createSearchView(
@@ -587,9 +863,11 @@ export class ContextStore {
     const partial = moreAvailable || windowClipped;
     const continuation = moreAvailable
       ? this.createCursor(artifact.artifactId, nextMatch, advancing, {
-          query,
-          contextLines,
-          maxTokens
+          search: {
+            query,
+            contextLines,
+            maxTokens
+          }
         })
       : null;
     const view = {
