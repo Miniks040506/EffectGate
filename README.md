@@ -7,7 +7,7 @@
 **Design goal:** Spend tokens on reasoning, not tool noise.
 
 [![Phase](https://img.shields.io/badge/status-Phase%201%20preview-7c3aed?style=flat-square)](#current-boundary)
-[![Version](https://img.shields.io/badge/version-0.9.0-0f766e?style=flat-square)](poc/package.json)
+[![Version](https://img.shields.io/badge/version-0.10.0-0f766e?style=flat-square)](poc/package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25-111827?style=flat-square)](#protocol-surface)
 [![License](https://img.shields.io/badge/license-Apache--2.0-D22128?style=flat-square)](LICENSE)
@@ -176,6 +176,12 @@ the maximum `|measured-reference| / max(measured, reference, 1)` across the
 provided calibration samples. No tokenizer is bundled, and a host-reported
 value is never relabeled as a local measurement or a total-session saving.
 
+One result-budget controller now guards text, search, projection, and
+unavailable views. Configured first-view and fetched-page byte/token ceilings
+are distinct; a caller may request less but cannot raise either ceiling. Every
+view reports the applied limits, measured bytes and tokens, and one explicit
+overflow policy from the public schema.
+
 Call `effectgate_search` with an `artifact_id` and literal `query` to retrieve a
 bounded redacted context window. Optional `context_lines` ranges from zero
 through five; `max_tokens` ranges from 64 through 1,024 and defaults to 512.
@@ -317,7 +323,8 @@ The dependency-free suite directly verifies:
 - first-page admission after a second catalog page is loaded;
 - 4,096 Unicode code points at the fixture input limit;
 - unchanged pass-through for small text results;
-- v1 Context View fields, exact byte citations, and hard page limits;
+- v1 Context View fields, exact byte citations, and distinct hard first-view
+  and fetched-page limits;
 - honest byte-proxy token ceilings plus explicit omission diagnostics;
 - exact, estimated, byte-proxy, and host-reported counter contracts plus
   deterministic estimate calibration;
@@ -370,7 +377,7 @@ The dependency-free suite directly verifies:
 | Quota-limited temporary filesystem CAS | Durable metadata, shared-writer locking, crash-root recovery, and production GC |
 | Cited paging/search/projection plus fail-closed opaque-content withholding | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
 | HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |
-| Basis-aware counter abstraction; Context Views use byte-proxy counts | Persistent token ledger and host comparison benchmarks |
+| Basis-aware counters plus shared first-view/page guards; Context Views use byte-proxy counts | Persistent token ledger and host comparison benchmarks |
 | Deterministic local tests | Compatibility, fuzz, latency, and crash qualification |
 | Sanitized public errors | Intent approval, durable journal, verification, and reconciliation |
 | Node.js PoC | Tested installer and supported-platform matrix |
@@ -390,7 +397,7 @@ acceptance evidence exists.
 │   └── token-ledger.schema.json # shared token-count definition
 └── poc/
     ├── src/
-    │   ├── budget/          # basis-aware token counters and calibration
+    │   ├── budget/          # token counters, calibration, and result guards
     │   ├── context/         # bounded views and authenticated cursors
     │   ├── projection/      # JSON, tabular, and Markdown projections
     │   ├── proxy/           # MCP proxy, fixture, and command entry point

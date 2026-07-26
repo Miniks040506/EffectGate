@@ -61,6 +61,9 @@ All token measurements use the shared counter interface. Context Views retain
 their deterministic byte-proxy behavior, while exact tokenizer callbacks,
 calibrated estimates, and host-reported values remain explicitly separated by
 basis. The preview does not bundle a tokenizer or infer total host context.
+Text, search, projection, and unavailable results share one hard budget
+controller. First views and fetched pages have separate byte/token ceilings;
+requested search or projection limits can lower, but never raise, them.
 
 Use `effectgate_search` with the view's `artifact_id` and a literal `query`.
 Optional `context_lines` is `0..5`; `max_tokens` is `64..1024`. Repeated
@@ -92,7 +95,7 @@ Runtime modules live under `src/`, grouped by responsibility:
 
 ```text
 src/
-├── budget/     # basis-aware token counters and calibration
+├── budget/     # token counters, calibration, and result guards
 ├── context/    # Context Views and cursor state
 ├── projection/ # JSON, CSV/TSV, and Markdown projection
 ├── proxy/      # MCP entry point and fixture backend
@@ -106,7 +109,7 @@ test/           # dependency-free integration and boundary checks
 |---|---:|
 | JSON-RPC frame | 1 MiB |
 | Serialized tool-result value | 64 KiB |
-| Context View source content | 4,096 bytes per page |
+| Context View source content | 4,096 bytes per first view / fetched page |
 | Search query | 64 Unicode characters / 256 UTF-8 bytes |
 | Search context | 0–5 lines / 64–1,024 byte-proxy tokens |
 | Projection fields | 16 unique JSON Pointers / 256 characters each |

@@ -1520,8 +1520,8 @@ test("text, search, projection, and unavailable views match the public contract"
   );
 
   assert.equal(text.status, "partial_view");
-  assert.equal(search.status, "complete");
-  assert.equal(projection.status, "complete");
+  assert.equal(search.status, "partial_view");
+  assert.equal(projection.status, "partial_view");
   assert.equal(unavailable.status, "unavailable");
   for (const view of [
     text,

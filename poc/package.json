@@ -1,6 +1,6 @@
 {
   "name": "effectgate-preview",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -9,6 +9,6 @@
   },
   "scripts": {
     "start": "node src/proxy/effectgate.mjs mcp serve",
-    "test": "node --test test/effectgate.test.mjs test/token-counter.test.mjs"
+    "test": "node --test test/effectgate.test.mjs test/result-budget.test.mjs test/token-counter.test.mjs"
   }
 }
