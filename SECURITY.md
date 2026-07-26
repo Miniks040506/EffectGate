@@ -59,6 +59,8 @@ Reports are especially useful when they demonstrate:
 - acceptance of interrupted, missing, truncated, or hash-mismatched CAS data;
 - cross-session cursor use, expiry bypass, modification, or existence leaks;
 - cross-session artifact search or search-result existence oracles;
+- cross-session artifact projection or projection-result existence oracles;
+- uncited, invented, skipped, duplicated, or secret-bearing projected records;
 - bypass of artifact, store, or active-cursor quotas;
 - escape from the intended child-process or environment boundary;
 - a reproducible resource-exhaustion path beyond documented limitations.
@@ -107,6 +109,12 @@ The current preview assumes:
 - Search is a bounded, case-sensitive literal scan over at most a 1 MiB
   artifact. It has no regex, semantic ranking, persistent index, or untrusted
   query logging, and it decodes the complete artifact for each search page.
+- JSON/JSONL projection reparses at most a 1 MiB artifact per page using the
+  built-in JSON parser. It supports JSON Pointer fields and scalar equality
+  only—no JSONPath, expressions, code execution, comparison, or membership.
+- Malformed JSON falls back to bounded redacted text without repair. Malformed
+  JSONL lines and records larger than the projection budget become cited
+  diagnostics rather than model-visible raw data.
 - The 4 KiB Context View budget covers source content; the surrounding MCP/JSON
   tool-result value is capped at 64 KiB and the complete frame at 1 MiB.
 - Artifacts with an unfetched continuation are pinned until the cursor expires;

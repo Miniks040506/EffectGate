@@ -4,7 +4,8 @@ This dependency-free Node.js preview proves two narrow paths:
 
 ```text
 small typed result  -> unchanged MCP result
-large text result   -> temporary filesystem CAS -> redacted view -> fetch/search
+large text result   -> temporary filesystem CAS -> redacted view
+retained artifact   -> fetch / literal search / JSON or JSONL projection
 ```
 
 It remains fixture-only. Arbitrary backends, protected effects, real
@@ -30,9 +31,10 @@ The fixture exposes:
 |---|---|
 | `fixture__echo` | Typed small-result pass-through |
 | `fixture__echo_again` | Catalog pagination |
-| `fixture__large_log` | Deterministic multibyte text and synthetic redaction sentinels |
+| `fixture__large_log` | Deterministic multibyte log or JSONL data and synthetic redaction sentinels |
 | `effectgate_fetch` | Local continuation using an opaque cursor |
 | `effectgate_search` | Bounded literal context search over a retained artifact |
+| `effectgate_project` | Bounded JSON/JSONL field, equality-filter, and slice projection |
 
 Try `fixture__large_log` with `{"lines": 200}`. If the returned Context View
 reports `retrieval.more_available: true`, pass its cursor to
@@ -45,6 +47,14 @@ Optional `context_lines` is `0..5`; `max_tokens` is `64..1024`. Repeated
 matches return an opaque cursor consumed by `effectgate_fetch`. A window
 clipped by the byte budget is explicitly labeled `partial_view`.
 
+Request JSONL fixture data with
+`{"lines": 200, "format": "jsonl"}`. Use `effectgate_project` with the
+returned `artifact_id`, `format: "jsonl"`, optional RFC 6901 `fields`, a
+scalar-equality `filter`, `offset`, `limit`, and `max_tokens`. Projection
+returns JSONL plus `record_citations`; continuation uses `effectgate_fetch`.
+Malformed JSONL lines become cited diagnostics. Malformed JSON falls back to a
+bounded redacted text view without repair.
+
 ## Bounds
 
 | Resource | Limit |
@@ -54,6 +64,9 @@ clipped by the byte budget is explicitly labeled `partial_view`.
 | Context View source content | 4,096 bytes per page |
 | Search query | 64 Unicode characters / 256 UTF-8 bytes |
 | Search context | 0–5 lines / 64–1,024 byte-proxy tokens |
+| Projection fields | 16 unique JSON Pointers / 256 characters each |
+| Projection slice | Offset ≤1,048,576 / limit ≤1,000 |
+| Projection page | 100 logical items / 64–1,024 byte-proxy tokens |
 | CAS write chunk | 64 KiB |
 | Stored artifact | 1 MiB |
 | Logical artifact store | 4 MiB / 16 artifacts |
@@ -66,5 +79,5 @@ The filesystem objects are atomically finalized and verified before every
 page read. Session metadata remains volatile and process-local, and backend
 results still arrive as complete strings. The preview has no durable index,
 end-to-end streaming adapter, comprehensive secret/PII detection, regex/ranked
-search, structured projection, token ledger, approval flow, or production
-support claim.
+search, JSONPath or richer predicates, CSV/Markdown projection, token ledger,
+approval flow, or production support claim.

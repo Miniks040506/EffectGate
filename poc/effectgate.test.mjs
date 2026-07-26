@@ -909,6 +909,101 @@ test("Context Store preserves UTF-8 boundaries and pins live continuations", () 
   );
 });
 
+test("JSON projection handles escaped pointers, malformed input, and record budgets", () => {
+  const store = new ContextStore({ pageBytes: 32 });
+  const secret = `secret_${"S".repeat(20)}`;
+  const raw = JSON.stringify([
+    { id: 1, "a/b": { "m~n": "Ada" } },
+    { id: 2, password: secret, blob: "x".repeat(300) }
+  ]);
+  const artifact = store.ingest(raw, "application/json");
+
+  const escaped = store.project(artifact.artifact_id, {
+    format: "json",
+    fields: ["/a~1b/m~0n"],
+    limit: 1,
+    maxTokens: 64
+  });
+  assert.equal(escaped.content, '{"/a~1b/m~0n":"Ada"}\n');
+  assert.deepEqual(escaped.record_citations, [0]);
+  assert.deepEqual(escaped.citations[0], {
+    artifact_id: artifact.artifact_id,
+    source_digest: escaped.integrity.artifact_digest,
+    byte_start: 0,
+    byte_end: Buffer.byteLength(raw, "utf8")
+  });
+
+  const redacted = store.project(artifact.artifact_id, {
+    format: "json",
+    fields: ["/password"],
+    filter: { pointer: "/id", equals: 2 },
+    maxTokens: 64
+  });
+  assert.equal(JSON.stringify(redacted).includes(secret), false);
+  assert.match(redacted.content, /\[REDACTED\]/);
+  assert.ok(redacted.redactions.length >= 1);
+
+  const oversized = store.project(artifact.artifact_id, {
+    format: "json",
+    fields: ["/blob"],
+    filter: { pointer: "/id", equals: 2 },
+    maxTokens: 64
+  });
+  assert.equal(oversized.status, "partial_view");
+  assert.equal(oversized.content, "");
+  assert.equal(oversized.retrieval.more_available, false);
+  assert.ok(
+    oversized.diagnostics.some(
+      ({ code }) => code === "EG-PROJECT-BUDGET-001"
+    )
+  );
+
+  const malformedJson = store.ingest('{"ok":1', "application/json");
+  const fallback = store.project(malformedJson.artifact_id, {
+    format: "json",
+    maxTokens: 64
+  });
+  assert.equal(fallback.content, '{"ok":1');
+  assert.equal(fallback.diagnostics[0].code, "EG-PROJECT-JSON-001");
+
+  const jsonl = '{"id":1}\r\nbad😀\n{"id":2}\n';
+  const jsonlArtifact = store.ingest(jsonl, "application/x-ndjson");
+  const projected = store.project(jsonlArtifact.artifact_id, {
+    format: "jsonl",
+    fields: ["/id"],
+    maxTokens: 64
+  });
+  assert.equal(projected.content, '{"/id":1}\n{"/id":2}\n');
+  const malformed = projected.diagnostics.find(
+    ({ code }) => code === "EG-PROJECT-JSONL-001"
+  );
+  assert.ok(malformed);
+  const malformedCitation = projected.citations[malformed.citation_index];
+  assert.equal(
+    Buffer.from(jsonl, "utf8")
+      .subarray(malformedCitation.byte_start, malformedCitation.byte_end)
+      .toString("utf8"),
+    "bad😀\n"
+  );
+
+  assert.throws(
+    () =>
+      store.project(artifact.artifact_id, {
+        format: "json",
+        fields: ["/id", "/id"]
+      }),
+    /projection options/
+  );
+  assert.throws(
+    () =>
+      new ContextStore().project(artifact.artifact_id, {
+        format: "json"
+      }),
+    InvalidArtifactError
+  );
+  store.close();
+});
+
 test("filesystem CAS finalizes, recovers, deduplicates, and quarantines", (context) => {
   const directory = mkdtempSync(join(tmpdir(), "effectgate-cas-test-"));
   context.after(() => rmSync(directory, { recursive: true, force: true }));
