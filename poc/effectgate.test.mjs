@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
   writeFileSync
@@ -48,6 +49,70 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROGRAM = join(HERE, "effectgate.mjs");
+const CONTEXT_VIEW_SCHEMA = JSON.parse(
+  readFileSync(join(HERE, "..", "contracts", "context-view.schema.json"), "utf8")
+);
+const TOKEN_LEDGER_SCHEMA = JSON.parse(
+  readFileSync(join(HERE, "..", "contracts", "token-ledger.schema.json"), "utf8")
+);
+
+function assertTokenCountContract(tokenCount) {
+  const contract = TOKEN_LEDGER_SCHEMA.$defs.tokenCount;
+  const allowed = new Set(Object.keys(contract.properties));
+  assert.deepEqual(
+    Object.keys(tokenCount).filter((key) => !allowed.has(key)),
+    []
+  );
+  for (const key of contract.required) assert.ok(Object.hasOwn(tokenCount, key));
+  assert.ok(contract.properties.basis.enum.includes(tokenCount.basis));
+  assert.match(
+    tokenCount.input_digest,
+    /^sha256:[a-f0-9]{64}$/u
+  );
+}
+
+function assertContextViewContract(view) {
+  const allowed = new Set(Object.keys(CONTEXT_VIEW_SCHEMA.properties));
+  assert.deepEqual(
+    Object.keys(view).filter((key) => !allowed.has(key)),
+    []
+  );
+  for (const key of CONTEXT_VIEW_SCHEMA.required) {
+    assert.ok(Object.hasOwn(view, key), `missing Context View field: ${key}`);
+  }
+  const diagnostic = CONTEXT_VIEW_SCHEMA.$defs.diagnostic;
+  const diagnosticKeys = new Set(Object.keys(diagnostic.properties));
+  const codePattern = new RegExp(diagnostic.properties.code.pattern, "u");
+  for (const item of view.diagnostics ?? []) {
+    assert.match(item.code, codePattern);
+    assert.deepEqual(
+      Object.keys(item).filter((key) => !diagnosticKeys.has(key)),
+      []
+    );
+  }
+  if (view.record_citations) {
+    for (const index of view.record_citations) {
+      assert.ok(index >= 0 && index < view.citations.length);
+    }
+  }
+  assert.equal(
+    view.budget.applied_bytes,
+    Buffer.byteLength(view.content, "utf8")
+  );
+  assert.ok(view.budget.applied_bytes <= view.budget.max_bytes);
+  assert.ok(view.budget.applied_tokens <= view.budget.max_tokens);
+  assertTokenCountContract(view.token_count);
+  if (view.estimated_raw_token_count) {
+    assertTokenCountContract(view.estimated_raw_token_count);
+  }
+  if (view.status === "partial_view") {
+    assert.ok(view.estimated_raw_token_count);
+    assert.ok(view.retrieval);
+  }
+  if (view.status === "complete" && view.retrieval) {
+    assert.equal(view.retrieval.more_available, false);
+  }
+}
 
 class RpcProcess {
   constructor(args) {
@@ -1189,6 +1254,236 @@ test("Context Store preserves UTF-8 boundaries and pins live continuations", () 
     () => new ContextStore().ingest(tooManySecrets),
     /redaction span limit/
   );
+});
+
+test("opaque content is retained but withheld across every model-visible path", () => {
+  const opaqueSource = Array.from({ length: 64 }, (_, index) =>
+    createHash("sha256")
+      .update(`effectgate-opaque-${index}`)
+      .digest("base64url")
+  ).join("");
+  const store = new ContextStore();
+  const view = store.ingest(opaqueSource);
+
+  assert.equal(view.status, "unavailable");
+  assert.equal(view.content, "");
+  assert.equal(view.budget.applied_bytes, 0);
+  assert.equal(view.budget.applied_tokens, 0);
+  assert.equal(view.budget.overflow, "failed");
+  assert.deepEqual(view.citations, []);
+  assert.equal(view.retrieval, undefined);
+  assert.equal(JSON.stringify(view).includes(opaqueSource.slice(0, 32)), false);
+  assert.ok(
+    view.diagnostics.some(({ code }) => code === "EG-VIEW-OPAQUE-001")
+  );
+  assert.ok(
+    view.diagnostics.some(({ code }) => code === "EG-VIEW-002")
+  );
+  assert.match(
+    view.diagnostics.find(({ code }) => code === "EG-VIEW-OPAQUE-001").message,
+    /no summary was generated/
+  );
+
+  const searched = store.search(
+    view.artifact_id,
+    opaqueSource.slice(0, 16),
+    0,
+    64
+  );
+  const projected = store.project(view.artifact_id, {
+    format: "json",
+    maxTokens: 64
+  });
+  for (const guarded of [searched, projected]) {
+    assert.equal(guarded.status, "unavailable");
+    assert.equal(guarded.content, "");
+    assert.equal(guarded.retrieval, undefined);
+  }
+
+  const wrapped = opaqueSource.replace(/(.{64})/gu, "$1\n");
+  assert.equal(store.ingest(wrapped).status, "unavailable");
+  const indentedArmor = opaqueSource
+    .slice(0, 512)
+    .match(/.{1,64}/gu)
+    .map((line) => `    ${line}`)
+    .join("\n");
+  assert.equal(store.ingest(indentedArmor).status, "unavailable");
+  const wrappedHex = Array.from({ length: 8 }, (_, index) =>
+    createHash("sha256")
+      .update(`effectgate-hex-${index}`)
+      .digest("hex")
+  ).join("\n");
+  const shortArmor = opaqueSource.slice(0, 512).replace(/(.{64})/gu, "$1\n");
+  const tailArmor = `${"level=INFO ordinary log\n".repeat(30)}${shortArmor}`;
+  const pemBody = opaqueSource.slice(0, 88).replace(/(.{64})/gu, "$1\n");
+  const pem =
+    `-----BEGIN PRIVATE KEY-----\n${pemBody}\n` +
+    "-----END PRIVATE KEY-----";
+  for (const guarded of [wrappedHex, tailArmor, pem]) {
+    const guardedView = store.ingest(guarded);
+    assert.equal(guardedView.status, "unavailable");
+    assert.equal(
+      JSON.stringify(guardedView).includes(guarded.slice(-32)),
+      false
+    );
+  }
+  assert.equal(
+    store.ingest("A".repeat(2048)).status,
+    "complete"
+  );
+  const alphabet = "Aa0Bb1Cc2Dd3";
+  assert.equal(
+    store.ingest(alphabet.repeat(11).slice(0, 127)).status,
+    "complete"
+  );
+  assert.equal(
+    store.ingest(alphabet.repeat(11).slice(0, 128)).status,
+    "unavailable"
+  );
+  assert.equal(
+    store.ingest("ordinary text", "application/octet-stream").status,
+    "unavailable"
+  );
+  const transitionStore = new ContextStore({ pageBytes: 8 });
+  const mediaTransition = "same bytes, stricter media classification";
+  const transition = transitionStore.ingest(mediaTransition);
+  assert.throws(
+    () =>
+      transitionStore.ingest(
+        mediaTransition,
+        "application/octet-stream"
+      ),
+    /metadata conflicts/
+  );
+  assert.equal(
+    transitionStore.fetch(transition.retrieval.cursor).content,
+    mediaTransition.slice(8, 16)
+  );
+  transitionStore.close();
+
+  const bounded = boundToolResult(
+    {
+      content: [{ type: "text", text: alphabet.repeat(11).slice(0, 128) }],
+      isError: false
+    },
+    { contextStore: store, contextViewEligible: true }
+  );
+  assert.equal(JSON.parse(bounded.content[0].text).status, "unavailable");
+  assert.equal(
+    JSON.stringify(bounded).includes(alphabet.repeat(3)),
+    false
+  );
+  const boundedPem = boundToolResult(
+    { content: [{ type: "text", text: pem }], isError: false },
+    { contextStore: store, contextViewEligible: true }
+  );
+  assert.equal(JSON.parse(boundedPem.content[0].text).status, "unavailable");
+  assert.equal(JSON.stringify(boundedPem).includes(pemBody.slice(0, 32)), false);
+  const structuredArmor = opaqueSource
+    .slice(0, 512)
+    .replace(/(.{64})/gu, "$1\n");
+  const boundedStructured = boundToolResult(
+    {
+      content: [{ type: "text", text: "metadata only" }],
+      structuredContent: { blob: structuredArmor },
+      isError: false
+    },
+    { contextStore: store, contextViewEligible: true }
+  );
+  assert.equal(
+    JSON.parse(boundedStructured.content[0].text).status,
+    "unavailable"
+  );
+  assert.equal(
+    JSON.stringify(boundedStructured).includes(
+      structuredArmor.slice(0, 32)
+    ),
+    false
+  );
+  const tinyImage = "RUctMDI0LXRpbnktaW1hZ2U=";
+  const boundedImage = boundToolResult(
+    {
+      content: [{ type: "image", data: tinyImage, mimeType: "image/png" }],
+      isError: false
+    },
+    { contextStore: store, contextViewEligible: true }
+  );
+  const boundedImageView = JSON.parse(boundedImage.content[0].text);
+  assert.equal(boundedImageView.status, "unavailable");
+  assert.match(
+    boundedImageView.diagnostics.find(
+      ({ code }) => code === "EG-VIEW-RESULT-001"
+    ).message,
+    /model-visible content was withheld/
+  );
+  assert.equal(JSON.stringify(boundedImage).includes(tinyImage), false);
+  store.close();
+
+  const boundaryStore = new ContextStore();
+  assert.equal(
+    boundaryStore.requiresView("A".repeat(1024 * 1024), "text/plain"),
+    false
+  );
+  assert.equal(
+    boundaryStore.requiresView("A".repeat(1024 * 1024 + 1), "text/plain"),
+    true
+  );
+  const oneMiB = alphabet.repeat(
+    Math.ceil((1024 * 1024) / alphabet.length)
+  ).slice(0, 1024 * 1024);
+  const boundary = boundaryStore.ingest(
+    oneMiB,
+    "application/octet-stream"
+  );
+  assert.equal(boundary.status, "unavailable");
+  assert.equal(boundary.content, "");
+  assert.equal(boundary.retrieval, undefined);
+  assert.equal(boundary.estimated_raw_token_count.value, 256 * 1024);
+  assert.match(
+    boundary.diagnostics
+      .find(({ code }) => code === "EG-VIEW-OPAQUE-001")
+      .message,
+    /no summary was generated/
+  );
+  boundaryStore.close();
+});
+
+test("text, search, projection, and unavailable views match the public contract", () => {
+  const store = new ContextStore({ pageBytes: 8 });
+  const raw = '[{"id":1},{"id":2}]';
+  const text = store.ingest(raw, "application/json");
+  const search = store.search(text.artifact_id, '"id"', 0, 64);
+  const projection = store.project(text.artifact_id, {
+    format: "json",
+    fields: ["/id"],
+    maxTokens: 64
+  });
+  const malformedArtifact = store.ingest(
+    '{"id":1}\nbad\n{"id":2}\n',
+    "application/x-ndjson"
+  );
+  const diagnosticProjection = store.project(
+    malformedArtifact.artifact_id,
+    { format: "jsonl", fields: ["/id"], maxTokens: 64 }
+  );
+  const unavailable = store.ingest(
+    "Aa0Bb1Cc2Dd3".repeat(11).slice(0, 128)
+  );
+
+  assert.equal(text.status, "partial_view");
+  assert.equal(search.status, "complete");
+  assert.equal(projection.status, "complete");
+  assert.equal(unavailable.status, "unavailable");
+  for (const view of [
+    text,
+    search,
+    projection,
+    diagnosticProjection,
+    unavailable
+  ]) {
+    assertContextViewContract(view);
+  }
+  store.close();
 });
 
 test("JSON projection handles escaped pointers, malformed input, and record budgets", () => {
