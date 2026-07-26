@@ -33,8 +33,10 @@ import {
   MAX_TOOL_RESULT_BYTES,
   MCP_VERSION,
   boundToolResult,
+  buildFixtureCsv,
   buildFixtureJsonl,
   buildFixtureLog,
+  buildFixtureMarkdown,
   isSafeReadTool
 } from "./effectgate.mjs";
 import {
@@ -682,6 +684,199 @@ test("JSONL projection filters, selects, cites, redacts, and pages", async (cont
   assert.equal(isolated.stderr, "");
 });
 
+test("CSV projection preserves records, citations, filters, and redaction", async (context) => {
+  const proxy = new RpcProcess(["mcp", "serve", "--source", "fixture"]);
+  context.after(() => proxy.stop());
+
+  await proxy.request("initialize", {
+    protocolVersion: MCP_VERSION,
+    capabilities: {},
+    clientInfo: { name: "csv-projection-test", version: "1" }
+  });
+  proxy.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  await proxy.request("tools/list");
+  const listed = await proxy.request("tools/list", { cursor: "page-2" });
+  const largeResult = listed.result.tools.find(
+    (tool) => tool.name === "fixture__large_log"
+  );
+  const raw = buildFixtureCsv(80, true);
+  const initial = await proxy.request("tools/call", {
+    name: largeResult.name,
+    arguments: { lines: 80, format: "csv", includeSecrets: true }
+  });
+  const artifactId = JSON.parse(initial.result.content[0].text).artifact_id;
+  const expected = [6, 11, 16, 21, 26, 31, 36, 41].map((line) => ({
+    line: String(line),
+    message: "bounded, context evidence",
+    authorization: line === 41 ? "[REDACTED]" : ""
+  }));
+
+  let response = await proxy.request("tools/call", {
+    name: CONTEXT_PROJECT_TOOL.name,
+    arguments: {
+      artifact_id: artifactId,
+      format: "csv",
+      columns: ["line", "message", "authorization"],
+      filter: { column: "level", equals: "WARN" },
+      offset: 1,
+      limit: 8,
+      max_tokens: 64
+    }
+  });
+  const projected = [];
+
+  for (;;) {
+    const serialized = JSON.stringify(response);
+    for (const secret of FIXTURE_SECRETS) {
+      assert.equal(serialized.includes(secret), false);
+    }
+    const view = JSON.parse(response.result.content[0].text);
+    const records = view.content.length === 0
+      ? []
+      : view.content.trimEnd().split("\n").map((line) => JSON.parse(line));
+    assert.equal(view.media_type, "application/x-ndjson");
+    assert.equal(view.diagnostics[0].code, "EG-PROJECT-TABLE-001");
+    assert.equal(view.record_citations.length, records.length);
+    assert.ok(view.budget.applied_bytes <= 256);
+
+    for (let index = 0; index < records.length; index += 1) {
+      const citation = view.citations[view.record_citations[index]];
+      const source = Buffer.from(raw, "utf8")
+        .subarray(citation.byte_start, citation.byte_end)
+        .toString("utf8");
+      assert.ok(source.startsWith(`${records[index].line},WARN,`));
+      assert.match(source, /"bounded, context evidence"/u);
+      projected.push(records[index]);
+    }
+
+    if (!view.retrieval.more_available) break;
+    response = await proxy.request("tools/call", {
+      name: CONTEXT_FETCH_TOOL.name,
+      arguments: { cursor: view.retrieval.cursor }
+    });
+  }
+
+  assert.deepEqual(projected, expected);
+  assert.match(JSON.stringify(projected), /\[REDACTED\]/u);
+  const invalid = await proxy.request("tools/call", {
+    name: CONTEXT_PROJECT_TOOL.name,
+    arguments: {
+      artifact_id: artifactId,
+      format: "csv",
+      fields: ["/line"],
+      filter: { pointer: "/level", equals: "WARN" }
+    }
+  });
+  assert.deepEqual(invalid.error, {
+    code: -32602,
+    message: "The projection arguments are invalid."
+  });
+  assert.equal(proxy.stderr, "");
+});
+
+test("Markdown projection indexes headings and extracts cited sections", async (context) => {
+  const proxy = new RpcProcess(["mcp", "serve", "--source", "fixture"]);
+  context.after(() => proxy.stop());
+
+  await proxy.request("initialize", {
+    protocolVersion: MCP_VERSION,
+    capabilities: {},
+    clientInfo: { name: "markdown-projection-test", version: "1" }
+  });
+  proxy.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  await proxy.request("tools/list");
+  const listed = await proxy.request("tools/list", { cursor: "page-2" });
+  const largeResult = listed.result.tools.find(
+    (tool) => tool.name === "fixture__large_log"
+  );
+  const raw = buildFixtureMarkdown(80, true);
+  const initial = await proxy.request("tools/call", {
+    name: largeResult.name,
+    arguments: { lines: 80, format: "markdown", includeSecrets: true }
+  });
+  const artifactId = JSON.parse(initial.result.content[0].text).artifact_id;
+
+  let response = await proxy.request("tools/call", {
+    name: CONTEXT_PROJECT_TOOL.name,
+    arguments: {
+      artifact_id: artifactId,
+      format: "markdown",
+      limit: 10,
+      max_tokens: 64
+    }
+  });
+  const headings = [];
+  for (;;) {
+    const view = JSON.parse(response.result.content[0].text);
+    assert.equal(view.diagnostics[0].code, "EG-PROJECT-MARKDOWN-INDEX-001");
+    assert.equal(view.media_type, "application/x-ndjson");
+    const records = view.content.trimEnd().split("\n").filter(Boolean)
+      .map((line) => JSON.parse(line));
+    headings.push(...records);
+    if (!view.retrieval.more_available) break;
+    response = await proxy.request("tools/call", {
+      name: CONTEXT_FETCH_TOOL.name,
+      arguments: { cursor: view.retrieval.cursor }
+    });
+  }
+  assert.deepEqual(
+    headings.map(({ title }) => title),
+    [
+      "Fixture report",
+      ...Array.from(
+        { length: 9 },
+        (_, index) => `Event ${String(index + 1).padStart(6, "0")}`
+      )
+    ]
+  );
+
+  const sectionResponse = await proxy.request("tools/call", {
+    name: CONTEXT_PROJECT_TOOL.name,
+    arguments: {
+      artifact_id: artifactId,
+      format: "markdown",
+      heading: "Event 000041",
+      max_tokens: 64
+    }
+  });
+  const serialized = JSON.stringify(sectionResponse);
+  for (const secret of FIXTURE_SECRETS) {
+    assert.equal(serialized.includes(secret), false);
+  }
+  const section = JSON.parse(sectionResponse.result.content[0].text);
+  assert.equal(section.media_type, "text/markdown");
+  assert.equal(
+    section.diagnostics[0].code,
+    "EG-PROJECT-MARKDOWN-SECTION-001"
+  );
+  const rawStart = raw.indexOf("## Event 000041");
+  const rawEnd = raw.indexOf("## Event 000042");
+  assert.equal(
+    section.content,
+    raw.slice(rawStart, rawEnd).replace(
+      FIXTURE_SECRETS[1],
+      "[REDACTED]"
+    )
+  );
+  assert.equal(section.record_citations.length, 5);
+  for (const citationIndex of section.record_citations) {
+    const citation = section.citations[citationIndex];
+    assert.ok(citation.byte_start >= Buffer.byteLength(raw.slice(0, rawStart)));
+    assert.ok(citation.byte_end <= Buffer.byteLength(raw.slice(0, rawEnd)));
+  }
+
+  const absent = await proxy.request("tools/call", {
+    name: CONTEXT_PROJECT_TOOL.name,
+    arguments: {
+      artifact_id: artifactId,
+      format: "markdown",
+      heading: "Absent section"
+    }
+  });
+  assert.equal(JSON.parse(absent.result.content[0].text).content, "");
+  assert.equal(proxy.stderr, "");
+});
+
 test("secret sentinels are redacted from every Context View page", async (context) => {
   const proxy = new RpcProcess(["mcp", "serve", "--source", "fixture"]);
   context.after(() => proxy.stop());
@@ -1000,6 +1195,100 @@ test("JSON projection handles escaped pointers, malformed input, and record budg
         format: "json"
       }),
     InvalidArtifactError
+  );
+  store.close();
+});
+
+test("document projection handles CSV quoting, TSV, and fenced Markdown", () => {
+  const store = new ContextStore({ pageBytes: 256 });
+  const secret = `secret_${"S".repeat(20)}`;
+  const csv =
+    "id,note,password\r\n" +
+    `1,\"comma, and \"\"quote\"\"\",\"${secret}\"\r\n` +
+    "2,\"two\nlines\",ok\r\n";
+  const artifact = store.ingest(csv, "text/csv");
+  const first = store.project(artifact.artifact_id, {
+    format: "csv",
+    columns: ["id", "note", "password"],
+    filter: { column: "id", equals: "1" },
+    maxTokens: 64
+  });
+  assert.equal(JSON.stringify(first).includes(secret), false);
+  assert.equal(
+    first.content,
+    '{"id":"1","note":"comma, and \\"quote\\"","password":"[REDACTED]"}\n'
+  );
+  const second = store.project(artifact.artifact_id, {
+    format: "csv",
+    columns: ["note"],
+    filter: { column: "id", equals: "2" },
+    maxTokens: 64
+  });
+  assert.equal(second.content, '{"note":"two\\nlines"}\n');
+  const secondCitation = second.citations[second.record_citations[0]];
+  assert.equal(
+    Buffer.from(csv, "utf8")
+      .subarray(secondCitation.byte_start, secondCitation.byte_end)
+      .toString("utf8"),
+    "2,\"two\nlines\",ok\r\n"
+  );
+
+  const tsv = "id\tname\n1\tAda\n2\tLin\n";
+  const tsvArtifact = store.ingest(tsv, "text/tab-separated-values");
+  const tsvView = store.project(tsvArtifact.artifact_id, {
+    format: "tsv",
+    columns: ["name"],
+    filter: { column: "id", equals: "2" },
+    maxTokens: 64
+  });
+  assert.equal(tsvView.content, '{"name":"Lin"}\n');
+
+  const malformedCsv = `id,password\r\n1,\"${secret}`;
+  const malformedArtifact = store.ingest(malformedCsv, "text/csv");
+  assert.throws(
+    () =>
+      store.project(malformedArtifact.artifact_id, {
+        format: "csv",
+        columns: ["password"]
+      }),
+    /invalid document projection source/
+  );
+  const duplicate = store.ingest("id,id\n1,2\n", "text/csv");
+  assert.throws(
+    () => store.project(duplicate.artifact_id, { format: "csv" }),
+    /invalid document projection source/
+  );
+  const ragged = store.ingest("id,name\n1\n", "text/csv");
+  assert.throws(
+    () => store.project(ragged.artifact_id, { format: "csv" }),
+    /invalid document projection source/
+  );
+
+  const markdown =
+    "# Alpha\nintro\n```md\n# fenced\n```\n## Child\nbody\n# Beta\nend\n";
+  const markdownArtifact = store.ingest(markdown, "text/markdown");
+  const index = store.project(markdownArtifact.artifact_id, {
+    format: "markdown",
+    maxTokens: 64
+  });
+  assert.deepEqual(
+    index.content.trimEnd().split("\n").map((line) => JSON.parse(line).title),
+    ["Alpha", "Child", "Beta"]
+  );
+  const section = store.project(markdownArtifact.artifact_id, {
+    format: "markdown",
+    heading: "Alpha",
+    maxTokens: 64
+  });
+  assert.equal(section.content, markdown.slice(0, markdown.indexOf("# Beta")));
+
+  assert.throws(
+    () =>
+      store.project(artifact.artifact_id, {
+        format: "csv",
+        columns: ["missing"]
+      }),
+    /projection options/
   );
   store.close();
 });
