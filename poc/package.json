@@ -10,6 +10,6 @@
   "scripts": {
     "start": "node src/proxy/effectgate.mjs mcp serve",
     "benchmark:fixture": "node src/benchmark/fixture-runner.mjs",
-    "test": "node --test test/compact-mux.test.mjs test/effectgate.test.mjs test/fixture-runner.test.mjs test/host-compatibility.test.mjs test/instruction-capsule-contract.test.mjs test/paired-harness.test.mjs test/phase-receipt-contract.test.mjs test/result-budget.test.mjs test/session-output-guard.test.mjs test/skill-graph.test.mjs test/skill-passport-contract.test.mjs test/skill-source-import.test.mjs test/token-counter.test.mjs test/token-ledger.test.mjs"
+    "test": "node --test test/compact-mux.test.mjs test/effectgate.test.mjs test/fixture-runner.test.mjs test/host-compatibility.test.mjs test/instruction-capsule-contract.test.mjs test/paired-harness.test.mjs test/passport-compiler.test.mjs test/phase-receipt-contract.test.mjs test/result-budget.test.mjs test/session-output-guard.test.mjs test/skill-graph.test.mjs test/skill-passport-contract.test.mjs test/skill-source-import.test.mjs test/token-counter.test.mjs test/token-ledger.test.mjs"
   }
 }
