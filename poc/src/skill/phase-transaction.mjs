@@ -94,20 +94,13 @@ export class SkillTransaction {
     transaction.#eventStore = eventStore;
     for (const event of loaded.events) transaction.#replay(event);
     if (transaction.#status === "active") {
-      const current = transaction.#now();
-      if (!Number.isFinite(current)) {
-        fail("EG_PHASE_TRANSITION_DENIED", "transaction clock is invalid");
-      }
-      if (transaction.#activeExpiry <= current) {
-        transaction.#activeDigest = undefined;
-        transaction.#activeExpiry = undefined;
-        transaction.#status = "awaiting_capsule";
-      }
+      transaction.#expire(transaction.#now());
     }
     return transaction;
   }
 
   snapshot() {
+    this.#expire(this.#now());
     return deepFreeze({
       transaction_id: this.#id,
       status: this.#status,
@@ -169,6 +162,7 @@ export class SkillTransaction {
     findingRefs = [],
     effectReceiptRefs = []
   } = {}) {
+    this.#expire(this.#now());
     if (this.#status !== "active" ||
         capsuleDigest !== this.#activeDigest ||
         !STATUSES.has(status)) {
@@ -232,6 +226,7 @@ export class SkillTransaction {
   }
 
   #replay(event) {
+    this.#expire(Date.parse(event.observed_at));
     if (event.phase !== this.#phase ||
         event.phase_revision !== this.#revision) {
       fail("EG_SKILL_DIGEST_DRIFT", "persisted phase sequence is invalid");
@@ -267,6 +262,18 @@ export class SkillTransaction {
       fail("EG_SKILL_DIGEST_DRIFT", "persisted Phase Receipt is invalid");
     }
     this.#applyReceipt(deepFreeze(structuredClone(receipt)));
+  }
+
+  #expire(current) {
+    if (this.#status !== "active") return;
+    if (!Number.isFinite(current)) {
+      fail("EG_PHASE_TRANSITION_DENIED", "transaction clock is invalid");
+    }
+    if (this.#activeExpiry <= current) {
+      this.#activeDigest = undefined;
+      this.#activeExpiry = undefined;
+      this.#status = "awaiting_capsule";
+    }
   }
 
   #timestamp() {
