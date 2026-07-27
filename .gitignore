@@ -12,6 +12,7 @@
 /05-benchmark-corpus.yaml
 /contracts/*
 !/contracts/context-view.schema.json
+!/contracts/instruction-capsule.schema.json
 !/contracts/skill-passport.schema.json
 !/contracts/token-ledger.schema.json
 /tools/
