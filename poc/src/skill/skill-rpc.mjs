@@ -11,6 +11,7 @@ const METHODS = new Set([
   "skills/transaction/get",
   "skills/capsule/get",
   "skills/dependency/get",
+  "skills/tool/admit",
   "skills/phase/report",
   "skills/receipts/list"
 ]);
@@ -121,6 +122,16 @@ export class SkillRpc {
           this.#transaction(params.transaction_id),
           params.source_ref
         );
+      case "skills/tool/admit": {
+        const active = this.#transaction(params.transaction_id);
+        return active.transaction.admitTool({
+          capsule: active.capsule,
+          capsuleDigest: params.capsule_digest,
+          capabilityId: params.capability_id,
+          capabilityRevision: params.capability_revision,
+          effectClass: params.effect_class
+        });
+      }
       case "skills/phase/report": {
         const active = this.#transaction(params.transaction_id);
         const receipt = active.transaction.reportPhaseOutcome({

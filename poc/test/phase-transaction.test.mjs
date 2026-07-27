@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
-import { compileInstructionCapsule } from "../src/skill/capsule-compiler.mjs";
+import {
+  compileInstructionCapsule,
+  instructionCapsuleDigest
+} from "../src/skill/capsule-compiler.mjs";
 import { compileSkillPassport } from "../src/skill/passport-compiler.mjs";
 import { SkillTransaction } from "../src/skill/phase-transaction.mjs";
 import { SkillEventStore } from "../src/skill/skill-event-store.mjs";
@@ -97,6 +100,21 @@ test("phase transaction evicts Capsules and replaces them with receipts", () => 
       now: () => Date.parse("2026-07-28T00:00:00.000Z")
     });
     const inspect = files.capsule("inspect", 1);
+    const forge = (change) => {
+      const { capsule_digest: ignored, ...body } = structuredClone(inspect);
+      change(body);
+      return { ...body, capsule_digest: instructionCapsuleDigest(body) };
+    };
+    assertCode("EG_PHASE_TOOL_NOT_ALLOWED", () =>
+      transaction.activateCapsule(forge((body) => body.allowed_tools.push({
+        capability_id: "filesystem.apply_patch",
+        capability_revision: "patch-v1",
+        effect_class: "mutate_reversible"
+      }))));
+    assertCode("EG_PHASE_EFFECT_CLASS_NOT_ALLOWED", () =>
+      transaction.activateCapsule(forge((body) => {
+        body.allowed_tools[0].effect_class = "mutate_reversible";
+      })));
     transaction.activateCapsule(inspect);
     const first = transaction.reportPhaseOutcome({
       capsuleDigest: inspect.capsule_digest,

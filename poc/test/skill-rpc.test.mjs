@@ -92,6 +92,40 @@ test("local Skill RPC drives and recovers a complete phase lifecycle", () => {
       transaction_id: "rpc-transaction"
     });
     assert.equal(inspect.phase, "inspect");
+    assert.deepEqual(client.request("skills/tool/admit", {
+      transaction_id: "rpc-transaction",
+      capsule_digest: inspect.capsule_digest,
+      capability_id: "filesystem.read",
+      capability_revision: "read-v1",
+      effect_class: "observe"
+    }), {
+      schema_version: "1.0.0",
+      transaction_id: "rpc-transaction",
+      skill_id: "document-editor",
+      skill_digest: skill.source.source_digest,
+      phase: "inspect",
+      phase_revision: 1,
+      capsule_digest: inspect.capsule_digest,
+      capability_id: "filesystem.read",
+      capability_revision: "read-v1",
+      effect_class: "observe"
+    });
+    for (const [overrides, code] of [
+      [{ capability_id: "filesystem.apply_patch" },
+        "EG_PHASE_TOOL_NOT_ALLOWED"],
+      [{ capability_revision: "read-v2" }, "EG_PHASE_TOOL_NOT_ALLOWED"],
+      [{ effect_class: "mutate_reversible" },
+        "EG_PHASE_EFFECT_CLASS_NOT_ALLOWED"]
+    ]) {
+      assert.throws(() => client.request("skills/tool/admit", {
+        transaction_id: "rpc-transaction",
+        capsule_digest: inspect.capsule_digest,
+        capability_id: "filesystem.read",
+        capability_revision: "read-v1",
+        effect_class: "observe",
+        ...overrides
+      }), (error) => error.effectgateCode === code);
+    }
     assert.equal(client.request("skills/dependency/get", {
       transaction_id: "rpc-transaction",
       source_ref: "phases/inspect.md"
@@ -106,6 +140,13 @@ test("local Skill RPC drives and recovers a complete phase lifecycle", () => {
       capsule_digest: inspect.capsule_digest,
       status: "completed"
     });
+    assert.throws(() => client.request("skills/tool/admit", {
+      transaction_id: "rpc-transaction",
+      capsule_digest: inspect.capsule_digest,
+      capability_id: "filesystem.read",
+      capability_revision: "read-v1",
+      effect_class: "observe"
+    }), (error) => error.effectgateCode === "EG_PHASE_TRANSITION_DENIED");
     const modify = client.request("skills/capsule/get", {
       transaction_id: "rpc-transaction"
     });

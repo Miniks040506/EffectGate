@@ -115,20 +115,51 @@ export class SkillTransaction {
     return Object.freeze([...this.#receipts]);
   }
 
+  admitTool({
+    capsule,
+    capsuleDigest,
+    capabilityId,
+    capabilityRevision,
+    effectClass
+  } = {}) {
+    this.#expire(this.#now());
+    if (this.#status !== "active" ||
+        capsuleDigest !== this.#activeDigest ||
+        capsule?.capsule_digest !== this.#activeDigest) {
+      fail("EG_PHASE_TRANSITION_DENIED", "tool call has no active Capsule");
+    }
+    verifyCapsule(capsule);
+    this.#verifyCapsuleBinding(capsule);
+    const capability = capsule.allowed_tools.find(
+      (tool) => tool.capability_id === capabilityId
+    );
+    if (!capability ||
+        capability.capability_revision !== capabilityRevision) {
+      fail("EG_PHASE_TOOL_NOT_ALLOWED", "capability is not admitted");
+    }
+    if (capability.effect_class !== effectClass) {
+      fail("EG_PHASE_EFFECT_CLASS_NOT_ALLOWED", "effect class is not admitted");
+    }
+    return deepFreeze({
+      schema_version: "1.0.0",
+      transaction_id: this.#id,
+      skill_id: this.#passport.skill.id,
+      skill_digest: this.#passport.skill.source_digest,
+      phase: this.#phase,
+      phase_revision: this.#revision,
+      capsule_digest: this.#activeDigest,
+      capability_id: capabilityId,
+      capability_revision: capabilityRevision,
+      effect_class: effectClass
+    });
+  }
+
   activateCapsule(capsule) {
     if (this.#status !== "awaiting_capsule") {
       fail("EG_PHASE_TRANSITION_DENIED", "transaction is not awaiting a Capsule");
     }
     verifyCapsule(capsule);
-    if (capsule.phase !== this.#phase ||
-        capsule.phase_revision !== this.#revision ||
-        capsule.skill_id !== this.#passport.skill.id ||
-        capsule.skill_version !== this.#passport.skill.version ||
-        capsule.skill_digest !== this.#passport.skill.source_digest ||
-        capsule.provenance?.passport_digest !==
-          this.#passport.passport_digest) {
-      fail("EG_SKILL_DIGEST_DRIFT", "Capsule is not bound to this phase");
-    }
+    this.#verifyCapsuleBinding(capsule);
     const expiry = Date.parse(capsule.expires_at);
     const now = this.#now();
     if (!Number.isFinite(expiry) || !Number.isFinite(now) || expiry <= now) {
@@ -262,6 +293,33 @@ export class SkillTransaction {
       fail("EG_SKILL_DIGEST_DRIFT", "persisted Phase Receipt is invalid");
     }
     this.#applyReceipt(deepFreeze(structuredClone(receipt)));
+  }
+
+  #verifyCapsuleBinding(capsule) {
+    if (capsule.phase !== this.#phase ||
+        capsule.phase_revision !== this.#revision ||
+        capsule.skill_id !== this.#passport.skill.id ||
+        capsule.skill_version !== this.#passport.skill.version ||
+        capsule.skill_digest !== this.#passport.skill.source_digest ||
+        capsule.provenance?.passport_digest !==
+          this.#passport.passport_digest) {
+      fail("EG_SKILL_DIGEST_DRIFT", "Capsule is not bound to this phase");
+    }
+    const phase = this.#passport.phases[this.#phase];
+    if (!Array.isArray(capsule.allowed_tools) ||
+        new Set(capsule.allowed_tools.map((tool) => tool?.capability_id)).size !==
+        capsule.allowed_tools.length ||
+        capsule.allowed_tools.some((tool) =>
+          typeof tool?.capability_revision !== "string" ||
+          tool.capability_revision.length < 1 ||
+          tool.capability_revision.length > 256 ||
+          !phase.allowed_tools.includes(tool?.capability_id))) {
+      fail("EG_PHASE_TOOL_NOT_ALLOWED", "Capsule widens phase tools");
+    }
+    if (capsule.allowed_tools.some((tool) =>
+      !phase.allowed_effect_classes.includes(tool.effect_class))) {
+      fail("EG_PHASE_EFFECT_CLASS_NOT_ALLOWED", "Capsule widens phase effects");
+    }
   }
 
   #expire(current) {
