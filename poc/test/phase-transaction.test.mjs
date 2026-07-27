@@ -7,6 +7,7 @@ import test from "node:test";
 import { compileInstructionCapsule } from "../src/skill/capsule-compiler.mjs";
 import { compileSkillPassport } from "../src/skill/passport-compiler.mjs";
 import { SkillTransaction } from "../src/skill/phase-transaction.mjs";
+import { SkillEventStore } from "../src/skill/skill-event-store.mjs";
 import { SkillSourceError, importSkillSource } from "../src/skill/source-import.mjs";
 
 const ARTIFACT_DIGEST = `sha256:${"a".repeat(64)}`;
@@ -74,6 +75,7 @@ function fixture() {
   return {
     passport,
     capsule,
+    databaseFile: join(root, "events.db"),
     close() {
       rmSync(root, { recursive: true, force: true });
     }
@@ -123,6 +125,66 @@ test("phase transaction evicts Capsules and replaces them with receipts", () => 
     assert.equal(transaction.receipts().length, 2);
     assert.ok(Object.isFrozen(first));
   } finally {
+    files.close();
+  }
+});
+
+test("phase transaction persists and recovers its admissible state", () => {
+  const files = fixture();
+  let store = new SkillEventStore({ file: files.databaseFile });
+  try {
+    const transaction = new SkillTransaction({
+      transactionId: "transaction-persisted",
+      passport: files.passport,
+      initialPhase: "inspect",
+      now: () => Date.parse("2026-07-28T00:00:00.000Z"),
+      eventStore: store
+    });
+    const inspect = files.capsule("inspect", 1);
+    transaction.activateCapsule(inspect);
+    transaction.reportPhaseOutcome({
+      capsuleDigest: inspect.capsule_digest,
+      status: "completed",
+      inputArtifactDigests: [ARTIFACT_DIGEST]
+    });
+    store.close();
+
+    store = new SkillEventStore({ file: files.databaseFile });
+    const recovered = SkillTransaction.recover({
+      transactionId: "transaction-persisted",
+      passport: files.passport,
+      eventStore: store,
+      now: () => Date.parse("2026-07-28T12:00:00.000Z")
+    });
+    assert.deepEqual(recovered.snapshot(), {
+      transaction_id: "transaction-persisted",
+      status: "awaiting_capsule",
+      current_phase: "modify",
+      next_phase_revision: 2,
+      active_capsule_digest: null,
+      receipt_count: 1
+    });
+
+    const modify = files.capsule("modify", 2);
+    recovered.activateCapsule(modify);
+    assert.equal(SkillTransaction.recover({
+      transactionId: "transaction-persisted",
+      passport: files.passport,
+      eventStore: store,
+      now: () => Date.parse("2026-07-28T12:00:00.000Z")
+    }).snapshot().status, "active");
+    const expired = SkillTransaction.recover({
+      transactionId: "transaction-persisted",
+      passport: files.passport,
+      eventStore: store,
+      now: () => Date.parse("2026-07-30T00:00:00.000Z")
+    }).snapshot();
+    assert.equal(expired.status, "awaiting_capsule");
+    assert.equal(expired.current_phase, "modify");
+    assert.equal(expired.next_phase_revision, 2);
+    assert.equal(expired.active_capsule_digest, null);
+  } finally {
+    store.close();
     files.close();
   }
 });

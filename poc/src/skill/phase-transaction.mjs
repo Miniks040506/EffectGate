@@ -43,12 +43,13 @@ function verifyCapsule(capsule) {
 }
 
 export class SkillTransaction {
-  #activeDigest; #id; #now; #passport; #phase;
+  #activeDigest; #activeExpiry; #eventStore; #id; #now; #passport; #phase;
   #receipts = [];
   #revision = 1;
   #status = "awaiting_capsule";
 
-  constructor({ transactionId, passport, initialPhase, now = Date.now } = {}) {
+  constructor({ transactionId, passport, initialPhase, now = Date.now,
+    eventStore } = {}) {
     verifyPassport(passport);
     if (typeof transactionId !== "string" ||
         transactionId.length < 1 || transactionId.length > 128) {
@@ -62,6 +63,48 @@ export class SkillTransaction {
     this.#passport = deepFreeze(structuredClone(passport));
     this.#phase = initialPhase;
     this.#now = now;
+    this.#eventStore = eventStore;
+    if (eventStore) {
+      eventStore.startTransaction({
+        transactionId,
+        passportDigest: passport.passport_digest,
+        skillDigest: passport.skill.source_digest,
+        initialPhase,
+        createdAt: this.#timestamp()
+      });
+    }
+  }
+
+  static recover({ transactionId, passport, eventStore, now = Date.now } = {}) {
+    if (!eventStore || typeof eventStore.load !== "function") {
+      fail("EG_SKILL_SOURCE_INVALID", "event store is invalid");
+    }
+    const loaded = eventStore.load(transactionId);
+    if (!loaded ||
+        loaded.transaction.passport_digest !== passport?.passport_digest ||
+        loaded.transaction.skill_digest !== passport?.skill?.source_digest) {
+      fail("EG_SKILL_DIGEST_DRIFT", "persisted transaction binding is invalid");
+    }
+    const transaction = new SkillTransaction({
+      transactionId,
+      passport,
+      initialPhase: loaded.transaction.initial_phase,
+      now
+    });
+    transaction.#eventStore = eventStore;
+    for (const event of loaded.events) transaction.#replay(event);
+    if (transaction.#status === "active") {
+      const current = transaction.#now();
+      if (!Number.isFinite(current)) {
+        fail("EG_PHASE_TRANSITION_DENIED", "transaction clock is invalid");
+      }
+      if (transaction.#activeExpiry <= current) {
+        transaction.#activeDigest = undefined;
+        transaction.#activeExpiry = undefined;
+        transaction.#status = "awaiting_capsule";
+      }
+    }
+    return transaction;
   }
 
   snapshot() {
@@ -102,7 +145,19 @@ export class SkillTransaction {
     if (this.#passport.invariants.some((item) => !included.has(item.id))) {
       fail("EG_CAPSULE_INVARIANT_MISSING", "pinned invariant is absent");
     }
+    this.#eventStore?.append({
+      transactionId: this.#id,
+      kind: "capsule_activated",
+      phase: this.#phase,
+      phaseRevision: this.#revision,
+      payload: {
+        capsule_digest: capsule.capsule_digest,
+        expires_at: capsule.expires_at
+      },
+      observedAt: new Date(now).toISOString()
+    });
     this.#activeDigest = capsule.capsule_digest;
+    this.#activeExpiry = expiry;
     this.#status = "active";
     return this.snapshot();
   }
@@ -150,16 +205,75 @@ export class SkillTransaction {
       effect_receipt_refs: effects,
       next_phase: nextPhase
     });
+    this.#eventStore?.append({
+      transactionId: this.#id,
+      kind: "phase_receipt",
+      phase: this.#phase,
+      phaseRevision: this.#revision,
+      payload: receipt,
+      observedAt: this.#timestamp()
+    });
+    this.#applyReceipt(receipt);
+    return receipt;
+  }
+
+  #applyReceipt(receipt) {
     this.#receipts.push(receipt);
     this.#activeDigest = undefined;
-    if (nextPhase === null) {
+    this.#activeExpiry = undefined;
+    if (receipt.next_phase === null) {
       this.#phase = null;
-      this.#status = status;
+      this.#status = receipt.status;
     } else {
-      this.#phase = nextPhase;
+      this.#phase = receipt.next_phase;
       this.#revision += 1;
       this.#status = "awaiting_capsule";
     }
-    return receipt;
+  }
+
+  #replay(event) {
+    if (event.phase !== this.#phase ||
+        event.phase_revision !== this.#revision) {
+      fail("EG_SKILL_DIGEST_DRIFT", "persisted phase sequence is invalid");
+    }
+    if (event.kind === "capsule_activated") {
+      const expiry = Date.parse(event.payload?.expires_at);
+      if (this.#status !== "awaiting_capsule" ||
+          !DIGEST_PATTERN.test(event.payload?.capsule_digest ?? "") ||
+          !Number.isFinite(expiry)) {
+        fail("EG_SKILL_DIGEST_DRIFT", "persisted Capsule event is invalid");
+      }
+      this.#activeDigest = event.payload.capsule_digest;
+      this.#activeExpiry = expiry;
+      this.#status = "active";
+      return;
+    }
+    const receipt = event.payload;
+    const transition = this.#passport.phases[this.#phase].transition;
+    const expectedNext = receipt?.status === "completed"
+      ? transition?.on_success ?? null
+      : receipt?.status === "failed"
+        ? transition?.on_failure ?? null
+        : null;
+    if (event.kind !== "phase_receipt" ||
+        this.#status !== "active" ||
+        receipt?.schema_version !== "1.0.0" ||
+        receipt.skill_id !== this.#passport.skill.id ||
+        receipt.skill_digest !== this.#passport.skill.source_digest ||
+        receipt.phase !== this.#phase ||
+        receipt.capsule_digest !== this.#activeDigest ||
+        !STATUSES.has(receipt.status) ||
+        receipt.next_phase !== expectedNext) {
+      fail("EG_SKILL_DIGEST_DRIFT", "persisted Phase Receipt is invalid");
+    }
+    this.#applyReceipt(deepFreeze(structuredClone(receipt)));
+  }
+
+  #timestamp() {
+    const value = this.#now();
+    if (!Number.isFinite(value)) {
+      fail("EG_PHASE_TRANSITION_DENIED", "transaction clock is invalid");
+    }
+    return new Date(value).toISOString();
   }
 }
