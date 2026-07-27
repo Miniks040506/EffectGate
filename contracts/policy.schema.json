@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effectgate.dev/v1/policy.schema.json",
+  "title": "EffectGate V1 Compiled Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "policy_id",
+    "default_decision",
+    "rules",
+    "compiler_version",
+    "policy_revision"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "policy_id": {"$ref": "#/$defs/name"},
+    "default_decision": {"const": "deny"},
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1024,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/rule"}
+    },
+    "compiler_version": {"$ref": "#/$defs/version"},
+    "policy_revision": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "version": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "boundedString": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "effectClass": {
+      "enum": [
+        "observe",
+        "disclose",
+        "mutate_reversible",
+        "mutate_irreversible",
+        "destructive",
+        "external_commit",
+        "credential_use",
+        "code_execution",
+        "unknown"
+      ]
+    },
+    "decision": {
+      "enum": ["allow", "ask", "deny"]
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "skill_id": {"$ref": "#/$defs/name"},
+        "skill_digest": {"$ref": "#/$defs/digest"},
+        "phase": {"$ref": "#/$defs/name"},
+        "phase_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "capsule_digest": {"$ref": "#/$defs/digest"},
+        "capability_id": {"$ref": "#/$defs/boundedString"},
+        "capability_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "effect_class": {"$ref": "#/$defs/effectClass"}
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "match", "decision"],
+      "properties": {
+        "id": {"$ref": "#/$defs/name"},
+        "match": {"$ref": "#/$defs/match"},
+        "decision": {"$ref": "#/$defs/decision"}
+      }
+    }
+  }
+}
