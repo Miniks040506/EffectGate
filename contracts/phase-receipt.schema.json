@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effectgate.dev/v1/phase-receipt.schema.json",
+  "title": "EffectGate V1 Phase Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "skill_id",
+    "skill_digest",
+    "phase",
+    "capsule_digest",
+    "status",
+    "input_artifact_digests",
+    "finding_refs",
+    "effect_receipt_refs",
+    "next_phase"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "skill_id": {"$ref": "#/$defs/name"},
+    "skill_digest": {"$ref": "#/$defs/digest"},
+    "phase": {"$ref": "#/$defs/name"},
+    "capsule_digest": {"$ref": "#/$defs/digest"},
+    "status": {"enum": ["completed", "failed", "aborted"]},
+    "input_artifact_digests": {
+      "type": "array",
+      "maxItems": 4096,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/digest"}
+    },
+    "finding_refs": {
+      "type": "array",
+      "maxItems": 4096,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/reference"}
+    },
+    "effect_receipt_refs": {
+      "type": "array",
+      "maxItems": 4096,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/reference"}
+    },
+    "next_phase": {
+      "oneOf": [
+        {"$ref": "#/$defs/name"},
+        {"type": "null"}
+      ]
+    }
+  },
+  "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    }
+  }
+}
