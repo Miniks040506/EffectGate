@@ -9,7 +9,16 @@ export const BENCHMARK_PROFILES = Object.freeze({
   P3_EAGER_DIAGNOSTIC: "eager_diagnostic"
 });
 
-const PROFILE_IDS = Object.freeze(Object.keys(BENCHMARK_PROFILES));
+export const SKILL_BENCHMARK_PROFILES = Object.freeze({
+  S1_FULL_LOAD_DIAGNOSTIC: "eager_diagnostic",
+  S2_EG_CAPSULE: "native_deferred",
+  S3_EG_CAPSULE_VERIFIED: "native_deferred"
+});
+
+const PROFILE_TABLES = new Set([
+  BENCHMARK_PROFILES,
+  SKILL_BENCHMARK_PROFILES
+]);
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const TASK_PATTERN = /^BENCH-[A-Z0-9-]{1,64}$/u;
 const FAILURE_PATTERN = /^[a-z0-9][a-z0-9_.-]{0,63}$/u;
@@ -28,8 +37,36 @@ const METRIC_KEYS = new Set([
   "tool_schema_tokens",
   "tool_result_tokens",
   "total_input_tokens",
-  "compatibility"
+  "compatibility",
+  "skill_catalog_tokens",
+  "skill_instruction_tokens",
+  "instruction_fetch_count",
+  "instruction_fetch_tokens",
+  "phase_receipt_tokens",
+  "verification_tokens",
+  "wrong_skill_selection",
+  "wrong_phase_transition",
+  "safety_invariant_available",
+  "protected_effect_policy_violations",
+  "duplicate_write_count"
 ]);
+const SKILL_TOKEN_KEYS = [
+  "skill_catalog_tokens",
+  "skill_instruction_tokens",
+  "instruction_fetch_tokens",
+  "phase_receipt_tokens",
+  "verification_tokens"
+];
+const SKILL_INTEGER_KEYS = [
+  "instruction_fetch_count",
+  "protected_effect_policy_violations",
+  "duplicate_write_count"
+];
+const SKILL_BOOLEAN_KEYS = [
+  "wrong_skill_selection",
+  "wrong_phase_transition",
+  "safety_invariant_available"
+];
 const TOKEN_KEYS = new Set([
   "value",
   "basis",
@@ -105,7 +142,26 @@ function validCompatibility(value) {
   );
 }
 
-function validatedMetrics(value) {
+function validSkillMetrics(value, required) {
+  const keys = [
+    ...SKILL_TOKEN_KEYS,
+    ...SKILL_INTEGER_KEYS,
+    ...SKILL_BOOLEAN_KEYS
+  ];
+  const present = keys.filter((key) => value[key] !== undefined);
+  if (present.length === 0) return !required;
+  return (
+    present.length === keys.length &&
+    SKILL_TOKEN_KEYS.every((key) => validTokenCount(value[key])) &&
+    SKILL_INTEGER_KEYS.every((key) =>
+      Number.isSafeInteger(value[key]) && value[key] >= 0
+    ) &&
+    SKILL_BOOLEAN_KEYS.every((key) => typeof value[key] === "boolean") &&
+    validTokenCount(value.total_input_tokens)
+  );
+}
+
+function validatedMetrics(value, skillProfile) {
   if (
     value === null ||
     typeof value !== "object" ||
@@ -122,11 +178,12 @@ function validatedMetrics(value) {
     !validTokenCount(value.tool_result_tokens) ||
     (value.total_input_tokens !== undefined &&
       !validTokenCount(value.total_input_tokens)) ||
-    !validCompatibility(value.compatibility)
+    !validCompatibility(value.compatibility) ||
+    !validSkillMetrics(value, skillProfile)
   ) {
     throw new TypeError("invalid benchmark metrics");
   }
-  return Object.freeze({
+  const result = {
     ...value,
     tool_schema_tokens: Object.freeze({ ...value.tool_schema_tokens }),
     tool_result_tokens: Object.freeze({ ...value.tool_result_tokens }),
@@ -136,11 +193,17 @@ function validatedMetrics(value) {
       : {
           total_input_tokens: Object.freeze({ ...value.total_input_tokens })
         })
-  });
+  };
+  for (const key of SKILL_TOKEN_KEYS) {
+    if (result[key] !== undefined) {
+      result[key] = Object.freeze({ ...result[key] });
+    }
+  }
+  return Object.freeze(result);
 }
 
-function profileOrder(seed, repetition) {
-  return [...PROFILE_IDS].sort((left, right) => {
+function profileOrder(seed, repetition, profileIds) {
+  return [...profileIds].sort((left, right) => {
     const leftKey = hash(`${seed}\0${repetition}\0${left}`);
     const rightKey = hash(`${seed}\0${repetition}\0${right}`);
     return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
@@ -175,6 +238,7 @@ export async function runPairedBenchmark({
   effort,
   hostVersion,
   machineClass,
+  profiles = BENCHMARK_PROFILES,
   runProfile,
   now = Date.now
 }) {
@@ -192,6 +256,7 @@ export async function runPairedBenchmark({
     !boundedString(effort, 64) ||
     !boundedString(hostVersion) ||
     !boundedString(machineClass) ||
+    !PROFILE_TABLES.has(profiles) ||
     typeof runProfile !== "function" ||
     typeof now !== "function"
   ) {
@@ -199,13 +264,15 @@ export async function runPairedBenchmark({
   }
 
   const evidenceFile = resolve(file);
+  const profileIds = Object.freeze(Object.keys(profiles));
+  const skillProfile = profiles === SKILL_BENCHMARK_PROFILES;
   const header = Object.freeze({
     kind: "effectgate_paired_benchmark",
     schema_version: "1.0.0",
     task_id: taskId,
     seed,
     repetitions,
-    profiles: PROFILE_IDS,
+    profiles: profileIds,
     backend_digest: backendDigest,
     prompt_digest: promptDigest,
     rubric_digest: rubricDigest,
@@ -225,7 +292,7 @@ export async function runPairedBenchmark({
   const events = [];
   for (let repetition = 0; repetition < repetitions; repetition += 1) {
     const pairId = `pair_${hash(`${taskId}\0${seed}\0${repetition}`)}`;
-    const order = profileOrder(seed, repetition);
+    const order = profileOrder(seed, repetition, profileIds);
     for (const [orderIndex, profile] of order.entries()) {
       const runId = `run_${hash(`${pairId}\0${profile}`)}`;
       const context = Object.freeze({
@@ -235,11 +302,14 @@ export async function runPairedBenchmark({
         pairId,
         runId,
         profile,
-        ledgerProfile: BENCHMARK_PROFILES[profile]
+        ledgerProfile: profiles[profile]
       });
       let event;
       try {
-        const metrics = validatedMetrics(await runProfile(context));
+        const metrics = validatedMetrics(
+          await runProfile(context),
+          skillProfile
+        );
         event = Object.freeze({
           kind: "run",
           pair_id: pairId,
