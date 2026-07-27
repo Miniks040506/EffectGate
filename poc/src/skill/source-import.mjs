@@ -20,7 +20,7 @@ function fail(code, message) {
   throw new SkillSourceError(code, message);
 }
 
-function canonicalPath(value) {
+export function canonicalSkillPath(value) {
   if (
     typeof value !== "string" ||
     value.length < 1 ||
@@ -129,7 +129,7 @@ export function importSkillSource({ root, paths, expectedDigest } = {}) {
   if (!fs.statSync(realRoot).isDirectory()) {
     fail("EG_SKILL_SOURCE_INVALID", "skill root must be a directory");
   }
-  const canonicalPaths = paths.map(canonicalPath).sort();
+  const canonicalPaths = paths.map(canonicalSkillPath).sort();
   if (new Set(canonicalPaths).size !== canonicalPaths.length ||
       !canonicalPaths.includes("SKILL.md")) {
     fail("EG_SKILL_SOURCE_INVALID", "skill paths must uniquely include SKILL.md");
