@@ -106,7 +106,7 @@ function normalizePhase(phase) {
   return normalized;
 }
 
-function canonicalJson(value) {
+export function canonicalJson(value) {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) {
     return `[${value.map(canonicalJson).join(",")}]`;
@@ -115,12 +115,19 @@ function canonicalJson(value) {
     `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
 }
 
-function deepFreeze(value) {
+export function deepFreeze(value) {
   if (value && typeof value === "object" && !Object.isFrozen(value)) {
     for (const child of Object.values(value)) deepFreeze(child);
     Object.freeze(value);
   }
   return value;
+}
+
+export function skillPassportDigest(body) {
+  return `sha256:${createHash("sha256")
+    .update("effectgate.skill-passport.v1\0")
+    .update(canonicalJson(body))
+    .digest("hex")}`;
 }
 
 export function compileSkillPassport({
@@ -180,9 +187,6 @@ export function compileSkillPassport({
     phases: normalizedPhases,
     compiler_version: compilerVersion
   };
-  const passportDigest = `sha256:${createHash("sha256")
-    .update("effectgate.skill-passport.v1\0")
-    .update(canonicalJson(body))
-    .digest("hex")}`;
+  const passportDigest = skillPassportDigest(body);
   return deepFreeze({ ...body, passport_digest: passportDigest });
 }

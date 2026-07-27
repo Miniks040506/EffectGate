@@ -19,7 +19,7 @@ function stringSet(value, label) {
   return new Set(value);
 }
 
-function referencePath(reference) {
+export function skillReferencePath(reference) {
   if (typeof reference !== "string" ||
       reference.length < 1 || reference.length > 1024) {
     fail("EG_SKILL_SOURCE_INVALID", "skill reference must be bounded");
@@ -31,7 +31,7 @@ function referencePath(reference) {
 }
 
 function requireReference(reference, sourcePaths, resolved) {
-  const path = referencePath(reference);
+  const path = skillReferencePath(reference);
   if (!sourcePaths.has(path)) {
     fail("EG_SKILL_DEPENDENCY_MISSING", `missing imported reference: ${path}`);
   }
