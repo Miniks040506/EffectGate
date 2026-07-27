@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effectgate.dev/v1/skill-passport.schema.json",
+  "title": "EffectGate V1 Skill Passport",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "skill",
+    "invariants",
+    "phases",
+    "compiler_version",
+    "passport_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "skill": {"$ref": "#/$defs/skill"},
+    "invariants": {
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/invariant"}
+    },
+    "phases": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 128,
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/phase"}
+    },
+    "compiler_version": {"$ref": "#/$defs/version"},
+    "passport_digest": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "version": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "effectClass": {
+      "enum": [
+        "observe",
+        "disclose",
+        "mutate_reversible",
+        "mutate_irreversible",
+        "destructive",
+        "external_commit",
+        "credential_use",
+        "code_execution",
+        "unknown"
+      ]
+    },
+    "skill": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "source_digest", "trust_tier"],
+      "properties": {
+        "id": {"$ref": "#/$defs/name"},
+        "version": {"$ref": "#/$defs/version"},
+        "source_digest": {"$ref": "#/$defs/digest"},
+        "trust_tier": {
+          "enum": [
+            "untrusted",
+            "local_unverified",
+            "local_reviewed",
+            "verified_local",
+            "signed_trusted"
+          ]
+        }
+      }
+    },
+    "invariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source_ref", "pin", "class"],
+      "properties": {
+        "id": {"$ref": "#/$defs/name"},
+        "source_ref": {"$ref": "#/$defs/reference"},
+        "pin": {"const": "transaction"},
+        "class": {
+          "enum": [
+            "safety",
+            "authority",
+            "permission",
+            "legal",
+            "destructive_action"
+          ]
+        }
+      }
+    },
+    "phase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instruction_refs",
+        "allowed_tools",
+        "allowed_effect_classes"
+      ],
+      "properties": {
+        "instruction_refs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/reference"}
+        },
+        "dependency_refs": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/reference"}
+        },
+        "allowed_tools": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 512}
+        },
+        "allowed_effect_classes": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/effectClass"}
+        },
+        "transition": {"$ref": "#/$defs/transition"}
+      }
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "on_success": {"$ref": "#/$defs/name"},
+        "on_failure": {"$ref": "#/$defs/name"}
+      }
+    }
+  }
+}
