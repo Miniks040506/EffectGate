@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   decideNativeDeferral,
@@ -23,6 +25,15 @@ import { RpcProcess } from "../src/testkit/rpc-process.mjs";
 function digest(value) {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
+
+const CLAUDE_QUALIFICATION = fileURLToPath(new URL(
+  "../evidence/claude-code-tool-search-2.1.220.json",
+  import.meta.url
+));
+const CLAUDE_HOST_EVIDENCE = fileURLToPath(new URL(
+  "../evidence/host-compatibility-claude-code-2.1.220.json",
+  import.meta.url
+));
 
 function manifest(overrides = {}) {
   return {
@@ -89,6 +100,27 @@ test("host evidence enables metadata only for an exact qualified client", () => 
   } finally {
     files.close();
   }
+});
+
+test("EG-014B retains exact-build Claude Tool Search evidence", () => {
+  const qualification = JSON.parse(readFileSync(CLAUDE_QUALIFICATION, "utf8"));
+  const evidence = loadHostCompatibilityEvidence(CLAUDE_HOST_EVIDENCE);
+  assert.equal(qualification.task_id, "EG-014B");
+  assert.equal(qualification.evidence_state, "pass");
+  assert.equal(qualification.observation.tool_search_call_count, 1);
+  assert.equal(qualification.observation.selected_tool_call_count, 1);
+  assert.equal(qualification.observation.probe_result_exact, true);
+  assert.equal(qualification.usage_guard.is_using_overage, false);
+  assert.equal(
+    digest(JSON.stringify(qualification.configuration)),
+    qualification.configuration_digest
+  );
+  assert.equal(evidence.manifest.client.version, "2.1.220");
+  assert.equal(
+    evidence.manifest.client.build_digest,
+    qualification.client.build_digest
+  );
+  assert.equal(evidence.manifest.tool_search.state, "enabled_observed");
 });
 
 test("host evidence fails closed on mismatch, weak state, expiry, or corruption", () => {

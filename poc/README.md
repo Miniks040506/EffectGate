@@ -68,7 +68,11 @@ Manifest shape:
 ```
 
 Replace the placeholder digests and dates with captured qualification
-evidence; never mark an assumed capability as `pass`.
+evidence; never mark an assumed capability as `pass`. EG-014B retains one
+sanitized real-host result for Claude Code 2.1.220 under `evidence/`. It proves
+that this exact build used Tool Search to discover and call the EffectGate
+fixture once. The evidence is build-bound and expires; it is not a general
+claim about other Claude Code versions.
 
 The strict manifest records an exact client name, version and SHA-256 build
 digest; Tool Search state and configuration digest; evidence state; observation
@@ -77,8 +81,9 @@ an unexpired `pass`, Tool Search was observed enabled, and initialization
 supplies matching client identity plus
 `_meta["dev.effectgate/clientBuildDigest"]`. Otherwise typed tools remain
 available without deferral metadata and the safe reason is returned in the
-initialize result. This is a generic harness contract, not current Claude Code
-qualification.
+initialize result. The generic identity contract still requires an explicit
+client build digest; current Claude Code does not send EffectGate's private
+build-digest field, so automatic exact-build admission remains separate work.
 
 Run the deterministic `BENCH-SMALL-005` fixture adapter with:
 

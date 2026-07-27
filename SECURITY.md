@@ -139,7 +139,9 @@ The current preview assumes:
   an unexpired `pass` state, observed-enabled Tool Search, and exact client
   name/version/build digest supplied at initialization. The file path and raw
   configuration are not model-visible. This preview assertion is not
-  authenticated client identity and is not Claude Code qualification.
+  authenticated client identity. EG-014B separately qualifies Tool Search
+  behavior for the exact Claude Code 2.1.220 binary recorded in
+  `poc/evidence/`; it does not extend trust to other builds.
 - Artifact identifiers expose a SHA-256 content digest. Do not use this preview
   with secret-bearing or attacker-controlled real-world results.
 - Cursor envelopes use HMAC-SHA256 and bind artifact, source view, next

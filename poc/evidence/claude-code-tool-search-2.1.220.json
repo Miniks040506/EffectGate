@@ -1,0 +1,38 @@
+{
+  "kind": "effectgate_claude_tool_search_qualification",
+  "schema_version": "1.0.0",
+  "task_id": "EG-014B",
+  "client": {
+    "name": "claude-code",
+    "version": "2.1.220",
+    "build_digest": "sha256:af5bf1f1b2aadffc768eccd787084c6fdf9ba81624cbe96c1c6d9ac1a1550231"
+  },
+  "configuration": {
+    "enable_tool_search": "true",
+    "mcp_server": "effectgate",
+    "profile": "native_deferred",
+    "model": "claude-sonnet-5",
+    "probe_tool": "mcp__effectgate__fixture__echo"
+  },
+  "configuration_digest": "sha256:a0d770b5855ade862c755fb7d1aab23a2761d249c4a084e6d5e609e103e11f10",
+  "observation": {
+    "observed_at": "2026-07-27T15:11:50.785Z",
+    "mcp_connected": true,
+    "tool_search_call_count": 1,
+    "total_deferred_tools": 25,
+    "selected_tool": "mcp__effectgate__fixture__echo",
+    "selected_tool_call_count": 1,
+    "probe_result_exact": true,
+    "terminal_reason": "completed",
+    "num_turns": 3
+  },
+  "usage_guard": {
+    "authentication": "claude.ai",
+    "api_key_source": "none",
+    "max_budget_usd": 0.25,
+    "metered_equivalent_usd": 0.0811279,
+    "weekly_utilization": 0.99,
+    "is_using_overage": false
+  },
+  "evidence_state": "pass"
+}
