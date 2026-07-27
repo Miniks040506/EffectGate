@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effectgate.dev/v1/effect-operation.schema.json",
+  "title": "EffectGate V1 Effect Operation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "operation_id",
+    "intent_digest",
+    "principal_id",
+    "client_id",
+    "session_id",
+    "transaction_id",
+    "skill_id",
+    "skill_digest",
+    "phase",
+    "phase_revision",
+    "capsule_digest",
+    "capability_id",
+    "capability_revision",
+    "effect_class",
+    "canonical_arguments_hash",
+    "disclosure_digest",
+    "policy_revision",
+    "resource_scope",
+    "intent_expires_at",
+    "approval_required",
+    "challenge_id",
+    "approval_proof_digest",
+    "state",
+    "certainty",
+    "dispatch_digest",
+    "deadline_at",
+    "recovery_reason",
+    "created_at",
+    "updated_at",
+    "last_event_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "operation_id": {"$ref": "#/$defs/identifier"},
+    "intent_digest": {"$ref": "#/$defs/digest"},
+    "principal_id": {"$ref": "#/$defs/name"},
+    "client_id": {"$ref": "#/$defs/name"},
+    "session_id": {"$ref": "#/$defs/name"},
+    "transaction_id": {"$ref": "#/$defs/name"},
+    "skill_id": {"$ref": "#/$defs/name"},
+    "skill_digest": {"$ref": "#/$defs/digest"},
+    "phase": {"$ref": "#/$defs/name"},
+    "phase_revision": {"type": "integer", "minimum": 1},
+    "capsule_digest": {"$ref": "#/$defs/digest"},
+    "capability_id": {"type": "string", "minLength": 1, "maxLength": 512},
+    "capability_revision": {"type": "string", "minLength": 1, "maxLength": 256},
+    "effect_class": {
+      "enum": [
+        "observe",
+        "disclose",
+        "mutate_reversible",
+        "mutate_irreversible",
+        "destructive",
+        "external_commit",
+        "credential_use",
+        "code_execution"
+      ]
+    },
+    "canonical_arguments_hash": {"$ref": "#/$defs/digest"},
+    "disclosure_digest": {"$ref": "#/$defs/digest"},
+    "policy_revision": {"$ref": "#/$defs/digest"},
+    "resource_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": {"enum": ["exact", "prefix"]},
+        "value": {"type": "string", "minLength": 1, "maxLength": 2048}
+      }
+    },
+    "intent_expires_at": {"$ref": "#/$defs/timestamp"},
+    "approval_required": {"type": "boolean"},
+    "challenge_id": {
+      "oneOf": [
+        {"type": "string", "pattern": "^chal_[A-Za-z0-9_-]{24}$"},
+        {"type": "null"}
+      ]
+    },
+    "approval_proof_digest": {"$ref": "#/$defs/nullable_digest"},
+    "state": {
+      "enum": [
+        "planned",
+        "preflighted",
+        "awaiting_approval",
+        "admitted",
+        "executing",
+        "abandoned",
+        "uncertain"
+      ]
+    },
+    "certainty": {
+      "enum": [
+        "not_started",
+        "started_no_commit_evidence",
+        "commit_possible",
+        "backend_claimed_committed",
+        "verified_committed",
+        "verified_not_committed"
+      ]
+    },
+    "dispatch_digest": {"$ref": "#/$defs/nullable_digest"},
+    "deadline_at": {
+      "oneOf": [
+        {"$ref": "#/$defs/timestamp"},
+        {"type": "null"}
+      ]
+    },
+    "recovery_reason": {
+      "oneOf": [
+        {"$ref": "#/$defs/name"},
+        {"type": "null"}
+      ]
+    },
+    "created_at": {"$ref": "#/$defs/timestamp"},
+    "updated_at": {"$ref": "#/$defs/timestamp"},
+    "last_event_digest": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "name": {"type": "string", "minLength": 1, "maxLength": 128},
+    "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "nullable_digest": {
+      "oneOf": [
+        {"$ref": "#/$defs/digest"},
+        {"type": "null"}
+      ]
+    },
+    "timestamp": {"type": "string", "format": "date-time"}
+  }
+}
