@@ -198,7 +198,7 @@ export function compileEffectIntent(input = {}) {
   return deepFreeze({ ...body, intent_digest: intentDigest(body) });
 }
 
-function verifyIntent(value) {
+export function verifyEffectIntent(value) {
   exactObject(value, INTENT_KEYS);
   const { intent_digest: claimed, ...body } = value;
   validateAdmission({
@@ -232,6 +232,7 @@ function verifyIntent(value) {
       intentDigest(body) !== claimed) {
     invalid();
   }
+  return value;
 }
 
 function scopeReason(before, after) {
@@ -246,8 +247,8 @@ function scopeReason(before, after) {
 }
 
 export function diffEffectIntents(before, after) {
-  verifyIntent(before);
-  verifyIntent(after);
+  verifyEffectIntent(before);
+  verifyEffectIntent(after);
   const reasons = [];
   const fields = [
     ["principal_id", "principal_changed"],
