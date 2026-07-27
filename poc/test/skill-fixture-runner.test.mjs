@@ -1,0 +1,52 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import { runSkillFixtureBenchmark } from "../src/benchmark/skill-fixture-runner.mjs";
+
+test("Skill profiles share a fixture and retain unavailable verification", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "effectgate-skill-bench-"));
+  const file = join(workspace, "evidence.jsonl");
+  try {
+    const result = await runSkillFixtureBenchmark({ file, workspace });
+    assert.deepEqual(
+      new Set(result.events.map(({ profile }) => profile)),
+      new Set([
+        "S1_FULL_LOAD_DIAGNOSTIC",
+        "S2_EG_CAPSULE",
+        "S3_EG_CAPSULE_VERIFIED"
+      ])
+    );
+    const profiles = Object.fromEntries(result.events.map(
+      (event) => [event.profile, event]
+    ));
+    assert.equal(profiles.S1_FULL_LOAD_DIAGNOSTIC.status, "completed");
+    assert.equal(profiles.S1_FULL_LOAD_DIAGNOSTIC.metrics.task_success, true);
+    assert.equal(profiles.S2_EG_CAPSULE.status, "completed");
+    assert.equal(profiles.S2_EG_CAPSULE.metrics.task_success, true);
+    const s2 = profiles.S2_EG_CAPSULE.metrics;
+    assert.equal(s2.safety_invariant_available, true);
+    assert.equal(s2.protected_effect_policy_violations, 0);
+    assert.equal(s2.instruction_fetch_count, 1);
+    assert.ok(s2.phase_receipt_tokens.value > 0);
+    assert.ok(
+      profiles.S1_FULL_LOAD_DIAGNOSTIC.metrics.skill_instruction_tokens.value > 0
+    );
+    assert.ok(s2.skill_instruction_tokens.value > 0);
+    assert.deepEqual(
+      [
+        profiles.S3_EG_CAPSULE_VERIFIED.status,
+        profiles.S3_EG_CAPSULE_VERIFIED.failure_code
+      ],
+      ["failed", "verified_effect_unavailable"]
+    );
+    const records = readFileSync(file, "utf8").trimEnd()
+      .split("\n").map(JSON.parse);
+    assert.deepEqual(records, [result.header, ...result.events]);
+    await assert.rejects(runSkillFixtureBenchmark({ workspace: "" }), TypeError);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
