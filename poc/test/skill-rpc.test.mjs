@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { compileSkillPassport } from "../src/skill/passport-compiler.mjs";
+import { TokenLedger } from "../src/budget/token-ledger.mjs";
 import { SkillEventStore } from "../src/skill/skill-event-store.mjs";
 import { SkillRpc } from "../src/skill/skill-rpc.mjs";
 import { importSkillSource } from "../src/skill/source-import.mjs";
@@ -71,9 +78,16 @@ test("local Skill RPC drives and recovers a complete phase lifecycle", () => {
   const store = new SkillEventStore({ file: join(skill.root, "events.db") });
   let clock = Date.parse("2026-07-28T00:00:00.000Z");
   const now = () => clock;
+  const ledgerFile = join(skill.root, "tokens.jsonl");
+  const ledger = new TokenLedger({
+    file: ledgerFile,
+    runId: "skill-rpc-run",
+    sessionId: "skill-rpc-session",
+    now
+  });
   try {
     let client = new SkillRpcClient(new SkillRpc({
-      skills: [skill], eventStore: store, now
+      skills: [skill], eventStore: store, tokenLedger: ledger, now
     }));
     assert.equal(client.request("skills/list").skills[0].id, "document-editor");
     assert.equal(
@@ -152,7 +166,7 @@ test("local Skill RPC drives and recovers a complete phase lifecycle", () => {
     });
 
     client = new SkillRpcClient(new SkillRpc({
-      skills: [skill], eventStore: store, now
+      skills: [skill], eventStore: store, tokenLedger: ledger, now
     }));
     assert.equal(client.request("skills/capsule/get", {
       transaction_id: "rpc-transaction"
@@ -175,7 +189,28 @@ test("local Skill RPC drives and recovers a complete phase lifecycle", () => {
     }), (error) => error.effectgateCode === "EG_PHASE_TRANSITION_DENIED");
     assert.throws(() => client.request("unknown", {}),
       (error) => error.rpcCode === -32601);
+    const entries = ledger.snapshot().entries;
+    const categories = new Set(
+      entries.map((entry) => entry.safe_metadata.category)
+    );
+    assert.deepEqual(categories, new Set([
+      "skill_catalog_tokens_emitted",
+      "skill_instruction_tokens_emitted",
+      "skill_instruction_tokens_avoided",
+      "instruction_dependency_fetch_tokens",
+      "phase_receipt_tokens_emitted"
+    ]));
+    const avoided = entries.find((entry) =>
+      entry.safe_metadata.category === "skill_instruction_tokens_avoided");
+    assert.equal(avoided.direction, "counterfactual");
+    assert.equal(avoided.safe_metadata.comparator, "full_skill_source");
+    assert.equal(avoided.safe_metadata.source_digest, skill.source.source_digest);
+    assert.doesNotMatch(
+      readFileSync(ledgerFile, "utf8"),
+      /Preserve the original|Inspect the input|Apply the admitted change/
+    );
   } finally {
+    ledger.close();
     store.close();
     rmSync(skill.root, { recursive: true, force: true });
   }

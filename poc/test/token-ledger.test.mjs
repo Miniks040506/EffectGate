@@ -107,7 +107,23 @@ test("token ledger rejects unsafe metadata and inconsistent measurements", () =>
         }),
       /invalid token ledger entry/
     );
-    assert.equal(ledger.snapshot().entries.length, 0);
+    assert.throws(() => ledger.append({
+      stage: "skill_instruction",
+      direction: "counterfactual",
+      tokenCount: measured,
+      bytes: 4,
+      category: "skill_instruction_tokens_avoided"
+    }), /invalid token ledger entry/);
+    ledger.append({
+      stage: "skill_instruction",
+      direction: "counterfactual",
+      tokenCount: measured,
+      bytes: 4,
+      category: "skill_instruction_tokens_avoided",
+      comparator: "full_skill_source",
+      sourceDigest: `sha256:${"a".repeat(64)}`
+    });
+    assert.equal(ledger.snapshot().entries.length, 1);
     ledger.close();
   } finally {
     files.close();

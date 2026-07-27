@@ -1,3 +1,4 @@
+import { BYTE_PROXY_COUNTER } from "../budget/token-counter.mjs";
 import { compileInstructionCapsule } from "./capsule-compiler.mjs";
 import { SkillTransaction } from "./phase-transaction.mjs";
 import { SkillSourceError } from "./source-import.mjs";
@@ -30,13 +31,16 @@ function rpcError(id, code, message, data) {
 
 export class SkillRpc {
   #eventStore;
+  #ledger;
   #now;
   #skills;
   #transactions = new Map();
 
-  constructor({ skills, eventStore, now = Date.now } = {}) {
+  constructor({ skills, eventStore, tokenLedger, now = Date.now } = {}) {
     if (!Array.isArray(skills) || skills.length < 1 ||
         !eventStore || typeof eventStore.load !== "function" ||
+        (tokenLedger !== undefined &&
+          typeof tokenLedger?.append !== "function") ||
         typeof now !== "function") {
       throw new TypeError("invalid Skill RPC configuration");
     }
@@ -52,6 +56,7 @@ export class SkillRpc {
       this.#skills.set(id, entry);
     }
     this.#eventStore = eventStore;
+    this.#ledger = tokenLedger;
     this.#now = now;
   }
 
@@ -86,7 +91,7 @@ export class SkillRpc {
   #call(method, params) {
     switch (method) {
       case "skills/list":
-        return {
+        return this.#record({
           skills: [...this.#skills.values()]
             .map(({ passport }) => ({
               id: passport.skill.id,
@@ -96,9 +101,14 @@ export class SkillRpc {
               passport_digest: passport.passport_digest
             }))
             .sort((left, right) => left.id < right.id ? -1 : 1)
-        };
+        }, "skill_catalog", "to_host", "skill_catalog_tokens_emitted");
       case "skills/passport/get":
-        return this.#skill(params.skill_id).passport;
+        return this.#record(
+          this.#skill(params.skill_id).passport,
+          "skill_catalog",
+          "to_host",
+          "skill_catalog_tokens_emitted"
+        );
       case "skills/transaction/start": {
         const skill = this.#skill(params.skill_id);
         const transaction = new SkillTransaction({
@@ -115,12 +125,26 @@ export class SkillRpc {
       }
       case "skills/transaction/get":
         return this.#transaction(params.transaction_id).transaction.snapshot();
-      case "skills/capsule/get":
-        return this.#capsule(this.#transaction(params.transaction_id));
+      case "skills/capsule/get": {
+        const active = this.#transaction(params.transaction_id);
+        const capsule = this.#capsule(active);
+        this.#recordAvoidedInstructions(active, capsule);
+        return this.#record(
+          capsule,
+          "skill_instruction",
+          "to_host",
+          "skill_instruction_tokens_emitted"
+        );
+      }
       case "skills/dependency/get":
-        return this.#dependency(
-          this.#transaction(params.transaction_id),
-          params.source_ref
+        return this.#record(
+          this.#dependency(
+            this.#transaction(params.transaction_id),
+            params.source_ref
+          ),
+          "instruction_dependency",
+          "to_host",
+          "instruction_dependency_fetch_tokens"
         );
       case "skills/tool/admit": {
         const active = this.#transaction(params.transaction_id);
@@ -142,13 +166,18 @@ export class SkillRpc {
           effectReceiptRefs: params.effect_receipt_refs
         });
         active.capsule = undefined;
-        return receipt;
+        return this.#record(
+          receipt,
+          "phase_receipt",
+          "to_host",
+          "phase_receipt_tokens_emitted"
+        );
       }
       case "skills/receipts/list":
-        return {
+        return this.#record({
           receipts: this.#transaction(params.transaction_id)
             .transaction.receipts()
-        };
+        }, "phase_receipt", "to_host", "phase_receipt_tokens_emitted");
     }
   }
 
@@ -232,5 +261,40 @@ export class SkillRpc {
     const path = skillReferencePath(sourceRef);
     const file = active.skill.source.files.find((item) => item.path === path);
     return { source_ref: sourceRef, digest: file.digest, text: file.text };
+  }
+
+  #record(value, stage, direction, category, metadata = {}) {
+    if (!this.#ledger) return value;
+    const content = JSON.stringify(value);
+    this.#ledger.append({
+      stage,
+      direction,
+      tokenCount: BYTE_PROXY_COUNTER.measure({ content }),
+      bytes: Buffer.byteLength(content),
+      category,
+      ...metadata
+    });
+    return value;
+  }
+
+  #recordAvoidedInstructions(active, capsule) {
+    if (!this.#ledger) return;
+    const included = new Set(
+      [...capsule.invariants, ...capsule.instructions]
+        .map(({ source_ref: reference }) => skillReferencePath(reference))
+    );
+    const content = active.skill.source.files
+      .filter(({ path }) => !included.has(path))
+      .map(({ text }) => text)
+      .join("");
+    this.#ledger.append({
+      stage: "skill_instruction",
+      direction: "counterfactual",
+      tokenCount: BYTE_PROXY_COUNTER.measure({ content }),
+      bytes: Buffer.byteLength(content),
+      category: "skill_instruction_tokens_avoided",
+      comparator: "full_skill_source",
+      sourceDigest: active.skill.source.source_digest
+    });
   }
 }

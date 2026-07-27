@@ -44,12 +44,22 @@
         "operation_id": {"type": "string", "maxLength": 128},
         "artifact_id": {"type": "string", "maxLength": 128},
         "view_id": {"type": "string", "maxLength": 128},
-        "stage": {"enum": ["tool_metadata", "backend_raw_result", "redacted_artifact", "first_view", "fetch_page", "public_error", "receipt", "host_turn", "host_session", "paired_baseline"]},
+        "stage": {"enum": ["tool_metadata", "backend_raw_result", "redacted_artifact", "first_view", "fetch_page", "public_error", "receipt", "host_turn", "host_session", "paired_baseline", "skill_catalog", "skill_instruction", "instruction_dependency", "phase_receipt", "verification"]},
         "direction": {"enum": ["to_host", "from_host", "internal", "counterfactual"]},
         "token_count": {"$ref": "#/$defs/tokenCount"},
         "bytes": {"type": "integer", "minimum": 0},
         "observed_at": {"type": "string", "format": "date-time"},
-        "safe_metadata": {"type": "object", "maxProperties": 64}
+        "safe_metadata": {"$ref": "#/$defs/safeMetadata"}
+      }
+    },
+    "safeMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category"],
+      "properties": {
+        "category": {"enum": ["tool_schema_tokens_emitted", "tool_result_tokens_emitted", "context_view_tokens_emitted", "repeated_context_tokens_avoided", "skill_catalog_tokens_emitted", "skill_discovery_tokens_avoided", "skill_instruction_tokens_emitted", "skill_instruction_tokens_avoided", "instruction_dependency_fetch_tokens", "phase_receipt_tokens_emitted", "verification_overhead_tokens", "net_tokens_avoided"]},
+        "comparator": {"type": "string", "minLength": 1, "maxLength": 128},
+        "source_digest": {"$ref": "#/$defs/digest"}
       }
     },
     "interval": {
@@ -87,4 +97,3 @@
     }
   }
 }
-

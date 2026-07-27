@@ -12,7 +12,8 @@ const PROFILES = new Set([
 const STAGES = new Set([
   "tool_metadata", "backend_raw_result", "redacted_artifact", "first_view",
   "fetch_page", "public_error", "receipt", "host_turn", "host_session",
-  "paired_baseline"
+  "paired_baseline", "skill_catalog", "skill_instruction",
+  "instruction_dependency", "phase_receipt", "verification"
 ]);
 const DIRECTIONS = new Set(["to_host", "from_host", "internal", "counterfactual"]);
 const BASES = new Set([
@@ -21,7 +22,14 @@ const BASES = new Set([
 ]);
 const CATEGORIES = new Set([
   "tool_schema_tokens_emitted", "tool_result_tokens_emitted",
-  "context_view_tokens_emitted"
+  "context_view_tokens_emitted", "repeated_context_tokens_avoided",
+  "skill_catalog_tokens_emitted", "skill_discovery_tokens_avoided",
+  "skill_instruction_tokens_emitted", "skill_instruction_tokens_avoided",
+  "instruction_dependency_fetch_tokens", "phase_receipt_tokens_emitted",
+  "verification_overhead_tokens", "net_tokens_avoided"
+]);
+const SAFE_METADATA_KEYS = new Set([
+  "category", "comparator", "source_digest"
 ]);
 const TOKEN_COUNT_KEYS = new Set([
   "value", "basis", "counter_id", "counter_version", "input_digest",
@@ -113,8 +121,13 @@ function validatedEntry(value) {
       (metadata === null ||
         typeof metadata !== "object" ||
         Array.isArray(metadata) ||
-        Object.keys(metadata).length !== 1 ||
-        !CATEGORIES.has(metadata.category)))
+        Object.keys(metadata).some((key) => !SAFE_METADATA_KEYS.has(key)) ||
+        !CATEGORIES.has(metadata.category) ||
+        (value.direction === "counterfactual"
+          ? !validId(metadata.comparator) ||
+            !DIGEST_PATTERN.test(metadata.source_digest ?? "")
+          : metadata.comparator !== undefined ||
+            metadata.source_digest !== undefined)))
   ) {
     throw new CorruptTokenLedgerError();
   }
@@ -213,7 +226,8 @@ export class TokenLedger {
     }
   }
 
-  append({ stage, direction, tokenCount, bytes, artifactId, viewId, category }) {
+  append({ stage, direction, tokenCount, bytes, artifactId, viewId, category,
+    comparator, sourceDigest }) {
     if (this.closed) throw new Error("token ledger is closed");
     if (this.entries.length >= MAX_LEDGER_ENTRIES) {
       throw new RangeError("token ledger entry limit is full");
@@ -229,7 +243,15 @@ export class TokenLedger {
         token_count: tokenCount,
         bytes,
         observed_at: new Date(this.now()).toISOString(),
-        ...(category === undefined ? {} : { safe_metadata: { category } })
+        ...(category === undefined ? {} : {
+          safe_metadata: {
+            category,
+            ...(comparator === undefined ? {} : { comparator }),
+            ...(sourceDigest === undefined
+              ? {}
+              : { source_digest: sourceDigest })
+          }
+        })
       });
     } catch (error) {
       if (!(error instanceof CorruptTokenLedgerError)) throw error;
