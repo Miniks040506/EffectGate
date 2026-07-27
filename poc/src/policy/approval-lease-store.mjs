@@ -17,6 +17,10 @@ import {
   boundedApprovalValue
 } from "./approval-lease-contract.mjs";
 import { verifyEffectIntent } from "./effect-intent.mjs";
+import {
+  OPERATION_SCHEMA,
+  transitionOperation
+} from "./operation-journal-contract.mjs";
 import { canonicalJson, deepFreeze } from "../skill/passport-compiler.mjs";
 
 export { ApprovalLeaseError };
@@ -45,6 +49,7 @@ export class ApprovalLeaseStore {
     mkdirSync(dirname(databaseFile), { recursive: true, mode: 0o700 });
     this.#database = new DatabaseSync(databaseFile);
     this.#database.exec(SCHEMA);
+    this.#database.exec(OPERATION_SCHEMA);
     this.#now = now;
     this.#monotonic = monotonic;
   }
@@ -146,33 +151,45 @@ export class ApprovalLeaseStore {
     return result;
   }
 
-  consumeLease({ leaseToken, intentDigest, sessionId, operationId } = {}) {
-    if (!TOKEN.test(leaseToken ?? "") || !DIGEST.test(intentDigest ?? "") ||
-        !bounded(sessionId) || !bounded(operationId)) {
+  admitOperation({ leaseToken, intent, operationId } = {}) {
+    try {
+      verifyEffectIntent(intent);
+    } catch {
       fail();
     }
+    if (!TOKEN.test(leaseToken ?? "") || !bounded(operationId)) fail();
     const leaseHash = tokenHash(leaseToken);
     const clock = this.#begin();
     let row;
     let reason;
+    let proof;
+    let expired = false;
     try {
       row = this.#database.prepare(
         "SELECT * FROM approval_leases WHERE lease_hash=?"
       ).get(leaseHash);
+      const operation = this.#database.prepare(
+        "SELECT * FROM operations WHERE operation_id=?"
+      ).get(operationId);
       const monotonic = this.#deadlines.get(leaseHash);
-      const expired = row && (
+      expired = Boolean(row && (
         Date.parse(row.expires_at) <= clock.wall ||
         (monotonic && (clock.monotonic < monotonic.issued ||
           clock.monotonic >= monotonic.deadline))
-      );
+      ));
       if (expired && !row.expired_at) {
         this.#database.prepare(`UPDATE approval_leases SET expired_at=?
           WHERE lease_hash=? AND expired_at IS NULL`)
           .run(timestamp(clock.wall), leaseHash);
       }
       if (!row || row.consumed_at || row.revoked_at || row.expired_at ||
-          expired || row.intent_digest !== intentDigest ||
-          row.session_id !== sessionId) {
+          expired || row.intent_digest !== intent.intent_digest ||
+          row.session_id !== intent.session_id || !operation ||
+          operation.state !== "awaiting_approval" ||
+          operation.approval_required !== 1 ||
+          operation.intent_digest !== intent.intent_digest ||
+          operation.session_id !== intent.session_id ||
+          operation.challenge_id !== row.challenge_id) {
         reason = expired ? "EG_APPROVAL_EXPIRED" : "EG_APPROVAL_NOT_ADMISSIBLE";
       } else if (this.#database.prepare(
         "SELECT 1 FROM approval_leases WHERE operation_id=?"
@@ -185,6 +202,30 @@ export class ApprovalLeaseStore {
           .run(timestamp(clock.wall), operationId, leaseHash).changes;
         if (changed !== 1) {
           reason = "EG_APPROVAL_NOT_ADMISSIBLE";
+        } else {
+          const body = {
+            lease_ref: row.lease_ref,
+            intent_digest: row.intent_digest,
+            operation_id: operationId,
+            consumed_at: timestamp(clock.wall)
+          };
+          proof = {
+            ...body,
+            approval_proof_digest: `sha256:${createHash("sha256")
+              .update("effectgate.approval-proof.v1\0")
+              .update(canonicalJson(body))
+              .digest("hex")}`
+          };
+          transitionOperation(this.#database, {
+            operationId,
+            fromState: "awaiting_approval",
+            toState: "admitted",
+            certainty: "not_started",
+            observedAt: timestamp(clock.wall),
+            monotonicMs: clock.monotonic,
+            evidenceRef: proof.approval_proof_digest,
+            approvalProofDigest: proof.approval_proof_digest
+          });
         }
       }
       this.#database.exec("COMMIT");
@@ -192,21 +233,12 @@ export class ApprovalLeaseStore {
       this.#rollback();
       throw error;
     }
-    this.#deadlines.delete(leaseHash);
+    if (!reason || expired || row?.consumed_at ||
+        row?.revoked_at || row?.expired_at) {
+      this.#deadlines.delete(leaseHash);
+    }
     if (reason) fail(reason);
-    const proof = {
-      lease_ref: row.lease_ref,
-      intent_digest: row.intent_digest,
-      operation_id: operationId,
-      consumed_at: timestamp(clock.wall)
-    };
-    return deepFreeze({
-      ...proof,
-      approval_proof_digest: `sha256:${createHash("sha256")
-        .update("effectgate.approval-proof.v1\0")
-        .update(canonicalJson(proof))
-        .digest("hex")}`
-    });
+    return deepFreeze(proof);
   }
 
   revoke(selector = {}) {
@@ -269,9 +301,13 @@ export class ApprovalLeaseStore {
     }
     this.#database.exec("BEGIN IMMEDIATE");
     try {
-      const maximum = this.#database.prepare(
+      const approvalMaximum = this.#database.prepare(
         "SELECT max_wall_ms FROM approval_clock WHERE singleton=1"
       ).get().max_wall_ms;
+      const operationMaximum = this.#database.prepare(
+        "SELECT max_wall_ms FROM operation_clock WHERE singleton=1"
+      ).get().max_wall_ms;
+      const maximum = Math.max(approvalMaximum, operationMaximum);
       if (wall < maximum) {
         const at = timestamp(maximum);
         this.#database.prepare(`UPDATE approval_challenges SET
@@ -284,6 +320,9 @@ export class ApprovalLeaseStore {
       }
       this.#database.prepare(
         "UPDATE approval_clock SET max_wall_ms=? WHERE singleton=1"
+      ).run(wall);
+      this.#database.prepare(
+        "UPDATE operation_clock SET max_wall_ms=? WHERE singleton=1"
       ).run(wall);
       return { wall, monotonic };
     } catch (error) {

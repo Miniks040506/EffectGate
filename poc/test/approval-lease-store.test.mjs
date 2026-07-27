@@ -14,6 +14,7 @@ import {
   ApprovalLeaseStore
 } from "../src/policy/approval-lease-store.mjs";
 import { compileEffectIntent } from "../src/policy/effect-intent.mjs";
+import { EffectOperationJournal } from "../src/policy/operation-journal.mjs";
 
 const digest = (character) => `sha256:${character.repeat(64)}`;
 
@@ -68,6 +69,13 @@ function fixture() {
         monotonic: () => clock.monotonic
       });
     },
+    journal() {
+      return new EffectOperationJournal({
+        file: this.file,
+        now: () => clock.wall,
+        monotonic: () => clock.monotonic
+      });
+    },
     close() {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -79,12 +87,41 @@ function assertCode(code, operation) {
     error instanceof ApprovalLeaseError && error.code === code);
 }
 
-test("approval lease survives restart, consumes once, and stores no bearer", () => {
+function leaseFor(store, journal, approvedIntent, operationId, options = {}) {
+  journal.plan({
+    operationId,
+    intent: approvedIntent,
+    approvalRequired: true
+  });
+  journal.preflight(operationId);
+  const challenge = store.createChallenge({
+    intent: approvedIntent,
+    ...options.challenge
+  });
+  journal.awaitApproval({
+    operationId,
+    challengeId: challenge.challenge_id
+  });
+  const lease = store.approveChallenge({
+    challengeId: challenge.challenge_id,
+    approverId: "operator-local",
+    channel: options.channel ?? "cli"
+  });
+  return { challenge, lease };
+}
+
+test("approval lease survives restart and atomically admits once", () => {
   const files = fixture();
   let store = files.store();
+  let journal = files.journal();
   try {
     const approvedIntent = intent(files.clock.wall);
-    const challenge = store.createChallenge({ intent: approvedIntent });
+    const { challenge, lease } = leaseFor(
+      store,
+      journal,
+      approvedIntent,
+      "operation-1"
+    );
     assert.deepEqual(challenge.summary, {
       capability_id: "filesystem.apply_patch",
       effect_class: "mutate_reversible",
@@ -92,11 +129,6 @@ test("approval lease survives restart, consumes once, and stores no bearer", () 
         kind: "exact",
         value: "repo:owner/name/path:docs/guide.md"
       }
-    });
-    const lease = store.approveChallenge({
-      challengeId: challenge.challenge_id,
-      approverId: "operator-local",
-      channel: "cli"
     });
     assert.match(lease.lease_token, /^egl_[A-Za-z0-9_-]{43}$/u);
     const stored = readdirSync(files.directory)
@@ -106,36 +138,48 @@ test("approval lease survives restart, consumes once, and stores no bearer", () 
       data.includes("MUST_NOT_ENTER_APPROVAL_DB")), false);
 
     store.close();
+    journal.close();
     store = files.store();
-    const proof = store.consumeLease({
+    journal = files.journal();
+    const proof = store.admitOperation({
       leaseToken: lease.lease_token,
-      intentDigest: approvedIntent.intent_digest,
-      sessionId: approvedIntent.session_id,
+      intent: approvedIntent,
       operationId: "operation-1"
     });
     assert.equal(proof.intent_digest, approvedIntent.intent_digest);
     assert.match(proof.approval_proof_digest, /^sha256:[a-f0-9]{64}$/u);
-    assertCode("EG_APPROVAL_NOT_ADMISSIBLE", () => store.consumeLease({
+    assert.equal(journal.load("operation-1").operation.state, "admitted");
+    assert.equal(
+      journal.load("operation-1").operation.approval_proof_digest,
+      proof.approval_proof_digest
+    );
+    assertCode("EG_APPROVAL_NOT_ADMISSIBLE", () => store.admitOperation({
       leaseToken: lease.lease_token,
-      intentDigest: approvedIntent.intent_digest,
-      sessionId: approvedIntent.session_id,
-      operationId: "operation-2"
-    }));
-    const secondLease = store.approveChallenge({
-      challengeId: store.createChallenge({
-        intent: approvedIntent
-      }).challenge_id,
-      approverId: "operator-local",
-      channel: "cli"
-    });
-    assertCode("EG_APPROVAL_NOT_ADMISSIBLE", () => store.consumeLease({
-      leaseToken: secondLease.lease_token,
-      intentDigest: approvedIntent.intent_digest,
-      sessionId: approvedIntent.session_id,
+      intent: approvedIntent,
       operationId: "operation-1"
     }));
+
+    const otherIntent = intent(files.clock.wall, "session-2");
+    const second = leaseFor(
+      store,
+      journal,
+      otherIntent,
+      "operation-2"
+    );
+    assertCode("EG_APPROVAL_NOT_ADMISSIBLE", () => store.admitOperation({
+      leaseToken: second.lease.lease_token,
+      intent: approvedIntent,
+      operationId: "operation-2"
+    }));
+    const secondProof = store.admitOperation({
+      leaseToken: second.lease.lease_token,
+      intent: otherIntent,
+      operationId: "operation-2"
+    });
+    assert.equal(secondProof.operation_id, "operation-2");
   } finally {
     try { store.close(); } catch {}
+    try { journal.close(); } catch {}
     files.close();
   }
 });
@@ -143,60 +187,60 @@ test("approval lease survives restart, consumes once, and stores no bearer", () 
 test("approval leases expire, revoke, isolate sessions, and detect rollback", () => {
   const files = fixture();
   const store = files.store();
+  const journal = files.journal();
   try {
     const firstIntent = intent(files.clock.wall);
-    const first = store.approveChallenge({
-      challengeId: store.createChallenge({
-        intent: firstIntent,
-        ttlMs: 1000
-      }).challenge_id,
-      approverId: "operator-local",
-      channel: "local_tui"
-    });
-    assertCode("EG_APPROVAL_NOT_ADMISSIBLE", () => store.consumeLease({
+    const first = leaseFor(
+      store,
+      journal,
+      firstIntent,
+      "operation-expired",
+      { challenge: { ttlMs: 1000 }, channel: "local_tui" }
+    ).lease;
+    assertCode("EG_APPROVAL_NOT_ADMISSIBLE", () => store.admitOperation({
       leaseToken: first.lease_token,
-      intentDigest: firstIntent.intent_digest,
-      sessionId: "session-other",
-      operationId: "operation-wrong-session"
+      intent: intent(files.clock.wall, "session-other"),
+      operationId: "operation-expired"
     }));
     files.clock.wall += 1000;
     files.clock.monotonic += 1000;
-    assertCode("EG_APPROVAL_EXPIRED", () => store.consumeLease({
+    assertCode("EG_APPROVAL_EXPIRED", () => store.admitOperation({
       leaseToken: first.lease_token,
-      intentDigest: firstIntent.intent_digest,
-      sessionId: firstIntent.session_id,
+      intent: firstIntent,
       operationId: "operation-expired"
     }));
 
     const secondIntent = intent(files.clock.wall, "session-2");
-    const second = store.approveChallenge({
-      challengeId: store.createChallenge({ intent: secondIntent }).challenge_id,
-      approverId: "operator-local",
-      channel: "mcp_elicitation"
-    });
+    const second = leaseFor(
+      store,
+      journal,
+      secondIntent,
+      "operation-revoked",
+      { channel: "mcp_elicitation" }
+    ).lease;
     assert.equal(store.revoke({ sessionId: "session-2" }).revoked, 1);
-    assertCode("EG_APPROVAL_NOT_ADMISSIBLE", () => store.consumeLease({
+    assertCode("EG_APPROVAL_NOT_ADMISSIBLE", () => store.admitOperation({
       leaseToken: second.lease_token,
-      intentDigest: secondIntent.intent_digest,
-      sessionId: secondIntent.session_id,
+      intent: secondIntent,
       operationId: "operation-revoked"
     }));
 
     const thirdIntent = intent(files.clock.wall, "session-3");
-    const third = store.approveChallenge({
-      challengeId: store.createChallenge({ intent: thirdIntent }).challenge_id,
-      approverId: "operator-local",
-      channel: "cli"
-    });
+    const third = leaseFor(
+      store,
+      journal,
+      thirdIntent,
+      "operation-rollback"
+    ).lease;
     files.clock.wall -= 1;
-    assertCode("EG_APPROVAL_CLOCK_ROLLBACK", () => store.consumeLease({
+    assertCode("EG_APPROVAL_CLOCK_ROLLBACK", () => store.admitOperation({
       leaseToken: third.lease_token,
-      intentDigest: thirdIntent.intent_digest,
-      sessionId: thirdIntent.session_id,
+      intent: thirdIntent,
       operationId: "operation-rollback"
     }));
   } finally {
     store.close();
+    journal.close();
     files.close();
   }
 });
