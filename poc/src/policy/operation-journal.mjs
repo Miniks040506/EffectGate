@@ -1,0 +1,320 @@
+import { mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
+import { DatabaseSync } from "node:sqlite";
+
+import {
+  OPERATION_PATTERNS,
+  OPERATION_SCHEMA,
+  OperationJournalError,
+  boundedOperationValue,
+  loadOperation,
+  operationEventDigest,
+  operationFail,
+  transitionOperation
+} from "./operation-journal-contract.mjs";
+import { verifyEffectIntent } from "./effect-intent.mjs";
+import {
+  expireOperationApproval,
+  operationTableExists,
+  recoverOperations
+} from "./operation-recovery.mjs";
+import { canonicalJson, deepFreeze } from "../skill/passport-compiler.mjs";
+
+export { OperationJournalError };
+
+const timestamp = (milliseconds) => new Date(milliseconds).toISOString();
+
+export class EffectOperationJournal {
+  #database;
+  #lastMonotonic = 0;
+  #monotonic;
+  #now;
+
+  constructor({ file, now = Date.now,
+    monotonic = () => performance.now() } = {}) {
+    if (!boundedOperationValue(file, 1024) ||
+        typeof now !== "function" || typeof monotonic !== "function") {
+      throw new TypeError("invalid operation journal configuration");
+    }
+    const databaseFile = resolve(file);
+    mkdirSync(dirname(databaseFile), { recursive: true, mode: 0o700 });
+    this.#database = new DatabaseSync(databaseFile);
+    this.#database.exec(OPERATION_SCHEMA);
+    this.#now = now;
+    this.#monotonic = monotonic;
+  }
+
+  plan({ operationId, intent, approvalRequired } = {}) {
+    verifyEffectIntent(intent);
+    if (!boundedOperationValue(
+      operationId, 128, OPERATION_PATTERNS.identifier
+    ) || typeof approvalRequired !== "boolean") {
+      throw new TypeError("invalid operation plan");
+    }
+    const clock = this.#begin();
+    try {
+      if (Date.parse(intent.expires_at) <= clock.wall) {
+        operationFail("EG_OPERATION_INTENT_EXPIRED");
+      }
+      if (this.#database.prepare(
+        "SELECT 1 FROM operations WHERE operation_id=?"
+      ).get(operationId)) {
+        operationFail("EG_OPERATION_ALREADY_EXISTS");
+      }
+      const observedAt = timestamp(clock.wall);
+      const event = {
+        operation_id: operationId,
+        sequence: 1,
+        previous_state: null,
+        new_state: "planned",
+        certainty: "not_started",
+        observed_at: observedAt,
+        monotonic_ms: clock.monotonic,
+        capability_revision: intent.capability_revision,
+        policy_revision: intent.policy_revision,
+        evidence_ref: null,
+        previous_event_digest: null
+      };
+      const eventDigest = operationEventDigest(event);
+      this.#database.prepare(`INSERT INTO operations
+        (operation_id, intent_digest, principal_id, client_id, session_id,
+         transaction_id, skill_id, skill_digest, phase, phase_revision,
+         capsule_digest, capability_id, capability_revision, effect_class,
+         canonical_arguments_hash, disclosure_digest, policy_revision,
+         resource_scope_json, intent_expires_at, approval_required, state,
+         certainty, created_at, updated_at, last_event_digest)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          'planned', 'not_started', ?, ?, ?)`).run(
+        operationId, intent.intent_digest, intent.principal_id, intent.client_id,
+        intent.session_id, intent.transaction_id, intent.skill_id,
+        intent.skill_digest, intent.phase, intent.phase_revision,
+        intent.capsule_digest, intent.capability_id, intent.capability_revision,
+        intent.effect_class, intent.canonical_arguments_hash,
+        intent.disclosure_digest, intent.policy_revision,
+        canonicalJson(intent.resource_scope), intent.expires_at,
+        approvalRequired ? 1 : 0, observedAt, observedAt, eventDigest
+      );
+      this.#database.prepare(`INSERT INTO operation_events
+        (operation_id, sequence, previous_state, new_state, certainty,
+         observed_at, monotonic_ms, capability_revision, policy_revision,
+         evidence_ref, previous_event_digest, event_digest)
+        VALUES (?, 1, NULL, 'planned', 'not_started', ?, ?, ?, ?, NULL,
+          NULL, ?)`).run(
+        operationId, observedAt, clock.monotonic, intent.capability_revision,
+        intent.policy_revision, eventDigest
+      );
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#rollback();
+      throw error;
+    }
+    return this.load(operationId).operation;
+  }
+
+  preflight(operationId) {
+    return this.#change({
+      operationId,
+      fromState: "planned",
+      toState: "preflighted"
+    });
+  }
+
+  awaitApproval({ operationId, challengeId } = {}) {
+    if (!OPERATION_PATTERNS.challenge.test(challengeId ?? "")) {
+      throw new TypeError("invalid approval challenge binding");
+    }
+    const clock = this.#begin();
+    try {
+      const operation = this.#database.prepare(
+        "SELECT * FROM operations WHERE operation_id=?"
+      ).get(operationId);
+      const challenge = operationTableExists(
+        this.#database, "approval_challenges"
+      )
+        ? this.#database.prepare(`SELECT * FROM approval_challenges
+          WHERE challenge_id=?`).get(challengeId)
+        : undefined;
+      if (!operation || operation.approval_required !== 1 ||
+          operation.state !== "preflighted" || !challenge ||
+          challenge.status !== "pending" ||
+          Date.parse(challenge.expires_at) <= clock.wall ||
+          challenge.intent_digest !== operation.intent_digest ||
+          challenge.session_id !== operation.session_id) {
+        operationFail("EG_OPERATION_APPROVAL_INVALID");
+      }
+      transitionOperation(this.#database, {
+        operationId,
+        fromState: "preflighted",
+        toState: "awaiting_approval",
+        certainty: "not_started",
+        observedAt: timestamp(clock.wall),
+        monotonicMs: clock.monotonic,
+        challengeId
+      });
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#rollback();
+      throw error;
+    }
+    return this.load(operationId).operation;
+  }
+
+  admit(operationId) {
+    const operation = this.#database.prepare(
+      "SELECT approval_required FROM operations WHERE operation_id=?"
+    ).get(operationId);
+    if (!operation || operation.approval_required !== 0) {
+      operationFail("EG_OPERATION_APPROVAL_REQUIRED");
+    }
+    return this.#change({
+      operationId,
+      fromState: "preflighted",
+      toState: "admitted"
+    });
+  }
+
+  beginDispatch({ operationId, dispatchDigest, deadlineAt } = {}) {
+    let deadline;
+    try {
+      deadline = new Date(deadlineAt).toISOString();
+    } catch {
+      throw new TypeError("invalid operation deadline");
+    }
+    if (!OPERATION_PATTERNS.digest.test(dispatchDigest ?? "") ||
+        deadline !== deadlineAt) {
+      throw new TypeError("invalid dispatch intent");
+    }
+    const clock = this.#begin();
+    try {
+      if (Date.parse(deadline) <= clock.wall) {
+        operationFail("EG_OPERATION_DEADLINE_EXPIRED");
+      }
+      transitionOperation(this.#database, {
+        operationId,
+        fromState: "admitted",
+        toState: "executing",
+        certainty: "not_started",
+        observedAt: timestamp(clock.wall),
+        monotonicMs: clock.monotonic,
+        evidenceRef: dispatchDigest,
+        dispatchDigest,
+        deadlineAt: deadline
+      });
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#rollback();
+      throw error;
+    }
+    return this.load(operationId).operation;
+  }
+
+  cancel(operationId) {
+    const clock = this.#begin();
+    try {
+      const operation = this.#database.prepare(
+        "SELECT * FROM operations WHERE operation_id=?"
+      ).get(operationId);
+      if (!operation ||
+          !["planned", "preflighted", "awaiting_approval", "admitted",
+            "executing"].includes(operation.state)) {
+        operationFail("EG_OPERATION_TRANSITION_DENIED");
+      }
+      expireOperationApproval(
+        this.#database, operation, timestamp(clock.wall)
+      );
+      const uncertain = operation.state === "executing";
+      transitionOperation(this.#database, {
+        operationId,
+        fromState: operation.state,
+        toState: uncertain ? "uncertain" : "abandoned",
+        certainty: uncertain ? "commit_possible" : "not_started",
+        observedAt: timestamp(clock.wall),
+        monotonicMs: clock.monotonic,
+        evidenceRef: "cancel://request",
+        recoveryReason: uncertain
+          ? "canceled_after_dispatch"
+          : "canceled_before_dispatch"
+      });
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#rollback();
+      throw error;
+    }
+    return this.load(operationId).operation;
+  }
+
+  recover() {
+    const clock = this.#begin();
+    let recovered;
+    try {
+      recovered = recoverOperations(this.#database, {
+        observedAt: timestamp(clock.wall),
+        monotonicMs: clock.monotonic
+      });
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#rollback();
+      throw error;
+    }
+    return deepFreeze(recovered);
+  }
+
+  load(operationId) {
+    return loadOperation(this.#database, operationId);
+  }
+
+  close() {
+    this.#database.close();
+  }
+
+  #change({ operationId, fromState, toState }) {
+    const clock = this.#begin();
+    try {
+      transitionOperation(this.#database, {
+        operationId,
+        fromState,
+        toState,
+        certainty: "not_started",
+        observedAt: timestamp(clock.wall),
+        monotonicMs: clock.monotonic
+      });
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#rollback();
+      throw error;
+    }
+    return this.load(operationId).operation;
+  }
+
+  #begin() {
+    const wall = this.#now();
+    const monotonic = this.#monotonic();
+    if (!Number.isSafeInteger(wall) || !Number.isFinite(monotonic) ||
+        monotonic < this.#lastMonotonic ||
+        Number.isNaN(new Date(wall).getTime())) {
+      operationFail("EG_OPERATION_CLOCK_INVALID");
+    }
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const maximum = this.#database.prepare(
+        "SELECT max_wall_ms FROM operation_clock WHERE singleton=1"
+      ).get().max_wall_ms;
+      if (wall < maximum) operationFail("EG_OPERATION_CLOCK_ROLLBACK");
+      this.#database.prepare(
+        "UPDATE operation_clock SET max_wall_ms=? WHERE singleton=1"
+      ).run(wall);
+      this.#lastMonotonic = monotonic;
+      return { wall, monotonic };
+    } catch (error) {
+      this.#rollback();
+      throw error;
+    }
+  }
+
+  #rollback() {
+    try {
+      this.#database.exec("ROLLBACK");
+    } catch {}
+  }
+}
