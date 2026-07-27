@@ -47,6 +47,11 @@ function verifyPassport(passport) {
   }
 }
 
+export function instructionCapsuleDigest(body) {
+  const hash = createHash("sha256").update("effectgate.instruction-capsule.v1\0");
+  return `sha256:${hash.update(canonicalJson(body)).digest("hex")}`;
+}
+
 export function compileInstructionCapsule({
   passport,
   source,
@@ -154,10 +159,7 @@ export function compileInstructionCapsule({
     },
     expires_at: expiresAt
   };
-  const capsuleDigest = `sha256:${createHash("sha256")
-    .update("effectgate.instruction-capsule.v1\0")
-    .update(canonicalJson(body))
-    .digest("hex")}`;
+  const capsuleDigest = instructionCapsuleDigest(body);
   const capsule = { ...body, capsule_digest: capsuleDigest };
   const encoded = canonicalJson(capsule);
   if (Buffer.byteLength(encoded) > maxBytes ||
