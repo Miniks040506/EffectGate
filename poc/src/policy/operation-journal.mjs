@@ -25,6 +25,17 @@ import {
   operationTableExists,
   recoverOperations
 } from "./operation-recovery.mjs";
+import {
+  RECONCILIATION_SCHEMA,
+  loadOperationReconciliation,
+  reconciliationAttemptRecord,
+  reconciliationOutcomeRecord,
+  reconciliationRunEvidenceDigest
+} from "./operation-reconciliation.mjs";
+import {
+  runVerificationProbe,
+  verifyVerificationProbe
+} from "./verification-probe.mjs";
 import { canonicalJson, deepFreeze } from "../skill/passport-compiler.mjs";
 
 export { OperationJournalError };
@@ -48,6 +59,7 @@ export class EffectOperationJournal {
     this.#database = new DatabaseSync(databaseFile);
     this.#database.exec(OPERATION_SCHEMA);
     this.#database.exec(IDEMPOTENCY_SCHEMA);
+    this.#database.exec(RECONCILIATION_SCHEMA);
     this.#now = now;
     this.#monotonic = monotonic;
   }
@@ -68,6 +80,11 @@ export class EffectOperationJournal {
         "SELECT 1 FROM operations WHERE operation_id=?"
       ).get(operationId)) {
         operationFail("EG_OPERATION_ALREADY_EXISTS");
+      }
+      if (this.#database.prepare(
+        "SELECT 1 FROM operations WHERE intent_digest=?"
+      ).get(intent.intent_digest)) {
+        operationFail("EG_OPERATION_INTENT_REUSE");
       }
       const observedAt = timestamp(clock.wall);
       const event = {
@@ -286,6 +303,134 @@ export class EffectOperationJournal {
     return this.load(operationId).operation;
   }
 
+  markUncertain({
+    operationId, certainty = "commit_possible", evidenceRef, reason
+  } = {}) {
+    if (!boundedOperationValue(evidenceRef, 1024) ||
+        !boundedOperationValue(reason, 128)) {
+      operationFail("EG_OPERATION_UNCERTAINTY_INVALID");
+    }
+    const clock = this.#begin();
+    try {
+      transitionOperation(this.#database, {
+        operationId,
+        fromState: "executing",
+        toState: "uncertain",
+        certainty,
+        observedAt: timestamp(clock.wall),
+        monotonicMs: clock.monotonic,
+        evidenceRef,
+        recoveryReason: reason
+      });
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#rollback();
+      throw error;
+    }
+    return this.load(operationId).operation;
+  }
+
+  requireManualResolution({ operationId, evidenceDigest } = {}) {
+    if (!OPERATION_PATTERNS.digest.test(evidenceDigest ?? "")) {
+      operationFail("EG_RECONCILIATION_EVIDENCE_INVALID");
+    }
+    const clock = this.#begin();
+    try {
+      const operation = this.#database.prepare(
+        "SELECT certainty FROM operations WHERE operation_id=?"
+      ).get(operationId);
+      transitionOperation(this.#database, {
+        operationId,
+        fromState: "uncertain",
+        toState: "manual_resolution",
+        certainty: operation?.certainty,
+        observedAt: timestamp(clock.wall),
+        monotonicMs: clock.monotonic,
+        evidenceRef: evidenceDigest,
+        recoveryReason: "verification_unavailable"
+      });
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#rollback();
+      throw error;
+    }
+    return this.load(operationId).operation;
+  }
+
+  async reconcile({
+    operationId, descriptor, idempotency = null, invoke,
+    probeNow, sleep
+  } = {}) {
+    verifyVerificationProbe(descriptor);
+    const prepared = this.#prepareReconciliation(operationId, descriptor);
+    const reconciliation = prepared.operation.reconciliation;
+    const attempts = reconciliation.attempts;
+    const last = attempts.at(-1);
+    if (["committed", "not_committed"].includes(last?.classification)) {
+      const outcome = last.classification === "committed"
+        ? "verified_committed"
+        : "verified_not_committed";
+      return this.#finishReconciliation({
+        operationId,
+        outcome,
+        runEvidenceDigest: reconciliationRunEvidenceDigest({
+          operationId,
+          descriptorDigest: descriptor.descriptor_digest,
+          attempts,
+          reason: "recovered_terminal_attempt"
+        })
+      });
+    }
+    const elapsed = Math.max(
+      0, prepared.wall - Date.parse(reconciliation.started_at)
+    );
+    const remainingAttempts =
+      reconciliation.max_attempts - attempts.length;
+    const remainingTime =
+      Date.parse(reconciliation.deadline_at) - prepared.wall;
+    if (remainingAttempts < 1 || remainingTime < 1) {
+      return this.#finishReconciliation({
+        operationId,
+        outcome: "manual_resolution",
+        runEvidenceDigest: reconciliationRunEvidenceDigest({
+          operationId,
+          descriptorDigest: descriptor.descriptor_digest,
+          attempts,
+          reason: "verification_budget_exhausted"
+        })
+      });
+    }
+    const runner = {
+      descriptor,
+      operation: prepared.operation,
+      idempotency,
+      invoke,
+      attemptOffset: attempts.length,
+      attemptLimit: remainingAttempts,
+      elapsedOffsetMs: Math.min(
+        elapsed, descriptor.limits.total_timeout_ms
+      ),
+      totalTimeoutMs: Math.min(
+        remainingTime, descriptor.limits.total_timeout_ms
+      ),
+      onAttempt: (record) => this.#appendReconciliationAttempt({
+        operationId,
+        descriptorDigest: descriptor.descriptor_digest,
+        record
+      })
+    };
+    if (probeNow !== undefined) runner.now = probeNow;
+    if (sleep !== undefined) runner.sleep = sleep;
+    const run = await runVerificationProbe(runner);
+    return this.#finishReconciliation({
+      operationId,
+      outcome: run.outcome === "ambiguous"
+        ? "manual_resolution"
+        : run.outcome,
+      runEvidenceDigest: run.evidence_digest
+    });
+  }
+
   recover() {
     const clock = this.#begin();
     let recovered;
@@ -303,7 +448,10 @@ export class EffectOperationJournal {
   }
 
   load(operationId) {
-    return loadOperation(this.#database, operationId);
+    const loaded = loadOperation(this.#database, operationId);
+    return loaded
+      ? loadOperationReconciliation(this.#database, loaded)
+      : undefined;
   }
 
   close() {
@@ -320,6 +468,157 @@ export class EffectOperationJournal {
         certainty: "not_started",
         observedAt: timestamp(clock.wall),
         monotonicMs: clock.monotonic
+      });
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#rollback();
+      throw error;
+    }
+    return this.load(operationId).operation;
+  }
+
+  #prepareReconciliation(operationId, descriptor) {
+    const clock = this.#begin();
+    try {
+      const operation = this.#database.prepare(
+        "SELECT * FROM operations WHERE operation_id=?"
+      ).get(operationId);
+      if (!operation ||
+          operation.capability_id !== descriptor.capability_id ||
+          operation.capability_revision !== descriptor.capability_revision) {
+        operationFail("EG_RECONCILIATION_OPERATION_MISMATCH");
+      }
+      if (operation.state === "uncertain") {
+        const startedAt = timestamp(clock.wall);
+        const deadlineAt = timestamp(
+          clock.wall + descriptor.limits.total_timeout_ms
+        );
+        this.#database.prepare(`INSERT INTO operation_reconciliations
+          (operation_id, descriptor_digest, started_at, deadline_at,
+           max_attempts) VALUES (?, ?, ?, ?, ?)`).run(
+          operationId, descriptor.descriptor_digest, startedAt, deadlineAt,
+          descriptor.limits.max_attempts
+        );
+        transitionOperation(this.#database, {
+          operationId,
+          fromState: "uncertain",
+          toState: "reconciling",
+          certainty: operation.certainty,
+          observedAt: startedAt,
+          monotonicMs: clock.monotonic,
+          evidenceRef: descriptor.descriptor_digest
+        });
+      } else if (operation.state === "reconciling") {
+        const existing = this.#database.prepare(`SELECT descriptor_digest
+          FROM operation_reconciliations WHERE operation_id=?`
+        ).get(operationId);
+        if (existing?.descriptor_digest !== descriptor.descriptor_digest) {
+          operationFail("EG_RECONCILIATION_DESCRIPTOR_MISMATCH");
+        }
+      } else {
+        operationFail(
+          operation.state === "executing"
+            ? "EG_RECONCILIATION_REQUIRES_UNCERTAIN"
+            : "EG_OPERATION_RETRY_DENIED"
+        );
+      }
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#rollback();
+      throw error;
+    }
+    return {
+      wall: clock.wall,
+      operation: this.load(operationId).operation
+    };
+  }
+
+  #appendReconciliationAttempt({
+    operationId, descriptorDigest, record
+  }) {
+    const clock = this.#begin();
+    try {
+      const operation = this.#database.prepare(
+        "SELECT state FROM operations WHERE operation_id=?"
+      ).get(operationId);
+      const reconciliation = this.#database.prepare(`SELECT descriptor_digest
+        FROM operation_reconciliations WHERE operation_id=?`
+      ).get(operationId);
+      const count = this.#database.prepare(`SELECT COUNT(*) AS count
+        FROM operation_verification_attempts WHERE operation_id=?`
+      ).get(operationId)?.count;
+      if (operation?.state !== "reconciling" ||
+          reconciliation?.descriptor_digest !== descriptorDigest ||
+          record?.attempt !== count + 1) {
+        operationFail("EG_RECONCILIATION_ATTEMPT_ORDER");
+      }
+      const attempt = reconciliationAttemptRecord({
+        operationId,
+        record,
+        observedAt: timestamp(clock.wall)
+      });
+      this.#database.prepare(`INSERT INTO operation_verification_attempts
+        (operation_id, attempt, classification, evidence_ref,
+         evidence_digest, result_digest, safe_reason_code, observed_at,
+         attempt_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        attempt.operation_id, attempt.attempt, attempt.classification,
+        attempt.evidence_ref, attempt.evidence_digest,
+        attempt.result_digest, attempt.safe_reason_code,
+        attempt.observed_at, attempt.attempt_digest
+      );
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#rollback();
+      throw error;
+    }
+  }
+
+  #finishReconciliation({ operationId, outcome, runEvidenceDigest }) {
+    const clock = this.#begin();
+    try {
+      const operation = this.#database.prepare(
+        "SELECT * FROM operations WHERE operation_id=?"
+      ).get(operationId);
+      const reconciliation = this.#database.prepare(`SELECT *
+        FROM operation_reconciliations WHERE operation_id=?`
+      ).get(operationId);
+      const attempts = this.#database.prepare(`SELECT *
+        FROM operation_verification_attempts WHERE operation_id=?
+        ORDER BY attempt`).all(operationId);
+      if (operation?.state !== "reconciling" || !reconciliation ||
+          this.#database.prepare(`SELECT 1
+            FROM operation_reconciliation_outcomes WHERE operation_id=?`
+          ).get(operationId)) {
+        operationFail("EG_OPERATION_RETRY_DENIED");
+      }
+      const finalizedAt = timestamp(clock.wall);
+      const result = reconciliationOutcomeRecord({
+        operationId,
+        descriptorDigest: reconciliation.descriptor_digest,
+        outcome,
+        runEvidenceDigest,
+        finalizedAt,
+        attempts
+      });
+      this.#database.prepare(`INSERT INTO operation_reconciliation_outcomes
+        (operation_id, outcome, run_evidence_digest, finalized_at,
+         outcome_digest) VALUES (?, ?, ?, ?, ?)`).run(
+        result.operation_id, result.outcome, result.run_evidence_digest,
+        result.finalized_at, result.outcome_digest
+      );
+      transitionOperation(this.#database, {
+        operationId,
+        fromState: "reconciling",
+        toState: outcome,
+        certainty: outcome === "manual_resolution"
+          ? operation.certainty
+          : outcome,
+        observedAt: finalizedAt,
+        monotonicMs: clock.monotonic,
+        evidenceRef: result.outcome_digest,
+        recoveryReason: outcome === "manual_resolution"
+          ? "verification_ambiguous"
+          : null
       });
       this.#database.exec("COMMIT");
     } catch (error) {
