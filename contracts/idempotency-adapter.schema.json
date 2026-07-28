@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effectgate.dev/v1/idempotency-adapter.schema.json",
+  "title": "EffectGate V1 Idempotency Adapter",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "capability_id",
+    "capability_revision",
+    "key_placement",
+    "lookup",
+    "qualified_scenarios",
+    "qualification_evidence_digest",
+    "adapter_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "capability_id": {"$ref": "#/$defs/capability"},
+    "capability_revision": {"$ref": "#/$defs/revision"},
+    "key_placement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "name"],
+      "properties": {
+        "target": {"enum": ["arguments", "headers"]},
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "lookup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability_id",
+        "capability_revision",
+        "key_argument"
+      ],
+      "properties": {
+        "capability_id": {"$ref": "#/$defs/capability"},
+        "capability_revision": {"$ref": "#/$defs/revision"},
+        "key_argument": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$"
+        }
+      }
+    },
+    "qualified_scenarios": {
+      "type": "array",
+      "prefixItems": [
+        {"const": "same_key_same_intent"},
+        {"const": "same_key_different_intent"},
+        {"const": "concurrent_duplicate_calls"},
+        {"const": "server_restart"},
+        {"const": "response_loss_after_commit"}
+      ],
+      "items": false,
+      "minItems": 5,
+      "maxItems": 5
+    },
+    "qualification_evidence_digest": {"$ref": "#/$defs/digest"},
+    "adapter_digest": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {
+    "capability": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    }
+  }
+}
