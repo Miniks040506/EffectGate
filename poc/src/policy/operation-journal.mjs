@@ -33,6 +33,11 @@ import {
   reconciliationRunEvidenceDigest
 } from "./operation-reconciliation.mjs";
 import {
+  EFFECT_RECEIPT_SCHEMA,
+  issueEffectReceipt,
+  loadEffectReceipt
+} from "./effect-receipt.mjs";
+import {
   runVerificationProbe,
   verifyVerificationProbe
 } from "./verification-probe.mjs";
@@ -60,6 +65,7 @@ export class EffectOperationJournal {
     this.#database.exec(OPERATION_SCHEMA);
     this.#database.exec(IDEMPOTENCY_SCHEMA);
     this.#database.exec(RECONCILIATION_SCHEMA);
+    this.#database.exec(EFFECT_RECEIPT_SCHEMA);
     this.#now = now;
     this.#monotonic = monotonic;
   }
@@ -452,6 +458,30 @@ export class EffectOperationJournal {
     return loaded
       ? loadOperationReconciliation(this.#database, loaded)
       : undefined;
+  }
+
+  issueReceipt({
+    receiptId, operationId, signer = null
+  } = {}) {
+    const clock = this.#begin();
+    let receipt;
+    try {
+      receipt = issueEffectReceipt(this.#database, {
+        receiptId,
+        operationId,
+        issuedAt: timestamp(clock.wall),
+        signer
+      });
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#rollback();
+      throw error;
+    }
+    return receipt;
+  }
+
+  loadReceipt(receiptId) {
+    return loadEffectReceipt(this.#database, receiptId);
   }
 
   close() {
