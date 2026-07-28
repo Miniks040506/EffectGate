@@ -248,3 +248,160 @@ test("committed evidence finalizes durably without exposing probe data", async (
     files.close();
   }
 });
+
+test("verified-not-committed permits only a fresh admitted operation", async () => {
+  const files = fixture();
+  const journal = files.journal();
+  try {
+    const uncertain = dispatchUncertain(
+      journal, files, "operation-absent", "transaction-absent"
+    );
+    const completed = await journal.reconcile({
+      operationId: uncertain.operation_id,
+      descriptor: probe({ maxAttempts: 1 }),
+      invoke: async () => result({ status: "not_found" }),
+      probeNow: () => 0
+    });
+    assert.equal(completed.state, "verified_not_committed");
+    assert.equal(completed.certainty, "verified_not_committed");
+    assert.throws(() => journal.plan({
+      operationId: "operation-reused-intent",
+      intent: intent(files.clock.wall, "transaction-absent"),
+      approvalRequired: false
+    }), hasCode("EG_OPERATION_INTENT_REUSE"));
+    await assert.rejects(
+      journal.reconcile({
+        operationId: uncertain.operation_id,
+        descriptor: probe({ maxAttempts: 1 }),
+        invoke: async () => result({ status: "not_found" })
+      }),
+      hasCode("EG_OPERATION_RETRY_DENIED")
+    );
+
+    journal.plan({
+      operationId: "operation-fresh",
+      intent: intent(files.clock.wall, "transaction-fresh"),
+      approvalRequired: false
+    });
+    journal.preflight("operation-fresh");
+    assert.equal(journal.admit("operation-fresh").state, "admitted");
+  } finally {
+    journal.close();
+    files.close();
+  }
+});
+
+test("irreducible ambiguity becomes manual resolution", async () => {
+  const files = fixture();
+  const journal = files.journal();
+  try {
+    const uncertain = dispatchUncertain(
+      journal, files, "operation-manual", "transaction-manual"
+    );
+    const completed = await journal.reconcile({
+      operationId: uncertain.operation_id,
+      descriptor: probe({ maxAttempts: 1 }),
+      invoke: async () => result({ status: "ambiguous" }),
+      probeNow: () => 0
+    });
+    assert.equal(completed.state, "manual_resolution");
+    assert.equal(completed.certainty, "commit_possible");
+    assert.equal(completed.recovery_reason, "verification_ambiguous");
+    assert.equal(
+      completed.reconciliation.outcome.outcome,
+      "manual_resolution"
+    );
+
+    const unavailable = dispatchUncertain(
+      journal, files, "operation-unverifiable", "transaction-unverifiable"
+    );
+    const withoutProbe = journal.requireManualResolution({
+      operationId: unavailable.operation_id,
+      evidenceDigest: digest("8")
+    });
+    assert.equal(withoutProbe.state, "manual_resolution");
+    assert.equal(withoutProbe.reconciliation, null);
+    assert.equal(withoutProbe.recovery_reason, "verification_unavailable");
+  } finally {
+    journal.close();
+    files.close();
+  }
+});
+
+test("restart resumes the remaining budget and detects attempt tampering", async () => {
+  const files = fixture();
+  let journal = files.journal();
+  try {
+    const uncertain = dispatchUncertain(
+      journal, files, "operation-resume", "transaction-resume"
+    );
+    const descriptor = probe({ maxAttempts: 2 });
+    let enteredSleep;
+    const sleeping = new Promise((resolve) => {
+      enteredSleep = resolve;
+    });
+    void journal.reconcile({
+      operationId: uncertain.operation_id,
+      descriptor,
+      invoke: async () => result({ status: "ambiguous" }),
+      probeNow: () => 0,
+      sleep: async () => {
+        enteredSleep();
+        return new Promise(() => {});
+      }
+    });
+    await sleeping;
+    const interrupted = journal.load(uncertain.operation_id).operation;
+    assert.equal(interrupted.state, "reconciling");
+    assert.deepEqual(
+      interrupted.reconciliation.attempts.map(({ attempt }) => attempt),
+      [1]
+    );
+    journal.close();
+
+    files.clock.wall += 100;
+    files.clock.monotonic += 100;
+    journal = files.journal();
+    await assert.rejects(
+      journal.reconcile({
+        operationId: uncertain.operation_id,
+        descriptor: probe({
+          maxAttempts: 2,
+          probeCapability: "comments.lookup.changed"
+        }),
+        invoke: async () => result({ status: "found" })
+      }),
+      hasCode("EG_RECONCILIATION_DESCRIPTOR_MISMATCH")
+    );
+    const completed = await journal.reconcile({
+      operationId: uncertain.operation_id,
+      descriptor,
+      invoke: async () => result({
+        status: "found",
+        intent_digest: uncertain.intent_digest
+      }),
+      probeNow: () => 0
+    });
+    assert.equal(completed.state, "verified_committed");
+    assert.deepEqual(
+      completed.reconciliation.attempts.map(({ attempt }) => attempt),
+      [1, 2]
+    );
+    journal.close();
+
+    const database = new DatabaseSync(files.file);
+    database.exec("DROP TRIGGER operation_verification_attempts_no_update");
+    database.prepare(`UPDATE operation_verification_attempts
+      SET classification='committed' WHERE operation_id=? AND attempt=1`
+    ).run(uncertain.operation_id);
+    database.close();
+    journal = files.journal();
+    assert.throws(
+      () => journal.load(uncertain.operation_id),
+      hasCode("EG_OPERATION_CORRUPT")
+    );
+  } finally {
+    try { journal.close(); } catch {}
+    files.close();
+  }
+});
