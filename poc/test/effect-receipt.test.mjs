@@ -193,6 +193,108 @@ function makeUncertain(
 const hasCode = (code) => (error) =>
   error instanceof OperationJournalError && error.code === code;
 
+test("terminal effects issue redacted, signed, chained receipts", async () => {
+  const files = fixture();
+  let journal = files.journal();
+  try {
+    const pending = admit(
+      journal, files, "operation-pending", "transaction-pending"
+    );
+    assert.throws(() => journal.issueReceipt({
+      receiptId: "receipt-pending",
+      operationId: pending.operation_id
+    }), hasCode("EG_RECEIPT_NOT_READY"));
+
+    const { operation: uncertain, rawKey } = makeUncertain(
+      journal, files, "operation-committed", "transaction-committed", true
+    );
+    const completed = await journal.reconcile({
+      operationId: uncertain.operation_id,
+      descriptor: probe(),
+      invoke: async () => ({
+        data: {
+          status: "found",
+          intent_digest: uncertain.intent_digest,
+          secret: "PROBE_RESULT_MUST_NOT_ENTER_RECEIPT"
+        },
+        evidence_ref: "evidence://receipt/committed",
+        evidence_digest: digest("3")
+      }),
+      probeNow: () => 0
+    });
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+    const signed = journal.issueReceipt({
+      receiptId: "receipt-committed",
+      operationId: completed.operation_id,
+      signer: { keyId: "local-ed25519-1", privateKey }
+    });
+    assert.equal(signed.final_state, "verified_committed");
+    assert.equal(signed.intent_digest, completed.intent_digest);
+    assert.equal(signed.event_chain_head, completed.last_event_digest);
+    assert.equal(
+      signed.verification_evidence_digest,
+      completed.reconciliation.outcome.outcome_digest
+    );
+    assert.equal(
+      signed.idempotency_key_digest,
+      completed.idempotency.key_hash
+    );
+    assert.equal(verifyEffectReceipt(signed, {
+      publicKey,
+      signerKeyId: "local-ed25519-1"
+    }), true);
+    assert.equal(verifyEffectReceipt(signed, { signerKeyId: "wrong" }), false);
+    const otherKey = generateKeyPairSync("ed25519").publicKey;
+    assert.equal(verifyEffectReceipt(signed, { publicKey: otherKey }), false);
+    assert.equal(Object.isFrozen(signed), true);
+
+    const direct = makeUncertain(
+      journal, files, "operation-manual", "transaction-manual"
+    ).operation;
+    journal.requireManualResolution({
+      operationId: direct.operation_id,
+      evidenceDigest: digest("4")
+    });
+    const unsigned = journal.issueReceipt({
+      receiptId: "receipt-manual",
+      operationId: direct.operation_id
+    });
+    assert.equal(unsigned.final_state, "manual_resolution");
+    assert.equal(unsigned.verification_evidence_digest, digest("4"));
+    assert.equal(unsigned.previous_receipt_hash, signed.receipt_hash);
+    assert.equal(verifyEffectReceipt(unsigned), true);
+    assert.throws(() => journal.issueReceipt({
+      receiptId: "receipt-manual-again",
+      operationId: direct.operation_id
+    }), hasCode("EG_RECEIPT_ALREADY_EXISTS"));
+
+    const database = new DatabaseSync(files.file);
+    const stored = database.prepare(`SELECT receipt_json FROM effect_receipts
+      WHERE receipt_id=?`).get(signed.receipt_id).receipt_json;
+    database.close();
+    for (const forbidden of [
+      SECRET_BODY, PRIVATE_SCOPE, rawKey,
+      "PROBE_RESULT_MUST_NOT_ENTER_RECEIPT"
+    ]) {
+      assert.equal(stored.includes(forbidden), false);
+    }
+
+    journal.close();
+    journal = files.journal();
+    assert.deepEqual(
+      journal.loadReceipt(signed.receipt_id),
+      signed
+    );
+    assert.deepEqual(
+      journal.loadReceipt(unsigned.receipt_id),
+      unsigned
+    );
+  } finally {
+    try { journal.close(); } catch {}
+    files.close();
+  }
+});
+
 test("receipt rows are immutable and tampering is detected", () => {
   const files = fixture();
   let journal = files.journal();
