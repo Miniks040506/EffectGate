@@ -256,3 +256,184 @@ function readEvidence(file) {
     events
   };
 }
+
+function profileReport(events, profile, seed) {
+  const runs = events.filter((event) => event.profile === profile);
+  const completed = runs.filter((event) => event.status === "completed");
+  const failures = new Map();
+  for (const event of runs.filter(({ status }) => status === "failed")) {
+    failures.set(
+      event.failure_code,
+      (failures.get(event.failure_code) ?? 0) + 1
+    );
+  }
+  const measurements = [];
+  for (const metric of NUMERIC_METRICS) {
+    const values = completed.flatMap(({ metrics }) =>
+      metrics[metric] === undefined ? [] : [metrics[metric]]
+    );
+    if (values.length > 0) {
+      measurements.push({
+        metric,
+        basis: "runtime",
+        counter_id: null,
+        counter_version: null,
+        calibration_error_bound_max: null,
+        summary: measurement(values, `${seed}\0${profile}\0${metric}`)
+      });
+    }
+  }
+  const tokenGroups = new Map();
+  for (const { metrics } of completed) {
+    for (const metric of TOKEN_METRICS) {
+      const count = metrics[metric];
+      if (count === undefined) continue;
+      const key =
+        `${metric}\0${count.basis}\0${count.counter_id}\0` +
+        count.counter_version;
+      const group = tokenGroups.get(key) ?? {
+        metric,
+        basis: count.basis,
+        counter_id: count.counter_id,
+        counter_version: count.counter_version,
+        bounds: [],
+        values: []
+      };
+      group.values.push(count.value);
+      if (count.calibration_error_bound !== undefined) {
+        group.bounds.push(count.calibration_error_bound);
+      }
+      tokenGroups.set(key, group);
+    }
+  }
+  for (const [, group] of [...tokenGroups].sort(([left], [right]) =>
+    left.localeCompare(right))) {
+    measurements.push({
+      metric: group.metric,
+      basis: group.basis,
+      counter_id: group.counter_id,
+      counter_version: group.counter_version,
+      calibration_error_bound_max: group.bounds.length === 0
+        ? null
+        : Math.max(...group.bounds),
+      summary: measurement(
+        group.values,
+        `${seed}\0${profile}\0${group.metric}\0${group.basis}\0` +
+          `${group.counter_id}\0${group.counter_version}`
+      )
+    });
+  }
+  const rates = [{
+    metric: "task_success",
+    summary: rate(runs.map((event) =>
+      event.status === "completed" && event.metrics.task_success
+    ), `${seed}\0${profile}\0task_success`)
+  }, {
+    metric: "fetch_required",
+    summary: rate(completed.map(({ metrics }) => metrics.fetch_count > 0),
+      `${seed}\0${profile}\0fetch_required`)
+  }];
+  for (const metric of BOOLEAN_METRICS) {
+    const values = completed.flatMap(({ metrics }) =>
+      metrics[metric] === undefined ? [] : [metrics[metric]]
+    );
+    if (values.length > 0) {
+      rates.push({
+        metric,
+        summary: rate(values, `${seed}\0${profile}\0${metric}`)
+      });
+    }
+  }
+  return {
+    profile,
+    expected_runs: runs.length,
+    completed_runs: completed.length,
+    failed_runs: runs.length - completed.length,
+    failures: [...failures].sort(([left], [right]) =>
+      left.localeCompare(right)).map(([failure_code, count]) => ({
+      failure_code,
+      count
+    })),
+    rates,
+    measurements
+  };
+}
+
+export function generateBenchmarkReport({ file } = {}) {
+  const { bytes, header, events } = readEvidence(file);
+  const evidenceDigest = `sha256:${sha256(bytes)}`;
+  const completed = events.filter(({ status }) => status === "completed");
+  return deepFreeze({
+    kind: "effectgate_benchmark_report",
+    schema_version: "1.0.0",
+    evidence_digest: evidenceDigest,
+    backend_digest: header.backend_digest,
+    prompt_digest: header.prompt_digest,
+    rubric_digest: header.rubric_digest,
+    task_id: header.task_id,
+    seed: header.seed,
+    repetitions: header.repetitions,
+    profiles: header.profiles,
+    model: header.model,
+    effort: header.effort,
+    host_version: header.host_version,
+    machine_class: header.machine_class,
+    source_created_at: header.created_at,
+    minimum_repetitions: 30,
+    minimum_repetitions_met: header.repetitions >= 30,
+    total_runs: events.length,
+    completed_runs: completed.length,
+    failed_runs: events.length - completed.length,
+    profile_reports: header.profiles.map((profile) =>
+      profileReport(events, profile, evidenceDigest))
+  });
+}
+
+export function writeBenchmarkReport({ input, output } = {}) {
+  if (!bounded(output, 1024)) {
+    throw new TypeError("invalid benchmark report output");
+  }
+  const report = generateBenchmarkReport({ file: input });
+  const reportFile = resolve(output);
+  fs.mkdirSync(dirname(reportFile), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(reportFile, `${canonicalJson(report)}\n`, {
+    flag: "wx",
+    encoding: "utf8",
+    mode: 0o600,
+    flush: true
+  });
+  return deepFreeze({ file: reportFile, report });
+}
+
+function parseArguments(args) {
+  if (args.length !== 4) throw new Error(USAGE);
+  const values = Object.fromEntries([
+    [args[0], args[1]],
+    [args[2], args[3]]
+  ]);
+  if (Object.keys(values).length !== 2 ||
+      values["--input"] === undefined ||
+      values["--output"] === undefined) {
+    throw new Error(USAGE);
+  }
+  return { input: values["--input"], output: values["--output"] };
+}
+
+export function main(args = process.argv.slice(2)) {
+  const result = writeBenchmarkReport(parseArguments(args));
+  process.stdout.write(`${JSON.stringify({
+    report_file: result.file,
+    completed_runs: result.report.completed_runs,
+    failed_runs: result.report.failed_runs,
+    minimum_repetitions_met: result.report.minimum_repetitions_met
+  })}\n`);
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    process.stderr.write(`[effectgate-report] ${error.message}\n`);
+    process.exitCode = 2;
+  }
+}
