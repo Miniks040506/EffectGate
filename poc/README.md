@@ -89,6 +89,7 @@ Run the deterministic `BENCH-SMALL-005` fixture adapter with:
 
 ```powershell
 npm run benchmark:fixture -- --output .\benchmark.jsonl --ledger-directory .\benchmark-ledgers --repetitions 1
+npm run benchmark:report -- --input .\benchmark.jsonl --output .\benchmark-report.json
 ```
 
 It executes the direct native fixture (P0), typed EffectGate proxy (P1),
@@ -112,8 +113,11 @@ node effectgate.mjs mcp serve --token-ledger tokens.jsonl --run-id RUN_ID --prof
 The harness requires SHA-256 digests for common backend bytes, prompt, and
 success rubric. It creates its JSONL evidence file exclusively, records every
 completed or failed profile run, and never persists callback error messages.
-It does not launch a model or claim token savings; real host adapters and
-statistical reporting remain separate qualification work.
+The report validates the complete evidence matrix, retains failures, keeps
+token counters separated by measurement basis, and emits median, p95, and
+deterministic percentile-bootstrap 95% intervals. Fewer than 30 repetitions
+are explicitly marked non-qualifying. It does not launch a model or claim
+token savings; real host adapters remain separate qualification work.
 
 The fixture exposes:
 
