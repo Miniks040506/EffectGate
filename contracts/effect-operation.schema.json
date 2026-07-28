@@ -29,6 +29,7 @@
     "challenge_id",
     "approval_proof_digest",
     "idempotency",
+    "reconciliation",
     "state",
     "certainty",
     "dispatch_digest",
@@ -127,6 +128,48 @@
         {"type": "null"}
       ]
     },
+    "reconciliation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "operation_id",
+            "descriptor_digest",
+            "started_at",
+            "deadline_at",
+            "max_attempts",
+            "attempts",
+            "outcome"
+          ],
+          "properties": {
+            "schema_version": {"const": "1.0.0"},
+            "operation_id": {"$ref": "#/$defs/identifier"},
+            "descriptor_digest": {"$ref": "#/$defs/digest"},
+            "started_at": {"$ref": "#/$defs/timestamp"},
+            "deadline_at": {"$ref": "#/$defs/timestamp"},
+            "max_attempts": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            },
+            "attempts": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {"$ref": "#/$defs/verification_attempt"}
+            },
+            "outcome": {
+              "oneOf": [
+                {"$ref": "#/$defs/reconciliation_outcome"},
+                {"type": "null"}
+              ]
+            }
+          }
+        },
+        {"type": "null"}
+      ]
+    },
     "state": {
       "enum": [
         "planned",
@@ -135,7 +178,11 @@
         "admitted",
         "executing",
         "abandoned",
-        "uncertain"
+        "uncertain",
+        "reconciling",
+        "verified_committed",
+        "verified_not_committed",
+        "manual_resolution"
       ]
     },
     "certainty": {
@@ -178,6 +225,67 @@
         {"type": "null"}
       ]
     },
-    "timestamp": {"type": "string", "format": "date-time"}
+    "timestamp": {"type": "string", "format": "date-time"},
+    "verification_attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "operation_id",
+        "attempt",
+        "classification",
+        "evidence_ref",
+        "evidence_digest",
+        "result_digest",
+        "safe_reason_code",
+        "observed_at",
+        "attempt_digest"
+      ],
+      "properties": {
+        "schema_version": {"const": "1.0.0"},
+        "operation_id": {"$ref": "#/$defs/identifier"},
+        "attempt": {"type": "integer", "minimum": 1, "maximum": 10},
+        "classification": {
+          "enum": ["committed", "not_committed", "ambiguous"]
+        },
+        "evidence_ref": {
+          "oneOf": [
+            {"type": "string", "minLength": 1, "maxLength": 1024},
+            {"type": "null"}
+          ]
+        },
+        "evidence_digest": {"$ref": "#/$defs/nullable_digest"},
+        "result_digest": {"$ref": "#/$defs/nullable_digest"},
+        "safe_reason_code": {"$ref": "#/$defs/name"},
+        "observed_at": {"$ref": "#/$defs/timestamp"},
+        "attempt_digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "reconciliation_outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "operation_id",
+        "outcome",
+        "run_evidence_digest",
+        "finalized_at",
+        "outcome_digest"
+      ],
+      "properties": {
+        "schema_version": {"const": "1.0.0"},
+        "operation_id": {"$ref": "#/$defs/identifier"},
+        "outcome": {
+          "enum": [
+            "verified_committed",
+            "verified_not_committed",
+            "manual_resolution"
+          ]
+        },
+        "run_evidence_digest": {"$ref": "#/$defs/digest"},
+        "finalized_at": {"$ref": "#/$defs/timestamp"},
+        "outcome_digest": {"$ref": "#/$defs/digest"}
+      }
+    }
   }
 }

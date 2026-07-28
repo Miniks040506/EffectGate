@@ -26,13 +26,30 @@ test("effect operation contract fixes states, certainty, and safe fields", () =>
   assert.ok(CONTRACT.required.includes("intent_digest"));
   assert.ok(CONTRACT.required.includes("approval_proof_digest"));
   assert.ok(CONTRACT.required.includes("idempotency"));
+  assert.ok(CONTRACT.required.includes("reconciliation"));
   assert.ok(CONTRACT.required.includes("dispatch_digest"));
   assert.equal(operationTransitionAllowed("planned", "preflighted"), true);
   assert.equal(operationTransitionAllowed("preflighted", "planned"), false);
   assert.equal(operationTransitionAllowed("uncertain", "executing"), false);
+  assert.equal(operationTransitionAllowed("uncertain", "reconciling"), true);
+  assert.equal(operationTransitionAllowed(
+    "uncertain", "manual_resolution"
+  ), true);
+  assert.equal(operationTransitionAllowed(
+    "reconciling", "verified_committed"
+  ), true);
+  assert.equal(operationTransitionAllowed(
+    "manual_resolution", "executing"
+  ), false);
   assert.equal(operationCertaintyAllowed("admitted", "not_started"), true);
   assert.equal(operationCertaintyAllowed("admitted", "commit_possible"), false);
   assert.equal(operationCertaintyAllowed("uncertain", "commit_possible"), true);
+  assert.equal(operationCertaintyAllowed(
+    "verified_committed", "verified_committed"
+  ), true);
+  assert.equal(operationCertaintyAllowed(
+    "verified_not_committed", "commit_possible"
+  ), false);
   assert.ok(Object.isFrozen(OPERATION_STATES));
   assert.ok(Object.isFrozen(OPERATION_CERTAINTIES));
 });

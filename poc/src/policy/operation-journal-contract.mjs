@@ -9,7 +9,8 @@ export const OPERATION_PATTERNS = Object.freeze({
 });
 export const OPERATION_STATES = Object.freeze([
   "planned", "preflighted", "awaiting_approval", "admitted", "executing",
-  "abandoned", "uncertain"
+  "abandoned", "uncertain", "reconciling", "verified_committed",
+  "verified_not_committed", "manual_resolution"
 ]);
 export const OPERATION_CERTAINTIES = Object.freeze([
   "not_started", "started_no_commit_evidence", "commit_possible",
@@ -24,7 +25,13 @@ const TRANSITIONS = Object.freeze({
   admitted: new Set(["executing", "abandoned"]),
   executing: new Set(["uncertain"]),
   abandoned: new Set(),
-  uncertain: new Set()
+  uncertain: new Set(["reconciling", "manual_resolution"]),
+  reconciling: new Set([
+    "verified_committed", "verified_not_committed", "manual_resolution"
+  ]),
+  verified_committed: new Set(),
+  verified_not_committed: new Set(),
+  manual_resolution: new Set()
 });
 
 export const OPERATION_SCHEMA = `
@@ -46,7 +53,8 @@ CREATE TABLE IF NOT EXISTS operations (
   approval_required INTEGER NOT NULL CHECK(approval_required IN (0,1)),
   challenge_id TEXT, approval_proof_digest TEXT, state TEXT NOT NULL
     CHECK(state IN ('planned','preflighted','awaiting_approval','admitted',
-      'executing','abandoned','uncertain')),
+      'executing','abandoned','uncertain','reconciling','verified_committed',
+      'verified_not_committed','manual_resolution')),
   certainty TEXT NOT NULL CHECK(certainty IN ('not_started',
     'started_no_commit_evidence','commit_possible','backend_claimed_committed',
     'verified_committed','verified_not_committed')),
@@ -67,6 +75,8 @@ CREATE TABLE IF NOT EXISTS operation_events (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS operations_recovery ON operations(state, updated_at);
 CREATE INDEX IF NOT EXISTS operations_session ON operations(session_id, state);
+CREATE UNIQUE INDEX IF NOT EXISTS operations_intent_once
+ON operations(intent_digest);
 CREATE TRIGGER IF NOT EXISTS operation_events_no_update
 BEFORE UPDATE ON operation_events BEGIN SELECT RAISE(ABORT, 'immutable'); END;
 CREATE TRIGGER IF NOT EXISTS operation_events_no_delete
@@ -118,10 +128,14 @@ export const operationTransitionAllowed = (fromState, toState) =>
   Boolean(TRANSITIONS[fromState]?.has(toState));
 
 export const operationCertaintyAllowed = (state, certainty) =>
-  state === "uncertain"
+  ["uncertain", "reconciling", "manual_resolution"].includes(state)
     ? ["started_no_commit_evidence", "commit_possible",
       "backend_claimed_committed"].includes(certainty)
-    : certainty === "not_started";
+    : state === "verified_committed"
+      ? certainty === "verified_committed"
+      : state === "verified_not_committed"
+        ? certainty === "verified_not_committed"
+        : certainty === "not_started";
 
 function canonicalTimestamp(value) {
   try {
@@ -247,7 +261,8 @@ export function loadOperation(database, operationId) {
       row.certainty !== last.certainty ||
       row.last_event_digest !== last.event_digest ||
       (row.state === "awaiting_approval" && !row.challenge_id) ||
-      (["executing", "uncertain"].includes(row.state) &&
+      (["executing", "uncertain", "reconciling", "verified_committed",
+        "verified_not_committed", "manual_resolution"].includes(row.state) &&
         (!row.dispatch_digest || !row.deadline_at))) {
     operationFail("EG_OPERATION_CORRUPT");
   }
@@ -280,7 +295,8 @@ export function loadOperation(database, operationId) {
   )) {
     operationFail("EG_OPERATION_CORRUPT");
   }
-  if (["executing", "uncertain"].includes(row.state)) {
+  if (["executing", "uncertain", "reconciling", "verified_committed",
+    "verified_not_committed", "manual_resolution"].includes(row.state)) {
     const dispatchEvent = events.find(({ new_state: state }) =>
       state === "executing");
     const metadata = idempotency

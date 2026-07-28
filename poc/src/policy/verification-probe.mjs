@@ -52,7 +52,7 @@ const MISSING = Symbol("missing");
 
 function operationSources(descriptor, operation, idempotency) {
   if (!operation || operation.schema_version !== "1.0.0" ||
-      !["executing", "uncertain"].includes(operation.state) ||
+      !["executing", "uncertain", "reconciling"].includes(operation.state) ||
       operation.capability_id !== descriptor.capability_id ||
       operation.capability_revision !== descriptor.capability_revision ||
       !OPERATION_PATTERNS.identifier.test(operation.operation_id ?? "") ||
@@ -204,13 +204,27 @@ export async function runVerificationProbe({
   operation,
   idempotency = null,
   invoke,
+  attemptOffset = 0,
+  attemptLimit = null,
+  elapsedOffsetMs = 0,
+  totalTimeoutMs = null,
+  onAttempt = async () => {},
   now = () => performance.now(),
   sleep = (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds))
 } = {}) {
   verifyVerificationProbe(descriptor);
+  const maximumAttempts = attemptLimit ?? descriptor.limits.max_attempts;
+  const timeoutBudget = totalTimeoutMs ?? descriptor.limits.total_timeout_ms;
   if (typeof invoke !== "function" || typeof now !== "function" ||
-      typeof sleep !== "function") {
+      typeof sleep !== "function" || typeof onAttempt !== "function" ||
+      !Number.isSafeInteger(attemptOffset) || attemptOffset < 0 ||
+      !Number.isSafeInteger(maximumAttempts) || maximumAttempts < 1 ||
+      attemptOffset + maximumAttempts > descriptor.limits.max_attempts ||
+      !Number.isFinite(elapsedOffsetMs) || elapsedOffsetMs < 0 ||
+      elapsedOffsetMs > descriptor.limits.total_timeout_ms ||
+      !Number.isSafeInteger(timeoutBudget) || timeoutBudget < 1 ||
+      timeoutBudget > descriptor.limits.total_timeout_ms) {
     fail("EG_VERIFICATION_RUNTIME_INVALID");
   }
   const sources = operationSources(descriptor, operation, idempotency);
@@ -233,8 +247,14 @@ export async function runVerificationProbe({
   };
   const started = clock();
   const attempts = [];
-  for (let index = 1; index <= descriptor.limits.max_attempts; index += 1) {
-    const remaining = descriptor.limits.total_timeout_ms -
+  const retain = async (record) => {
+    const frozen = deepFreeze(record);
+    attempts.push(frozen);
+    await onAttempt(frozen);
+  };
+  for (let index = 1; index <= maximumAttempts; index += 1) {
+    const attempt = attemptOffset + index;
+    const remaining = timeoutBudget -
       (clock() - started);
     if (remaining <= 0) break;
     const timeout = Math.max(1, Math.min(
@@ -243,6 +263,7 @@ export async function runVerificationProbe({
     ));
     let record;
     let resultReceived = false;
+    let windowSatisfied = false;
     try {
       const rawResult = await invokeWithin(invoke, request, timeout);
       resultReceived = true;
@@ -251,13 +272,12 @@ export async function runVerificationProbe({
         descriptor.limits.max_result_bytes
       );
       const classification = classify(result.data, descriptor, sources);
-      const elapsed = clock() - started;
-      const windowSatisfied =
-        elapsed >= descriptor.limits.observation_window_ms;
+      const elapsed = elapsedOffsetMs + clock() - started;
+      windowSatisfied = elapsed >= descriptor.limits.observation_window_ms;
       const effective = classification === "not_committed" &&
         !windowSatisfied ? "ambiguous" : classification;
       record = {
-        attempt: index,
+        attempt,
         classification: effective,
         evidence_ref: result.evidence_ref,
         evidence_digest: result.evidence_digest,
@@ -270,18 +290,6 @@ export async function runVerificationProbe({
               ? "observation_window_open"
               : "ambiguous_or_no_predicate"
       };
-      attempts.push(record);
-      if (effective === "committed") {
-        return finish(
-          descriptor, operation, "verified_committed", attempts,
-          windowSatisfied
-        );
-      }
-      if (effective === "not_committed") {
-        return finish(
-          descriptor, operation, "verified_not_committed", attempts, true
-        );
-      }
     } catch (error) {
       if (resultReceived && error instanceof VerificationProbeError &&
           !["EG_VERIFICATION_RESULT_INVALID",
@@ -289,7 +297,7 @@ export async function runVerificationProbe({
         throw error;
       }
       record = {
-        attempt: index,
+        attempt,
         classification: "ambiguous",
         evidence_ref: null,
         evidence_digest: null,
@@ -300,14 +308,25 @@ export async function runVerificationProbe({
             ? "probe_result_invalid"
             : "probe_transport_error"
       };
-      attempts.push(record);
     }
-    if (index === descriptor.limits.max_attempts) break;
+    await retain(record);
+    if (record.classification === "committed") {
+      return finish(
+        descriptor, operation, "verified_committed", attempts,
+        windowSatisfied
+      );
+    }
+    if (record.classification === "not_committed") {
+      return finish(
+        descriptor, operation, "verified_not_committed", attempts, true
+      );
+    }
+    if (index === maximumAttempts) break;
     const backoff = Math.min(
-      descriptor.limits.initial_backoff_ms * (2 ** (index - 1)),
+      descriptor.limits.initial_backoff_ms * (2 ** (attempt - 1)),
       descriptor.limits.max_backoff_ms
     );
-    const remainingAfter = descriptor.limits.total_timeout_ms -
+    const remainingAfter = timeoutBudget -
       (clock() - started);
     if (backoff >= remainingAfter) break;
     if (backoff > 0) await sleep(backoff);
@@ -317,6 +336,7 @@ export async function runVerificationProbe({
     operation,
     "ambiguous",
     attempts,
-    clock() - started >= descriptor.limits.observation_window_ms
+    elapsedOffsetMs + clock() - started >=
+      descriptor.limits.observation_window_ms
   );
 }

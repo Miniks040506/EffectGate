@@ -174,7 +174,9 @@ function bindingFromIdentity(adapter, operationId, intentDigest) {
 function bindingFor(adapter, operation) {
   verifyIdempotencyAdapter(adapter);
   if (!operation || operation.schema_version !== "1.0.0" ||
-      !["admitted", "executing", "uncertain"].includes(operation.state) ||
+      !["admitted", "executing", "uncertain", "reconciling"].includes(
+        operation.state
+      ) ||
       !OPERATION_PATTERNS.digest.test(
         operation.canonical_arguments_hash ?? ""
       ) ||
