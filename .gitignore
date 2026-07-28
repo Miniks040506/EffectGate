@@ -12,6 +12,7 @@
 /05-benchmark-corpus.yaml
 /contracts/*
 !/contracts/context-view.schema.json
+!/contracts/effect-receipt.schema.json
 !/contracts/effect-operation.schema.json
 !/contracts/idempotency-adapter.schema.json
 !/contracts/instruction-capsule.schema.json

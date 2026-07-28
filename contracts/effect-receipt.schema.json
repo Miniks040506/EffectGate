@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effectgate.dev/v1/effect-receipt.schema.json",
+  "title": "EffectGate V1 Effect Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "receipt_id",
+    "operation_id",
+    "principal_id",
+    "client_id",
+    "session_id",
+    "transaction_id",
+    "skill_id",
+    "skill_digest",
+    "phase",
+    "phase_revision",
+    "capsule_digest",
+    "capability_id",
+    "capability_revision",
+    "effect_class",
+    "intent_digest",
+    "canonical_arguments_hash",
+    "resource_scope_digest",
+    "disclosure_digest",
+    "policy_revision",
+    "approval_proof_digest",
+    "dispatch_digest",
+    "idempotency_key_digest",
+    "safe_summary",
+    "verification_evidence_digest",
+    "final_state",
+    "certainty",
+    "event_chain_head",
+    "operation_created_at",
+    "finalized_at",
+    "issued_at",
+    "previous_receipt_hash",
+    "signer_key_id",
+    "signature",
+    "receipt_hash"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "receipt_id": {"$ref": "#/$defs/identifier"},
+    "operation_id": {"$ref": "#/$defs/identifier"},
+    "principal_id": {"$ref": "#/$defs/name"},
+    "client_id": {"$ref": "#/$defs/name"},
+    "session_id": {"$ref": "#/$defs/name"},
+    "transaction_id": {"$ref": "#/$defs/name"},
+    "skill_id": {"$ref": "#/$defs/name"},
+    "skill_digest": {"$ref": "#/$defs/digest"},
+    "phase": {"$ref": "#/$defs/name"},
+    "phase_revision": {"type": "integer", "minimum": 1},
+    "capsule_digest": {"$ref": "#/$defs/digest"},
+    "capability_id": {"type": "string", "minLength": 1, "maxLength": 512},
+    "capability_revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "effect_class": {
+      "enum": [
+        "observe",
+        "disclose",
+        "mutate_reversible",
+        "mutate_irreversible",
+        "destructive",
+        "external_commit",
+        "credential_use",
+        "code_execution"
+      ]
+    },
+    "intent_digest": {"$ref": "#/$defs/digest"},
+    "canonical_arguments_hash": {"$ref": "#/$defs/digest"},
+    "resource_scope_digest": {"$ref": "#/$defs/digest"},
+    "disclosure_digest": {"$ref": "#/$defs/digest"},
+    "policy_revision": {"$ref": "#/$defs/digest"},
+    "approval_proof_digest": {"$ref": "#/$defs/nullable_digest"},
+    "dispatch_digest": {"$ref": "#/$defs/digest"},
+    "idempotency_key_digest": {"$ref": "#/$defs/nullable_digest"},
+    "safe_summary": {"type": "string", "minLength": 1, "maxLength": 256},
+    "verification_evidence_digest": {"$ref": "#/$defs/digest"},
+    "final_state": {
+      "enum": [
+        "verified_committed",
+        "verified_not_committed",
+        "manual_resolution"
+      ]
+    },
+    "certainty": {
+      "enum": [
+        "commit_possible",
+        "started_no_commit_evidence",
+        "backend_claimed_committed",
+        "verified_committed",
+        "verified_not_committed"
+      ]
+    },
+    "event_chain_head": {"$ref": "#/$defs/digest"},
+    "operation_created_at": {"$ref": "#/$defs/timestamp"},
+    "finalized_at": {"$ref": "#/$defs/timestamp"},
+    "issued_at": {"$ref": "#/$defs/timestamp"},
+    "previous_receipt_hash": {"$ref": "#/$defs/nullable_digest"},
+    "signer_key_id": {
+      "oneOf": [
+        {"type": "string", "minLength": 1, "maxLength": 256},
+        {"type": "null"}
+      ]
+    },
+    "signature": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        {"type": "null"}
+      ]
+    },
+    "receipt_hash": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "name": {"type": "string", "minLength": 1, "maxLength": 128},
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "nullable_digest": {
+      "oneOf": [
+        {"$ref": "#/$defs/digest"},
+        {"type": "null"}
+      ]
+    },
+    "timestamp": {"type": "string", "format": "date-time"}
+  }
+}
