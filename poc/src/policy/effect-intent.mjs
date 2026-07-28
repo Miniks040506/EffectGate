@@ -89,7 +89,7 @@ function hash(domain, value) {
     .digest("hex")}`;
 }
 
-function canonicalArguments(value) {
+export function canonicalArgumentsHash(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) invalid();
   const normalized = normalizeJson(value, { nodes: 0 });
   if (Buffer.byteLength(canonicalJson(normalized)) > MAX_ARGUMENT_BYTES) {
@@ -189,7 +189,7 @@ export function compileEffectIntent(input = {}) {
     capability_id: admission.capability_id,
     capability_revision: admission.capability_revision,
     effect_class: admission.effect_class,
-    canonical_arguments_hash: canonicalArguments(argumentValue),
+    canonical_arguments_hash: canonicalArgumentsHash(argumentValue),
     resource_scope: normalizeScope(resourceScope),
     disclosure_digest: disclosureDigest,
     policy_revision: policyDecision.policy_revision,
