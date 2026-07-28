@@ -243,3 +243,135 @@ test("not-committed requires the observation window and bounded backoff", async 
   );
   assert.equal(run.observation_window_satisfied, true);
 });
+
+test("transport success alone and invalid results exhaust as ambiguous", async () => {
+  const descriptor = compileVerificationProbe(declaration(
+    "lookup_by_fingerprint",
+    {
+      limits: {
+        max_attempts: 1,
+        initial_backoff_ms: 0,
+        max_backoff_ms: 0,
+        observation_window_ms: 0
+      }
+    }
+  ));
+  const transportOnly = await runVerificationProbe({
+    descriptor,
+    operation: operation(),
+    invoke: async () => result({ status: "ok" }),
+    now: () => 0
+  });
+  assert.equal(transportOnly.outcome, "ambiguous");
+  assert.equal(
+    transportOnly.attempts[0].safe_reason_code,
+    "ambiguous_or_no_predicate"
+  );
+
+  const oversized = await runVerificationProbe({
+    descriptor: compileVerificationProbe({
+      ...declaration(),
+      limits: { ...declaration().limits, max_result_bytes: 8 }
+    }),
+    operation: operation(),
+    invoke: async () => result({ status: "ambiguous" }),
+    now: () => 0
+  });
+  assert.equal(oversized.outcome, "ambiguous");
+  assert.equal(
+    oversized.attempts[0].safe_reason_code,
+    "probe_result_invalid"
+  );
+  assert.equal(oversized.attempts[0].evidence_ref, null);
+});
+
+test("idempotency lookup accepts only an operation-bound verified key", async () => {
+  const uncertain = operation();
+  const adapter = compileIdempotencyAdapter({
+    schema_version: "1.0.0",
+    capability_id: "comments.create",
+    capability_revision: "comments-v1",
+    key_placement: { target: "arguments", name: "idempotency_key" },
+    lookup: {
+      capability_id: "comments.lookup_by_key",
+      capability_revision: "lookup-v1",
+      key_argument: "idempotency_key"
+    },
+    qualified_scenarios: [
+      "same_key_same_intent",
+      "same_key_different_intent",
+      "concurrent_duplicate_calls",
+      "server_restart",
+      "response_loss_after_commit"
+    ],
+    qualification_evidence_digest: digest("d")
+  });
+  const binding = deriveIdempotencyBinding({
+    adapter,
+    operation: uncertain
+  });
+  let key;
+  const run = await runVerificationProbe({
+    descriptor: compileVerificationProbe(
+      declaration("lookup_by_idempotency_key")
+    ),
+    operation: uncertain,
+    idempotency: { adapter, binding },
+    invoke: async ({ arguments: probeArguments }) => {
+      key = probeArguments.idempotency_key;
+      return result({
+        status: "found",
+        intent_digest: uncertain.intent_digest
+      });
+    },
+    now: () => 0
+  });
+  assert.equal(key, binding.key);
+  assert.equal(run.outcome, "verified_committed");
+
+  await assert.rejects(
+    runVerificationProbe({
+      descriptor: compileVerificationProbe(
+        declaration("lookup_by_idempotency_key")
+      ),
+      operation: uncertain,
+      idempotency: { adapter: {}, binding },
+      invoke: async () => result({ status: "ambiguous" })
+    }),
+    (error) => error instanceof VerificationProbeError &&
+      error.code === "EG_VERIFICATION_OPERATION_MISMATCH"
+  );
+});
+
+test("probe timeout is bounded and operation drift is rejected", async () => {
+  const descriptor = compileVerificationProbe(declaration(
+    "lookup_by_fingerprint",
+    {
+      limits: {
+        max_attempts: 1,
+        per_attempt_timeout_ms: 5,
+        total_timeout_ms: 10,
+        initial_backoff_ms: 0,
+        max_backoff_ms: 0,
+        observation_window_ms: 0
+      }
+    }
+  ));
+  const timedOut = await runVerificationProbe({
+    descriptor,
+    operation: operation(),
+    invoke: async () => new Promise(() => {})
+  });
+  assert.equal(timedOut.outcome, "ambiguous");
+  assert.equal(timedOut.attempts[0].safe_reason_code, "probe_timeout");
+
+  await assert.rejects(
+    runVerificationProbe({
+      descriptor,
+      operation: operation({ capability_revision: "comments-v2" }),
+      invoke: async () => result({ status: "found" })
+    }),
+    (error) => error instanceof VerificationProbeError &&
+      error.code === "EG_VERIFICATION_OPERATION_MISMATCH"
+  );
+});
