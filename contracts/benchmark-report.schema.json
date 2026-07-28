@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effectgate.dev/v1/benchmark-report.schema.json",
+  "title": "EffectGate V1 Benchmark Statistical Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "evidence_digest",
+    "backend_digest",
+    "prompt_digest",
+    "rubric_digest",
+    "task_id",
+    "seed",
+    "repetitions",
+    "profiles",
+    "model",
+    "effort",
+    "host_version",
+    "machine_class",
+    "source_created_at",
+    "minimum_repetitions",
+    "minimum_repetitions_met",
+    "total_runs",
+    "completed_runs",
+    "failed_runs",
+    "profile_reports"
+  ],
+  "properties": {
+    "kind": {"const": "effectgate_benchmark_report"},
+    "schema_version": {"const": "1.0.0"},
+    "evidence_digest": {"$ref": "#/$defs/digest"},
+    "backend_digest": {"$ref": "#/$defs/digest"},
+    "prompt_digest": {"$ref": "#/$defs/digest"},
+    "rubric_digest": {"$ref": "#/$defs/digest"},
+    "task_id": {
+      "type": "string",
+      "pattern": "^BENCH-[A-Z0-9-]{1,64}$"
+    },
+    "seed": {"$ref": "#/$defs/name"},
+    "repetitions": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000
+    },
+    "profiles": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/name"}
+    },
+    "model": {"$ref": "#/$defs/name"},
+    "effort": {"$ref": "#/$defs/name"},
+    "host_version": {"$ref": "#/$defs/name"},
+    "machine_class": {"$ref": "#/$defs/name"},
+    "source_created_at": {"$ref": "#/$defs/timestamp"},
+    "minimum_repetitions": {"const": 30},
+    "minimum_repetitions_met": {"type": "boolean"},
+    "total_runs": {"$ref": "#/$defs/count"},
+    "completed_runs": {"$ref": "#/$defs/count"},
+    "failed_runs": {"$ref": "#/$defs/count"},
+    "profile_reports": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {"$ref": "#/$defs/profile_report"}
+    }
+  },
+  "$defs": {
+    "name": {"type": "string", "minLength": 1, "maxLength": 128},
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "timestamp": {"type": "string", "format": "date-time"},
+    "count": {"type": "integer", "minimum": 0},
+    "interval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "resamples", "lower", "upper"],
+      "properties": {
+        "method": {"const": "percentile_bootstrap"},
+        "resamples": {"const": 2000},
+        "lower": {"type": "number"},
+        "upper": {"type": "number"}
+      }
+    },
+    "measurement_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["samples", "median", "p95", "median_ci_95"],
+      "properties": {
+        "samples": {"type": "integer", "minimum": 1},
+        "median": {"type": "number", "minimum": 0},
+        "p95": {"type": "number", "minimum": 0},
+        "median_ci_95": {"$ref": "#/$defs/interval"}
+      }
+    },
+    "rate_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "samples",
+        "count",
+        "rate",
+        "confidence_interval_95"
+      ],
+      "properties": {
+        "samples": {"type": "integer", "minimum": 1},
+        "count": {"$ref": "#/$defs/count"},
+        "rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "confidence_interval_95": {"$ref": "#/$defs/interval"}
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["failure_code", "count"],
+      "properties": {
+        "failure_code": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$"
+        },
+        "count": {"type": "integer", "minimum": 1}
+      }
+    },
+    "rate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric", "summary"],
+      "properties": {
+        "metric": {"$ref": "#/$defs/name"},
+        "summary": {"$ref": "#/$defs/rate_summary"}
+      }
+    },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metric",
+        "basis",
+        "counter_id",
+        "counter_version",
+        "calibration_error_bound_max",
+        "summary"
+      ],
+      "properties": {
+        "metric": {"$ref": "#/$defs/name"},
+        "basis": {
+          "enum": [
+            "runtime",
+            "host_reported",
+            "tokenizer_exact",
+            "tokenizer_estimate",
+            "byte_proxy",
+            "counterfactual"
+          ]
+        },
+        "counter_id": {
+          "oneOf": [
+            {"$ref": "#/$defs/name"},
+            {"type": "null"}
+          ]
+        },
+        "counter_version": {
+          "oneOf": [
+            {"$ref": "#/$defs/name"},
+            {"type": "null"}
+          ]
+        },
+        "calibration_error_bound_max": {
+          "oneOf": [
+            {"type": "number", "minimum": 0, "maximum": 1},
+            {"type": "null"}
+          ]
+        },
+        "summary": {"$ref": "#/$defs/measurement_summary"}
+      }
+    },
+    "profile_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "expected_runs",
+        "completed_runs",
+        "failed_runs",
+        "failures",
+        "rates",
+        "measurements"
+      ],
+      "properties": {
+        "profile": {"$ref": "#/$defs/name"},
+        "expected_runs": {"$ref": "#/$defs/count"},
+        "completed_runs": {"$ref": "#/$defs/count"},
+        "failed_runs": {"$ref": "#/$defs/count"},
+        "failures": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/failure"}
+        },
+        "rates": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"$ref": "#/$defs/rate"}
+        },
+        "measurements": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/measurement"}
+        }
+      }
+    }
+  }
+}
