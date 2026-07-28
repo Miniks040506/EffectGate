@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effectgate.dev/v1/verification-probe.schema.json",
+  "title": "EffectGate V1 Verification Probe",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "capability_id",
+    "capability_revision",
+    "kind",
+    "probe",
+    "arguments",
+    "predicates",
+    "limits",
+    "evidence",
+    "qualification_evidence_digest",
+    "descriptor_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "capability_id": {"$ref": "#/$defs/capability"},
+    "capability_revision": {"$ref": "#/$defs/revision"},
+    "kind": {
+      "enum": [
+        "lookup_by_idempotency_key",
+        "lookup_by_fingerprint",
+        "read_after_write",
+        "resource_version_match"
+      ]
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability_id",
+        "capability_revision",
+        "effect_class"
+      ],
+      "properties": {
+        "capability_id": {"$ref": "#/$defs/capability"},
+        "capability_revision": {"$ref": "#/$defs/revision"},
+        "effect_class": {"const": "observe"}
+      }
+    },
+    "arguments": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "source"],
+        "properties": {
+          "name": {"$ref": "#/$defs/field"},
+          "source": {"$ref": "#/$defs/source"}
+        }
+      }
+    },
+    "predicates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["committed", "not_committed", "ambiguous"],
+      "properties": {
+        "committed": {"$ref": "#/$defs/predicate-list"},
+        "not_committed": {"$ref": "#/$defs/predicate-list"},
+        "ambiguous": {"$ref": "#/$defs/predicate-list"}
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_attempts",
+        "per_attempt_timeout_ms",
+        "total_timeout_ms",
+        "max_result_bytes",
+        "initial_backoff_ms",
+        "max_backoff_ms",
+        "observation_window_ms"
+      ],
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "per_attempt_timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60000
+        },
+        "total_timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300000
+        },
+        "max_result_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 262144
+        },
+        "initial_backoff_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60000
+        },
+        "max_backoff_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60000
+        },
+        "observation_window_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 300000
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trust_level", "redaction"],
+      "properties": {
+        "trust_level": {"const": "qualified_probe"},
+        "redaction": {"const": "digest_only"}
+      }
+    },
+    "qualification_evidence_digest": {"$ref": "#/$defs/digest"},
+    "descriptor_digest": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {
+    "capability": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "field": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$"
+    },
+    "source": {
+      "enum": [
+        "intent_digest",
+        "canonical_arguments_hash",
+        "resource_scope_kind",
+        "resource_scope_value",
+        "capability_id",
+        "capability_revision",
+        "transaction_id",
+        "idempotency_key"
+      ]
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "pointer": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 512,
+      "pattern": "^/(?:[^~/]|~[01])+(?:/(?:[^~/]|~[01])+)*$"
+    },
+    "expected": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source"],
+          "properties": {
+            "source": {"$ref": "#/$defs/source"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["literal"],
+          "properties": {
+            "literal": {
+              "type": ["string", "number", "boolean", "null"],
+              "maxLength": 1024
+            }
+          }
+        }
+      ]
+    },
+    "predicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "equals"],
+      "properties": {
+        "path": {"$ref": "#/$defs/pointer"},
+        "equals": {"$ref": "#/$defs/expected"}
+      }
+    },
+    "predicate-list": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {"$ref": "#/$defs/predicate"}
+    }
+  }
+}

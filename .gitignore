@@ -19,6 +19,7 @@
 !/contracts/policy.schema.json
 !/contracts/skill-passport.schema.json
 !/contracts/token-ledger.schema.json
+!/contracts/verification-probe.schema.json
 /tools/
 
 # Local runtime/editor output
