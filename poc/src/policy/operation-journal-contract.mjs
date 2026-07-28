@@ -100,6 +100,20 @@ export function operationEventDigest(event) {
     .digest("hex")}`;
 }
 
+export function operationDispatchEvidenceDigest(
+  dispatchDigest, idempotency = null
+) {
+  if (!OPERATION_PATTERNS.digest.test(dispatchDigest ?? "")) {
+    operationFail("EG_OPERATION_CORRUPT");
+  }
+  if (idempotency === null) return dispatchDigest;
+  return `sha256:${createHash("sha256")
+    .update("effectgate.dispatch-record.v1\0")
+    .update(canonicalJson(idempotency))
+    .update(dispatchDigest)
+    .digest("hex")}`;
+}
+
 export const operationTransitionAllowed = (fromState, toState) =>
   Boolean(TRANSITIONS[fromState]?.has(toState));
 
@@ -246,6 +260,37 @@ export function loadOperation(database, operationId) {
   if (canonicalJson(resourceScope) !== row.resource_scope_json) {
     operationFail("EG_OPERATION_CORRUPT");
   }
+  const hasIdempotency = Boolean(database.prepare(`SELECT 1
+    FROM sqlite_master WHERE type='table' AND name='operation_idempotency'`
+  ).get());
+  const idempotency = hasIdempotency
+    ? database.prepare(`SELECT * FROM operation_idempotency
+      WHERE operation_id=?`).get(operationId)
+    : undefined;
+  if (idempotency && (
+    idempotency.operation_id !== row.operation_id ||
+    idempotency.intent_digest !== row.intent_digest ||
+    !OPERATION_PATTERNS.digest.test(idempotency.adapter_digest) ||
+    !OPERATION_PATTERNS.digest.test(idempotency.key_hash) ||
+    !["arguments", "headers"].includes(idempotency.key_target) ||
+    !boundedOperationValue(idempotency.key_name, 128) ||
+    !boundedOperationValue(idempotency.lookup_capability_id, 512) ||
+    !boundedOperationValue(idempotency.lookup_capability_revision, 256) ||
+    !canonicalTimestamp(idempotency.created_at)
+  )) {
+    operationFail("EG_OPERATION_CORRUPT");
+  }
+  if (["executing", "uncertain"].includes(row.state)) {
+    const dispatchEvent = events.find(({ new_state: state }) =>
+      state === "executing");
+    const metadata = idempotency
+      ? { schema_version: "1.0.0", ...idempotency }
+      : null;
+    if (!dispatchEvent || dispatchEvent.evidence_ref !==
+        operationDispatchEvidenceDigest(row.dispatch_digest, metadata)) {
+      operationFail("EG_OPERATION_CORRUPT");
+    }
+  }
   const { resource_scope_json: ignored, approval_required: required,
     ...operation } = row;
   return deepFreeze({
@@ -253,7 +298,10 @@ export function loadOperation(database, operationId) {
       schema_version: "1.0.0",
       ...operation,
       resource_scope: resourceScope,
-      approval_required: required === 1
+      approval_required: required === 1,
+      idempotency: idempotency
+        ? { schema_version: "1.0.0", ...idempotency }
+        : null
     },
     events
   });

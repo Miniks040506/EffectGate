@@ -28,6 +28,7 @@
     "approval_required",
     "challenge_id",
     "approval_proof_digest",
+    "idempotency",
     "state",
     "certainty",
     "dispatch_digest",
@@ -85,6 +86,47 @@
       ]
     },
     "approval_proof_digest": {"$ref": "#/$defs/nullable_digest"},
+    "idempotency": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "operation_id",
+            "intent_digest",
+            "adapter_digest",
+            "key_hash",
+            "key_target",
+            "key_name",
+            "lookup_capability_id",
+            "lookup_capability_revision",
+            "created_at"
+          ],
+          "properties": {
+            "schema_version": {"const": "1.0.0"},
+            "operation_id": {"$ref": "#/$defs/identifier"},
+            "intent_digest": {"$ref": "#/$defs/digest"},
+            "adapter_digest": {"$ref": "#/$defs/digest"},
+            "key_hash": {"$ref": "#/$defs/digest"},
+            "key_target": {"enum": ["arguments", "headers"]},
+            "key_name": {"type": "string", "minLength": 1, "maxLength": 128},
+            "lookup_capability_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "lookup_capability_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "created_at": {"$ref": "#/$defs/timestamp"}
+          }
+        },
+        {"type": "null"}
+      ]
+    },
     "state": {
       "enum": [
         "planned",

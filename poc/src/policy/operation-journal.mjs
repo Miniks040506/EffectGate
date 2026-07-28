@@ -9,11 +9,17 @@ import {
   OperationJournalError,
   boundedOperationValue,
   loadOperation,
+  operationDispatchEvidenceDigest,
   operationEventDigest,
   operationFail,
   transitionOperation
 } from "./operation-journal-contract.mjs";
 import { verifyEffectIntent } from "./effect-intent.mjs";
+import {
+  IDEMPOTENCY_SCHEMA,
+  IdempotencyAdapterError,
+  idempotencyMetadata
+} from "./idempotency-adapter.mjs";
 import {
   expireOperationApproval,
   operationTableExists,
@@ -41,6 +47,7 @@ export class EffectOperationJournal {
     mkdirSync(dirname(databaseFile), { recursive: true, mode: 0o700 });
     this.#database = new DatabaseSync(databaseFile);
     this.#database.exec(OPERATION_SCHEMA);
+    this.#database.exec(IDEMPOTENCY_SCHEMA);
     this.#now = now;
     this.#monotonic = monotonic;
   }
@@ -174,7 +181,9 @@ export class EffectOperationJournal {
     });
   }
 
-  beginDispatch({ operationId, dispatchDigest, deadlineAt } = {}) {
+  beginDispatch({
+    operationId, dispatchDigest, deadlineAt, idempotency = null
+  } = {}) {
     let deadline;
     try {
       deadline = new Date(deadlineAt).toISOString();
@@ -190,6 +199,39 @@ export class EffectOperationJournal {
       if (Date.parse(deadline) <= clock.wall) {
         operationFail("EG_OPERATION_DEADLINE_EXPIRED");
       }
+      let dispatchEvidence = dispatchDigest;
+      if (idempotency !== null) {
+        if (idempotency?.dispatch_digest !== dispatchDigest) {
+          throw new IdempotencyAdapterError(
+            "EG_IDEMPOTENCY_DISPATCH_MISMATCH"
+          );
+        }
+        const operation = this.#database.prepare(
+          "SELECT * FROM operations WHERE operation_id=?"
+        ).get(operationId);
+        const metadata = idempotencyMetadata({
+          ...idempotency,
+          operation: { schema_version: "1.0.0", ...operation }
+        });
+        if (this.#database.prepare(`SELECT 1 FROM operation_idempotency
+          WHERE key_hash=?`).get(metadata.key_hash)) {
+          throw new IdempotencyAdapterError("EG_IDEMPOTENCY_KEY_REUSE");
+        }
+        const createdAt = timestamp(clock.wall);
+        this.#database.prepare(`INSERT INTO operation_idempotency
+          (operation_id, intent_digest, adapter_digest, key_hash, key_target,
+           key_name, lookup_capability_id, lookup_capability_revision,
+           created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+          operationId, metadata.intent_digest, metadata.adapter_digest,
+          metadata.key_hash, metadata.key_target, metadata.key_name,
+          metadata.lookup_capability_id,
+          metadata.lookup_capability_revision, createdAt
+        );
+        dispatchEvidence = operationDispatchEvidenceDigest(
+          dispatchDigest,
+          { ...metadata, created_at: createdAt }
+        );
+      }
       transitionOperation(this.#database, {
         operationId,
         fromState: "admitted",
@@ -197,7 +239,7 @@ export class EffectOperationJournal {
         certainty: "not_started",
         observedAt: timestamp(clock.wall),
         monotonicMs: clock.monotonic,
-        evidenceRef: dispatchDigest,
+        evidenceRef: dispatchEvidence,
         dispatchDigest,
         deadlineAt: deadline
       });

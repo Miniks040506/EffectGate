@@ -25,6 +25,7 @@ test("effect operation contract fixes states, certainty, and safe fields", () =>
   assert.deepEqual(CONTRACT.properties.certainty.enum, OPERATION_CERTAINTIES);
   assert.ok(CONTRACT.required.includes("intent_digest"));
   assert.ok(CONTRACT.required.includes("approval_proof_digest"));
+  assert.ok(CONTRACT.required.includes("idempotency"));
   assert.ok(CONTRACT.required.includes("dispatch_digest"));
   assert.equal(operationTransitionAllowed("planned", "preflighted"), true);
   assert.equal(operationTransitionAllowed("preflighted", "planned"), false);
