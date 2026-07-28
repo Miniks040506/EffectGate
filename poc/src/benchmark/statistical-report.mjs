@@ -146,3 +146,113 @@ function rate(values, seed) {
       bootstrapInterval(values, seed, average)
   };
 }
+
+function profileKind(profiles) {
+  if (!Array.isArray(profiles)) return undefined;
+  const candidates = [
+    ["effect", Object.keys(BENCHMARK_PROFILES)],
+    ["skill", Object.keys(SKILL_BENCHMARK_PROFILES)]
+  ];
+  return candidates.find(([, expected]) =>
+    canonicalJson(expected) === canonicalJson(profiles));
+}
+
+function validHeader(header) {
+  const kind = profileKind(header?.profiles);
+  return exact(header, HEADER_KEYS) &&
+    header.kind === "effectgate_paired_benchmark" &&
+    header.schema_version === "1.0.0" &&
+    TASK.test(header.task_id ?? "") &&
+    bounded(header.seed) &&
+    Number.isSafeInteger(header.repetitions) &&
+    header.repetitions >= 1 && header.repetitions <= 1_000 &&
+    kind !== undefined &&
+    [header.backend_digest, header.prompt_digest,
+      header.rubric_digest].every((value) => DIGEST.test(value ?? "")) &&
+    [header.model, header.host_version,
+      header.machine_class].every((value) => bounded(value)) &&
+    bounded(header.effort, 64) && timestamp(header.created_at)
+      ? kind
+      : undefined;
+}
+
+function readEvidence(file) {
+  if (!bounded(file, 1024)) {
+    throw new TypeError("invalid benchmark evidence file");
+  }
+  const evidenceFile = resolve(file);
+  const bytes = fs.readFileSync(evidenceFile);
+  if (bytes.length < 2 || bytes.length > MAX_EVIDENCE_BYTES ||
+      bytes.at(-1) !== 0x0a) {
+    throw new TypeError("invalid benchmark evidence");
+  }
+  let records;
+  try {
+    records = new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+      .slice(0, -1).split("\n").map(
+      (line) => JSON.parse(line)
+    );
+  } catch {
+    throw new TypeError("invalid benchmark evidence");
+  }
+  const [header, ...rawEvents] = records;
+  const profile = validHeader(header);
+  if (!profile ||
+      rawEvents.length !== header.repetitions * header.profiles.length) {
+    throw new TypeError("invalid benchmark evidence");
+  }
+  const skillProfile = profile[0] === "skill";
+  const events = rawEvents.map((event) => {
+    const common = [
+      "kind", "pair_id", "run_id", "task_id", "repetition",
+      "order_index", "profile", "status", "observed_at"
+    ];
+    const keys = event?.status === "completed"
+      ? [...common, "metrics"]
+      : [...common, "failure_code"];
+    const pairId = `pair_${sha256(
+      `${header.task_id}\0${header.seed}\0${event?.repetition}`
+    )}`;
+    const runId = `run_${sha256(`${pairId}\0${event?.profile}`)}`;
+    if (!exact(event, keys) || event.kind !== "run" ||
+        !ID.test(event.pair_id ?? "") || !ID.test(event.run_id ?? "") ||
+        event.pair_id !== pairId || event.run_id !== runId ||
+        event.task_id !== header.task_id ||
+        !Number.isSafeInteger(event.repetition) ||
+        event.repetition < 0 || event.repetition >= header.repetitions ||
+        !Number.isSafeInteger(event.order_index) ||
+        event.order_index < 0 ||
+        event.order_index >= header.profiles.length ||
+        !header.profiles.includes(event.profile) ||
+        !["completed", "failed"].includes(event.status) ||
+        !timestamp(event.observed_at) ||
+        Date.parse(event.observed_at) < Date.parse(header.created_at) ||
+        (event.status === "failed" &&
+          !FAILURE.test(event.failure_code ?? ""))) {
+      throw new TypeError("invalid benchmark evidence");
+    }
+    if (event.status === "failed") return event;
+    try {
+      return {
+        ...event,
+        metrics: validateBenchmarkMetrics(event.metrics, { skillProfile })
+      };
+    } catch {
+      throw new TypeError("invalid benchmark evidence");
+    }
+  });
+  for (let repetition = 0; repetition < header.repetitions; repetition += 1) {
+    const pair = events.filter((event) => event.repetition === repetition);
+    if (new Set(pair.map(({ profile: id }) => id)).size !==
+        header.profiles.length ||
+        new Set(pair.map(({ order_index: index }) => index)).size !==
+        header.profiles.length) {
+      throw new TypeError("invalid benchmark evidence");
+    }
+  }
+  return {
+    bytes,
+    header,
+    events
+  };
+}

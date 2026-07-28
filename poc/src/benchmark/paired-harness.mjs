@@ -202,6 +202,15 @@ function validatedMetrics(value, skillProfile) {
   return Object.freeze(result);
 }
 
+export function validateBenchmarkMetrics(
+  value, { skillProfile = false } = {}
+) {
+  if (typeof skillProfile !== "boolean") {
+    throw new TypeError("invalid benchmark metrics");
+  }
+  return validatedMetrics(value, skillProfile);
+}
+
 function profileOrder(seed, repetition, profileIds) {
   return [...profileIds].sort((left, right) => {
     const leftKey = hash(`${seed}\0${repetition}\0${left}`);
@@ -306,9 +315,9 @@ export async function runPairedBenchmark({
       });
       let event;
       try {
-        const metrics = validatedMetrics(
+        const metrics = validateBenchmarkMetrics(
           await runProfile(context),
-          skillProfile
+          { skillProfile }
         );
         event = Object.freeze({
           kind: "run",
