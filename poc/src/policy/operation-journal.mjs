@@ -453,6 +453,19 @@ export class EffectOperationJournal {
     return deepFreeze(recovered);
   }
 
+  recoveryCandidates() {
+    const rows = this.#database.prepare(`SELECT operations.operation_id,
+      effect_receipts.receipt_id FROM operations
+      LEFT JOIN effect_receipts USING(operation_id)
+      WHERE state IN ('uncertain','reconciling','verified_committed',
+        'manual_resolution')
+      ORDER BY operations.created_at, operations.operation_id`).all();
+    return deepFreeze(rows.map(({ operation_id: operationId, receipt_id }) => ({
+      operation: this.load(operationId).operation,
+      receipt_id: receipt_id ?? null
+    })));
+  }
+
   load(operationId) {
     const loaded = loadOperation(this.#database, operationId);
     return loaded

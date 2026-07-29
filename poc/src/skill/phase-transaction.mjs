@@ -43,7 +43,8 @@ function verifyCapsule(capsule) {
 }
 
 export class SkillTransaction {
-  #activeDigest; #activeExpiry; #eventStore; #id; #now; #passport; #phase;
+  #activeDigest; #activeExpiry; #eventStore; #expiredDigest; #id; #now;
+  #passport; #phase;
   #receipts = [];
   #revision = 1;
   #status = "awaiting_capsule";
@@ -182,6 +183,7 @@ export class SkillTransaction {
     });
     this.#activeDigest = capsule.capsule_digest;
     this.#activeExpiry = expiry;
+    this.#expiredDigest = undefined;
     this.#status = "active";
     return this.snapshot();
   }
@@ -242,10 +244,48 @@ export class SkillTransaction {
     return receipt;
   }
 
+  recoverPhaseOutcome({ capsuleDigest, effectReceiptRefs = [] } = {}) {
+    this.#expire(this.#now());
+    if (this.#status === "active" &&
+        capsuleDigest === this.#activeDigest) {
+      return this.reportPhaseOutcome({
+        capsuleDigest,
+        status: "completed",
+        effectReceiptRefs
+      });
+    }
+    if (this.#status !== "awaiting_capsule" ||
+        capsuleDigest !== this.#expiredDigest) {
+      fail(
+        "EG_PHASE_TRANSITION_DENIED",
+        "expired Capsule is unavailable for effect recovery"
+      );
+    }
+    const expiredDigest = this.#expiredDigest;
+    this.#activeDigest = expiredDigest;
+    this.#activeExpiry = Number.POSITIVE_INFINITY;
+    this.#expiredDigest = undefined;
+    this.#status = "active";
+    try {
+      return this.reportPhaseOutcome({
+        capsuleDigest,
+        status: "completed",
+        effectReceiptRefs
+      });
+    } catch (error) {
+      this.#activeDigest = undefined;
+      this.#activeExpiry = undefined;
+      this.#expiredDigest = expiredDigest;
+      this.#status = "awaiting_capsule";
+      throw error;
+    }
+  }
+
   #applyReceipt(receipt) {
     this.#receipts.push(receipt);
     this.#activeDigest = undefined;
     this.#activeExpiry = undefined;
+    this.#expiredDigest = undefined;
     if (receipt.next_phase === null) {
       this.#phase = null;
       this.#status = receipt.status;
@@ -271,6 +311,7 @@ export class SkillTransaction {
       }
       this.#activeDigest = event.payload.capsule_digest;
       this.#activeExpiry = expiry;
+      this.#expiredDigest = undefined;
       this.#status = "active";
       return;
     }
@@ -281,13 +322,19 @@ export class SkillTransaction {
       : receipt?.status === "failed"
         ? transition?.on_failure ?? null
         : null;
+    const recoveredExpired = this.#status === "awaiting_capsule" &&
+      receipt?.status === "completed" &&
+      receipt?.capsule_digest === this.#expiredDigest &&
+      Array.isArray(receipt?.effect_receipt_refs) &&
+      receipt.effect_receipt_refs.length > 0;
     if (event.kind !== "phase_receipt" ||
-        this.#status !== "active" ||
+        (this.#status !== "active" && !recoveredExpired) ||
         receipt?.schema_version !== "1.0.0" ||
         receipt.skill_id !== this.#passport.skill.id ||
         receipt.skill_digest !== this.#passport.skill.source_digest ||
         receipt.phase !== this.#phase ||
-        receipt.capsule_digest !== this.#activeDigest ||
+        receipt.capsule_digest !==
+          (recoveredExpired ? this.#expiredDigest : this.#activeDigest) ||
         !STATUSES.has(receipt.status) ||
         receipt.next_phase !== expectedNext) {
       fail("EG_SKILL_DIGEST_DRIFT", "persisted Phase Receipt is invalid");
@@ -328,6 +375,7 @@ export class SkillTransaction {
       fail("EG_PHASE_TRANSITION_DENIED", "transaction clock is invalid");
     }
     if (this.#activeExpiry <= current) {
+      this.#expiredDigest = this.#activeDigest;
       this.#activeDigest = undefined;
       this.#activeExpiry = undefined;
       this.#status = "awaiting_capsule";

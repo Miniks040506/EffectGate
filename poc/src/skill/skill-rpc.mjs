@@ -1,5 +1,6 @@
 import { BYTE_PROXY_COUNTER } from "../budget/token-counter.mjs";
 import {
+  deriveIdempotencyBinding,
   verifyIdempotencyAdapter
 } from "../policy/idempotency-adapter.mjs";
 import { EffectOperationJournal } from "../policy/operation-journal.mjs";
@@ -316,6 +317,111 @@ export class SkillRpc {
     } catch (error) {
       return caughtError(id, error);
     }
+  }
+
+  async recoverEffects() {
+    const journal = this.#effects();
+    const startup = EffectOperationJournal.prototype.recover.call(journal);
+    const outcomes = [];
+    for (const candidate of
+      EffectOperationJournal.prototype.recoveryCandidates.call(journal)) {
+      let operation = candidate.operation;
+      if (operation.state === "manual_resolution") {
+        failure(
+          "EG_OPERATION_RETRY_DENIED",
+          "effect recovery requires manual resolution"
+        );
+      }
+      if (["uncertain", "reconciling"].includes(operation.state)) {
+        const command = this.#effectCommands.get(commandKey(
+          operation.capability_id,
+          operation.capability_revision
+        ));
+        if (!command) {
+          failure(
+            "EG_EFFECT_COMMAND_UNAVAILABLE",
+            "effect recovery command is unavailable"
+          );
+        }
+        const active = this.#transaction(operation.transaction_id);
+        const phase = active.transaction.snapshot();
+        if (!["active", "awaiting_capsule"].includes(phase.status) ||
+            phase.current_phase !== operation.phase ||
+            phase.next_phase_revision !== operation.phase_revision ||
+            (phase.status === "active" &&
+              phase.active_capsule_digest !== operation.capsule_digest)) {
+          failure(
+            "EG_PHASE_TRANSITION_DENIED",
+            "effect recovery phase is unavailable"
+          );
+        }
+        const binding = deriveIdempotencyBinding({
+          adapter: command.adapter,
+          operation
+        });
+        const persisted = operation.idempotency;
+        const fields = [
+          "adapter_digest", "key_hash", "key_target", "key_name",
+          "lookup_capability_id", "lookup_capability_revision"
+        ];
+        if (!persisted ||
+            fields.some((field) => persisted[field] !== binding[field])) {
+          failure(
+            "EG_IDEMPOTENCY_BINDING_MISMATCH",
+            "effect recovery binding is invalid"
+          );
+        }
+        operation = await EffectOperationJournal.prototype.reconcile.call(
+          journal,
+          {
+            operationId: operation.operation_id,
+            descriptor: command.descriptor,
+            idempotency: { adapter: command.adapter, binding },
+            invoke: command.verify
+          }
+        );
+        if (operation.state === "manual_resolution") {
+          failure(
+            "EG_OPERATION_RETRY_DENIED",
+            "effect recovery requires manual resolution"
+          );
+        }
+      }
+      let receiptId = candidate.receipt_id;
+      if (operation.state === "verified_committed") {
+        const active = this.#transaction(operation.transaction_id);
+        const phase = active.transaction.snapshot();
+        const current = ["active", "awaiting_capsule"].includes(
+          phase.status
+        ) &&
+          phase.current_phase === operation.phase &&
+          phase.next_phase_revision === operation.phase_revision &&
+          (phase.status === "awaiting_capsule" ||
+            phase.active_capsule_digest === operation.capsule_digest);
+        if (current) {
+          receiptId ??=
+            `recovery-${operation.intent_digest.slice("sha256:".length)}`;
+          completePhaseEffectOperation({
+            operationId: operation.operation_id,
+            receiptId,
+            journal,
+            transaction: active.transaction,
+            recovering: true
+          });
+          active.capsule = undefined;
+        }
+      }
+      outcomes.push({
+        operation_id: operation.operation_id,
+        state: operation.state,
+        receipt_id: receiptId
+      });
+    }
+    return deepFreeze({
+      schema_version: "1.0.0",
+      startup,
+      outcomes
+    });
   }
 
   effectTools() {

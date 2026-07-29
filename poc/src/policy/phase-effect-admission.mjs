@@ -52,7 +52,8 @@ const COMPLETE_KEYS = new Set([
   "receiptId",
   "journal",
   "transaction",
-  "signer"
+  "signer",
+  "recovering"
 ]);
 
 export class EffectAdmissionError extends Error {
@@ -275,7 +276,9 @@ export function completePhaseEffectOperation(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input) ||
       Object.keys(input).some((key) => !COMPLETE_KEYS.has(key)) ||
       !(input.journal instanceof EffectOperationJournal) ||
-      !(input.transaction instanceof SkillTransaction)) {
+      !(input.transaction instanceof SkillTransaction) ||
+      (input.recovering !== undefined &&
+        typeof input.recovering !== "boolean")) {
     throw new TypeError("invalid phase effect completion");
   }
   const operation = EffectOperationJournal.prototype.load.call(
@@ -292,7 +295,8 @@ export function completePhaseEffectOperation(input = {}) {
   if (operation.transaction_id !== phase.transaction_id ||
       operation.phase !== phase.current_phase ||
       operation.phase_revision !== phase.next_phase_revision ||
-      operation.capsule_digest !== phase.active_capsule_digest) {
+      (!input.recovering &&
+        operation.capsule_digest !== phase.active_capsule_digest)) {
     throw new EffectAdmissionError("phase_changed");
   }
   let receipt = EffectOperationJournal.prototype.loadReceipt.call(
@@ -318,8 +322,17 @@ export function completePhaseEffectOperation(input = {}) {
       receipt.final_state !== "verified_committed") {
     throw new EffectAdmissionError("receipt_mismatch");
   }
-  const phaseReceipt =
-    SkillTransaction.prototype.reportPhaseOutcome.call(
+  const phaseReceipt = input.recovering
+    ? SkillTransaction.prototype.recoverPhaseOutcome.call(
+      input.transaction,
+      {
+        capsuleDigest: operation.capsule_digest,
+        effectReceiptRefs: [
+          `receipt://effect/${receipt.receipt_id}`
+        ]
+      }
+    )
+    : SkillTransaction.prototype.reportPhaseOutcome.call(
       input.transaction,
       {
         capsuleDigest: operation.capsule_digest,
