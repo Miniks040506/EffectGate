@@ -294,8 +294,10 @@ The default `mcp serve` proxy is **not**:
 
 The separate configured fixture command exercises the existing approval,
 journal, idempotency, verification, and receipt kernel against an in-memory
-reviewed driver. Its backend state is not restart-durable and it does not
-authorize external programs, imported modules, or production writes.
+reviewed driver. EffectGate restarts recover its journal and reconcile
+interrupted dispatches without blindly repeating them. The fixture backend
+itself is not restart-durable, and the command does not authorize external
+programs, imported modules, or production writes.
 
 Read the full [security policy](SECURITY.md) for reporting, supported versions,
 the current threat boundary, and known limitations.
@@ -361,6 +363,10 @@ The published tool hides and runtime-binds the transaction, Capsule,
 capability revision, effect class, policy, idempotency adapter, and
 verification probe. Only operation/receipt IDs, the declared patch arguments,
 the exact resource scope, and a disclosure digest remain caller inputs.
+On restart, never-dispatched operations are abandoned, interrupted dispatches
+are reconciled through their persisted idempotency identity, verified commits
+receive a deterministic recovery receipt, and ambiguous outcomes stop startup
+for manual resolution. A completed one-phase configuration publishes no tools.
 
 After discovery:
 
@@ -404,7 +410,8 @@ The dependency-free suite directly verifies:
   review requirements, no policy mutation, and no direct-bypass suggestion;
 - phase/Capsule-bound protected-intent preparation, exact approval admission,
   idempotent dispatch, lost-response reconciliation, verified Effect/Phase
-  Receipts, and stale-state denial;
+  Receipts, startup recovery without duplicate dispatch, and stale-state
+  denial;
 - real direct, typed-proxy, and eager fixture process runs with exact-payload
   oracles, byte-proxy schema/result events, and joined P1 token provenance;
 - exact compact search/describe/call/fetch contracts, paged admission,
@@ -463,7 +470,7 @@ The dependency-free suite directly verifies:
 | Cited paging/search/projection plus fail-closed opaque-content withholding | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
 | HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |
 | Basis-aware counters, output guards, optional session ledger, compact mux, real P0–P3 fixture evidence, failure-preserving reports, and review-only exposure recommendations | SQLite-backed evidence and real-host comparison qualification |
-| Verified S3 lifecycle, runtime-owned effect RPC, bounded MCP publication, and configured fixture stdio | Reviewed external-backend adapters, restart recovery, and product flows |
+| Verified S3 lifecycle, runtime-owned effect RPC, bounded MCP publication, configured fixture stdio, and interrupted-command startup reconciliation | Reviewed external-backend adapters, multi-process crash qualification, and product flows |
 | Deterministic local tests | Compatibility, fuzz, latency, and crash qualification |
 | Sanitized public errors | Unified daemon error catalog and operator diagnostics |
 | Node.js PoC | Tested installer and supported-platform matrix |

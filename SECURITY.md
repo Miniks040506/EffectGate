@@ -96,8 +96,9 @@ The current preview assumes:
   EffectGate is not an OS sandbox.
 - There is no authentication, encryption, tenant isolation, or operator
   approval UI. The configured fixture has a persistent operation journal and
-  reconciliation evidence, but its in-memory backend state does not survive a
-  restart.
+  startup reconciliation that never blindly repeats an interrupted dispatch,
+  but its in-memory backend state does not survive a restart. An ambiguous
+  recovered outcome stops the configured server for manual resolution.
 - Redaction is a versioned preview heuristic limited to assignment values,
   bearer tokens, and selected token prefixes. It is not comprehensive
   secret/PII detection or protection. More than 4,096 detected spans fails

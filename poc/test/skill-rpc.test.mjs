@@ -435,7 +435,7 @@ test("Skill RPC runs only runtime-owned verified effect commands", async () => {
   const store = new SkillEventStore({
     file: join(skill.root, "command-events.db")
   });
-  const journal = new EffectOperationJournal({
+  let journal = new EffectOperationJournal({
     file: join(skill.root, "command-effects.db"),
     now: () => now,
     monotonic: () => 1000
@@ -533,48 +533,70 @@ test("Skill RPC runs only runtime-owned verified effect commands", async () => {
     });
     const backend = new Set();
     let writes = 0;
+    let dispatchStarted;
+    const interruptedDispatch = new Promise((resolve) => {
+      dispatchStarted = resolve;
+    });
+    let ambiguousDispatchStarted;
+    const ambiguousDispatch = new Promise((resolve) => {
+      ambiguousDispatchStarted = resolve;
+    });
+    const ambiguous = new Set();
+    const command = {
+      policy,
+      adapter,
+      descriptor,
+      principalId: "principal-local",
+      clientId: "effectgate-rpc",
+      effectClass: "mutate_reversible",
+      tool: {
+        name: "effectgate_apply_patch",
+        title: "Apply Verified Patch",
+        description: "Applies and verifies one phase-bound patch.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["patch"],
+          properties: {
+            patch: { type: "string", maxLength: 4096 }
+          }
+        }
+      },
+      validate: (argumentsValue) =>
+        typeof argumentsValue?.patch === "string",
+      invoke: async (request) => {
+        if (request.arguments.patch !== "DO_NOT_COMMIT") {
+          writes += 1;
+          const key = request.headers["Idempotency-Key"];
+          if (request.arguments.patch === "INTERRUPT_AMBIGUOUS") {
+            ambiguous.add(key);
+            ambiguousDispatchStarted();
+            await new Promise(() => {});
+          }
+          backend.add(key);
+          if (request.arguments.patch === "INTERRUPT_AFTER_COMMIT") {
+            dispatchStarted();
+            await new Promise(() => {});
+          }
+        }
+      },
+      verify: async ({ arguments: lookup }) => ({
+        data: {
+          status: ambiguous.has(lookup.idempotency_key)
+            ? "ambiguous"
+            : backend.has(lookup.idempotency_key)
+              ? "found"
+              : "not_found"
+        },
+        evidence_ref: "evidence://rpc/patch",
+        evidence_digest: digest("c")
+      })
+    };
     const rpc = new SkillRpc({
       skills: [skill],
       eventStore: store,
       effectJournal: journal,
-      effectCommands: [{
-        policy,
-        adapter,
-        descriptor,
-        principalId: "principal-local",
-        clientId: "effectgate-rpc",
-        effectClass: "mutate_reversible",
-        tool: {
-          name: "effectgate_apply_patch",
-          title: "Apply Verified Patch",
-          description: "Applies and verifies one phase-bound patch.",
-          inputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["patch"],
-            properties: {
-              patch: { type: "string", maxLength: 4096 }
-            }
-          }
-        },
-        validate: (argumentsValue) =>
-          typeof argumentsValue?.patch === "string",
-        invoke: async (request) => {
-          if (request.arguments.patch !== "DO_NOT_COMMIT") {
-            writes += 1;
-            backend.add(request.headers["Idempotency-Key"]);
-          }
-        },
-        verify: async ({ arguments: lookup }) => ({
-          data: {
-            status: backend.has(lookup.idempotency_key)
-              ? "found"
-              : "not_found"
-          },
-          evidence_ref: "evidence://rpc/patch",
-          evidence_digest: digest("c")
-        })
-      }],
+      effectCommands: [command],
       now: () => now
     });
     const client = new SkillRpcClient(rpc);
@@ -752,6 +774,133 @@ test("Skill RPC runs only runtime-owned verified effect commands", async () => {
     assert.equal(client.request("skills/capsule/get", {
       transaction_id: "rpc-command-not-committed"
     }).capsule_digest, retained.capsule_digest);
+
+    client.request("skills/transaction/start", {
+      transaction_id: "rpc-command-restart",
+      skill_id: "document-editor",
+      initial_phase: "modify"
+    });
+    const restartCapsule = client.request("skills/capsule/get", {
+      transaction_id: "rpc-command-restart"
+    });
+    void client.requestAsync("skills/effect/execute", {
+      ...params,
+      transaction_id: "rpc-command-restart",
+      operation_id: "rpc-command-interrupted",
+      receipt_id: "rpc-command-interrupted-request",
+      capsule_digest: restartCapsule.capsule_digest,
+      arguments: { patch: "INTERRUPT_AFTER_COMMIT" }
+    });
+    await interruptedDispatch;
+    assert.equal(
+      journal.load("rpc-command-interrupted").operation.state,
+      "executing"
+    );
+    journal.close();
+    const recoveredNow = now + 6 * 60 * 1000;
+    journal = new EffectOperationJournal({
+      file: join(skill.root, "command-effects.db"),
+      now: () => recoveredNow,
+      monotonic: () => 1000
+    });
+    const recoveredRpc = new SkillRpc({
+      skills: [skill],
+      eventStore: store,
+      effectJournal: journal,
+      effectCommands: [command],
+      now: () => recoveredNow
+    });
+    const recovery = await recoveredRpc.recoverEffects();
+    assert.deepEqual(recovery.startup, [{
+      operation_id: "rpc-command-interrupted",
+      previous_state: "executing",
+      state: "uncertain",
+      certainty: "commit_possible",
+      recovery_reason: "startup_dispatch_uncertain"
+    }]);
+    const recovered = recovery.outcomes.find(({ operation_id: id }) =>
+      id === "rpc-command-interrupted");
+    assert.equal(recovered.state, "verified_committed");
+    assert.match(recovered.receipt_id, /^recovery-[a-f0-9]{64}$/u);
+    assert.equal(
+      journal.loadReceipt(recovered.receipt_id).operation_id,
+      "rpc-command-interrupted"
+    );
+    const recoveredClient = new SkillRpcClient(recoveredRpc);
+    assert.equal(recoveredClient.request("skills/transaction/get", {
+      transaction_id: "rpc-command-restart"
+    }).status, "completed");
+    const reopenedClient = new SkillRpcClient(new SkillRpc({
+      skills: [skill],
+      eventStore: store,
+      effectJournal: journal,
+      now: () => recoveredNow
+    }));
+    assert.equal(reopenedClient.request("skills/transaction/get", {
+      transaction_id: "rpc-command-restart"
+    }).status, "completed");
+    assert.equal(writes, 2);
+
+    recoveredClient.request("skills/transaction/start", {
+      transaction_id: "rpc-command-manual",
+      skill_id: "document-editor",
+      initial_phase: "modify"
+    });
+    const manualCapsule = recoveredClient.request("skills/capsule/get", {
+      transaction_id: "rpc-command-manual"
+    });
+    const manualCommand = {
+      ...command,
+      policy: compilePolicy({
+        policyId: "rpc-command-manual",
+        rules: [{
+          id: "allow-patch",
+          match: {
+            ...match,
+            capsule_digest: manualCapsule.capsule_digest
+          },
+          decision: "allow"
+        }]
+      })
+    };
+    const manualClient = new SkillRpcClient(new SkillRpc({
+      skills: [skill],
+      eventStore: store,
+      effectJournal: journal,
+      effectCommands: [manualCommand],
+      now: () => recoveredNow
+    }));
+    void manualClient.requestAsync("skills/effect/execute", {
+      ...params,
+      transaction_id: "rpc-command-manual",
+      operation_id: "rpc-command-ambiguous",
+      receipt_id: "rpc-command-ambiguous-request",
+      capsule_digest: manualCapsule.capsule_digest,
+      arguments: { patch: "INTERRUPT_AMBIGUOUS" }
+    });
+    await ambiguousDispatch;
+    journal.close();
+    journal = new EffectOperationJournal({
+      file: join(skill.root, "command-effects.db"),
+      now: () => recoveredNow + 1000,
+      monotonic: () => 1000
+    });
+    const blockedRpc = new SkillRpc({
+      skills: [skill],
+      eventStore: store,
+      effectJournal: journal,
+      effectCommands: [manualCommand],
+      now: () => recoveredNow + 1000
+    });
+    await assert.rejects(
+      blockedRpc.recoverEffects(),
+      (error) => error.code === "EG_OPERATION_RETRY_DENIED"
+    );
+    assert.equal(
+      journal.load("rpc-command-ambiguous").operation.state,
+      "manual_resolution"
+    );
+    assert.equal(writes, 3);
   } finally {
     journal.close();
     store.close();

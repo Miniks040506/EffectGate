@@ -15,6 +15,10 @@ It remains fixture-only. The configured `memory-patch` profile exercises a
 protected verified effect, but arbitrary backends, real secret-bearing data,
 and production use remain disabled.
 
+The configured profile reopens its SQLite journals on startup, reconciles an
+interrupted dispatch without invoking it again, and publishes no effect tool
+after its one-phase transaction completes.
+
 ## Run
 
 ```powershell
