@@ -360,8 +360,8 @@ The dependency-free suite directly verifies:
   retained/sanitized runner failures, and evidence no-overwrite protection;
 - fail-closed exposure recommendations with measured quality gates, explicit
   review requirements, no policy mutation, and no direct-bypass suggestion;
-- phase/Capsule-bound protected-intent preparation, durable plan/preflight,
-  exact approval admission, content-free digests, and stale-state denial;
+- phase/Capsule-bound protected-intent preparation, exact approval admission,
+  idempotent dispatch, lost-response reconciliation, and stale-state denial;
 - real direct, typed-proxy, and eager fixture process runs with exact-payload
   oracles, byte-proxy schema/result events, and joined P1 token provenance;
 - exact compact search/describe/call/fetch contracts, paged admission,
@@ -420,7 +420,7 @@ The dependency-free suite directly verifies:
 | Cited paging/search/projection plus fail-closed opaque-content withholding | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
 | HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |
 | Basis-aware counters, output guards, optional session ledger, compact mux, real P0–P3 fixture evidence, failure-preserving reports, and review-only exposure recommendations | SQLite-backed evidence and real-host comparison qualification |
-| Phase/Capsule-bound protected-intent preparation and durable approval admission | S3 dispatch, reconciliation, verification, and receipt integration |
+| Phase/Capsule-bound admission plus idempotent dispatch and lost-response reconciliation | S3 postcondition verification and receipt integration |
 | Deterministic local tests | Compatibility, fuzz, latency, and crash qualification |
 | Sanitized public errors | Unified daemon error catalog and operator diagnostics |
 | Node.js PoC | Tested installer and supported-platform matrix |

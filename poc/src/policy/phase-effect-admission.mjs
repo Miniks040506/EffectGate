@@ -1,6 +1,7 @@
 import { compileEffectIntent } from "./effect-intent.mjs";
 import { MAX_CHALLENGE_TTL_MS } from "./approval-lease-contract.mjs";
 import { ApprovalLeaseStore } from "./approval-lease-store.mjs";
+import { prepareIdempotentDispatch } from "./idempotency-adapter.mjs";
 import { EffectOperationJournal } from "./operation-journal.mjs";
 import { evaluatePolicy } from "./policy-compiler.mjs";
 import { deepFreeze } from "../skill/passport-compiler.mjs";
@@ -36,6 +37,15 @@ const ADMIT_KEYS = new Set([
   "leaseToken",
   "intent",
   "effect"
+]);
+const DISPATCH_KEYS = new Set([
+  "operationId",
+  "journal",
+  "effect",
+  "adapter",
+  "request",
+  "deadlineAt",
+  "invoke"
 ]);
 
 export class EffectAdmissionError extends Error {
@@ -199,4 +209,57 @@ export function admitPhaseEffectOperation(input = {}) {
     intent_digest: input.intent.intent_digest,
     approval_proof: proof
   });
+}
+
+export async function dispatchPhaseEffectOperation(input = {}) {
+  if (!input || typeof input !== "object" || Array.isArray(input) ||
+      Object.keys(input).some((key) => !DISPATCH_KEYS.has(key)) ||
+      !(input.journal instanceof EffectOperationJournal) ||
+      typeof input.invoke !== "function") {
+    throw new TypeError("invalid phase effect dispatch");
+  }
+  const current = preparePhaseEffect(input.effect);
+  const operation = EffectOperationJournal.prototype.load.call(
+    input.journal,
+    input.operationId
+  )?.operation;
+  if (operation?.intent_digest !== current.intent.intent_digest) {
+    throw new EffectAdmissionError("intent_changed");
+  }
+  const prepared = prepareIdempotentDispatch({
+    adapter: input.adapter,
+    operation,
+    request: input.request
+  });
+  EffectOperationJournal.prototype.beginDispatch.call(input.journal, {
+    operationId: input.operationId,
+    dispatchDigest: prepared.dispatch_digest,
+    deadlineAt: input.deadlineAt,
+    idempotency: prepared.idempotency
+  });
+  try {
+    await input.invoke(prepared.request);
+    return deepFreeze({
+      schema_version: "1.0.0",
+      status: "executing",
+      operation_id: input.operationId,
+      response_received: true,
+      idempotency: prepared.idempotency
+    });
+  } catch {
+    EffectOperationJournal.prototype.markUncertain.call(input.journal, {
+      operationId: input.operationId,
+      certainty: "commit_possible",
+      evidenceRef: prepared.dispatch_digest,
+      reason: "response_lost_after_dispatch"
+    });
+    return deepFreeze({
+      schema_version: "1.0.0",
+      status: "uncertain",
+      operation_id: input.operationId,
+      response_received: false,
+      safe_reason_code: "response_lost_after_dispatch",
+      idempotency: prepared.idempotency
+    });
+  }
 }

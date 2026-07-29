@@ -11,6 +11,7 @@ import {
 import { compileSkillPassport } from "../src/skill/passport-compiler.mjs";
 import {
   admitPhaseEffectOperation,
+  dispatchPhaseEffectOperation,
   EffectAdmissionError,
   planPhaseEffectOperation,
   preparePhaseEffect
@@ -22,7 +23,13 @@ import {
 import {
   EffectOperationJournal
 } from "../src/policy/operation-journal.mjs";
+import {
+  compileIdempotencyAdapter
+} from "../src/policy/idempotency-adapter.mjs";
 import { compilePolicy } from "../src/policy/policy-compiler.mjs";
+import {
+  compileVerificationProbe
+} from "../src/policy/verification-probe.mjs";
 import { SkillTransaction } from "../src/skill/phase-transaction.mjs";
 import { SkillEventStore } from "../src/skill/skill-event-store.mjs";
 import { SkillSourceError, importSkillSource } from "../src/skill/source-import.mjs";
@@ -221,7 +228,7 @@ test("phase transaction persists and recovers its admissible state", () => {
   }
 });
 
-test("protected intent preparation binds the active phase and Capsule", () => {
+test("protected intent preparation binds the active phase and Capsule", async () => {
   const files = fixture();
   const now = Date.parse("2026-07-28T00:00:00.000Z");
   try {
@@ -408,6 +415,140 @@ test("protected intent preparation binds the active phase and Capsule", () => {
           ({ new_state: state }) => state
         ),
         ["planned", "preflighted", "admitted"]
+      );
+      const adapter = compileIdempotencyAdapter({
+        schema_version: "1.0.0",
+        capability_id: "filesystem.apply_patch",
+        capability_revision: "patch-v1",
+        key_placement: {
+          target: "headers",
+          name: "Idempotency-Key"
+        },
+        lookup: {
+          capability_id: "filesystem.patch.lookup",
+          capability_revision: "lookup-v1",
+          key_argument: "idempotency_key"
+        },
+        qualified_scenarios: [
+          "same_key_same_intent",
+          "same_key_different_intent",
+          "concurrent_duplicate_calls",
+          "server_restart",
+          "response_loss_after_commit"
+        ],
+        qualification_evidence_digest: ARTIFACT_DIGEST
+      });
+      const backend = new Map();
+      let writeCount = 0;
+      let duplicateWriteCount = 0;
+      const lost = await dispatchPhaseEffectOperation({
+        operationId: "operation-allowed",
+        journal: allowJournal,
+        effect: effect({
+          policy: allowPolicy,
+          arguments: { patch: "different admitted patch" }
+        }),
+        adapter,
+        request: {
+          arguments: { patch: "different admitted patch" },
+          headers: {}
+        },
+        deadlineAt: "2026-07-28T00:01:00.000Z",
+        invoke: async (request) => {
+          const key = request.headers["Idempotency-Key"];
+          if (backend.has(key)) {
+            duplicateWriteCount += 1;
+          } else {
+            writeCount += 1;
+            backend.set(key, {
+              intent_digest: allowedOperation.intent.intent_digest,
+              backend_reference: "patch://docs/guide/1"
+            });
+          }
+          throw new Error("MUST_NOT_ESCAPE_RESPONSE_LOSS");
+        }
+      });
+      assert.equal(lost.status, "uncertain");
+      assert.equal(lost.response_received, false);
+      assert.equal(
+        JSON.stringify(lost).includes("MUST_NOT_ESCAPE_RESPONSE_LOSS"),
+        false
+      );
+      const descriptor = compileVerificationProbe({
+        schema_version: "1.0.0",
+        capability_id: "filesystem.apply_patch",
+        capability_revision: "patch-v1",
+        kind: "lookup_by_idempotency_key",
+        probe: {
+          capability_id: "filesystem.patch.lookup",
+          capability_revision: "lookup-v1",
+          effect_class: "observe"
+        },
+        arguments: [{
+          name: "idempotency_key",
+          source: "idempotency_key"
+        }],
+        predicates: {
+          committed: [
+            { path: "/status", equals: { literal: "found" } },
+            {
+              path: "/intent_digest",
+              equals: { source: "intent_digest" }
+            }
+          ],
+          not_committed: [
+            { path: "/status", equals: { literal: "not_found" } }
+          ],
+          ambiguous: [
+            { path: "/status", equals: { literal: "ambiguous" } }
+          ]
+        },
+        limits: {
+          max_attempts: 1,
+          per_attempt_timeout_ms: 50,
+          total_timeout_ms: 100,
+          max_result_bytes: 4096,
+          initial_backoff_ms: 0,
+          max_backoff_ms: 0,
+          observation_window_ms: 0
+        },
+        evidence: {
+          trust_level: "qualified_probe",
+          redaction: "digest_only"
+        },
+        qualification_evidence_digest: ARTIFACT_DIGEST
+      });
+      const completed = await allowJournal.reconcile({
+        operationId: "operation-allowed",
+        descriptor,
+        idempotency: lost.idempotency,
+        invoke: async ({ arguments: lookup }) => {
+          const record = backend.get(lookup.idempotency_key);
+          return {
+            data: record
+              ? {
+                status: "found",
+                intent_digest: record.intent_digest
+              }
+              : { status: "not_found" },
+            evidence_ref: record?.backend_reference ??
+              "patch://docs/guide/absent",
+            evidence_digest: ARTIFACT_DIGEST
+          };
+        },
+        probeNow: () => 0
+      });
+      assert.equal(completed.state, "verified_committed");
+      assert.equal(writeCount, 1);
+      assert.equal(duplicateWriteCount, 0);
+      assert.deepEqual(
+        allowJournal.load("operation-allowed").events.map(
+          ({ new_state: state }) => state
+        ),
+        [
+          "planned", "preflighted", "admitted", "executing", "uncertain",
+          "reconciling", "verified_committed"
+        ]
       );
     } finally {
       allowJournal.close();
