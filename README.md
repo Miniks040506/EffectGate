@@ -421,7 +421,7 @@ The dependency-free suite directly verifies:
 | Cited paging/search/projection plus fail-closed opaque-content withholding | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
 | HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |
 | Basis-aware counters, output guards, optional session ledger, compact mux, real P0–P3 fixture evidence, failure-preserving reports, and review-only exposure recommendations | SQLite-backed evidence and real-host comparison qualification |
-| Phase-bound verified S3 lifecycle with ledger-joined reports | Final MCP/runtime exposure and product flows |
+| Verified S3 lifecycle, joined reports, and transaction-bound RPC reads | Runtime-owned effect commands, MCP publication, and product flows |
 | Deterministic local tests | Compatibility, fuzz, latency, and crash qualification |
 | Sanitized public errors | Unified daemon error catalog and operator diagnostics |
 | Node.js PoC | Tested installer and supported-platform matrix |

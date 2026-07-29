@@ -1,4 +1,5 @@
 import { BYTE_PROXY_COUNTER } from "../budget/token-counter.mjs";
+import { EffectOperationJournal } from "../policy/operation-journal.mjs";
 import { compileInstructionCapsule } from "./capsule-compiler.mjs";
 import { SkillTransaction } from "./phase-transaction.mjs";
 import { SkillSourceError } from "./source-import.mjs";
@@ -13,6 +14,8 @@ const METHODS = new Set([
   "skills/capsule/get",
   "skills/dependency/get",
   "skills/tool/admit",
+  "skills/effect/operation/get",
+  "skills/effect/receipt/get",
   "skills/phase/report",
   "skills/receipts/list"
 ]);
@@ -30,15 +33,24 @@ function rpcError(id, code, message, data) {
 }
 
 export class SkillRpc {
+  #effectJournal;
   #eventStore;
   #ledger;
   #now;
   #skills;
   #transactions = new Map();
 
-  constructor({ skills, eventStore, tokenLedger, now = Date.now } = {}) {
+  constructor({
+    skills,
+    eventStore,
+    effectJournal,
+    tokenLedger,
+    now = Date.now
+  } = {}) {
     if (!Array.isArray(skills) || skills.length < 1 ||
         !eventStore || typeof eventStore.load !== "function" ||
+        (effectJournal !== undefined &&
+          !(effectJournal instanceof EffectOperationJournal)) ||
         (tokenLedger !== undefined &&
           typeof tokenLedger?.append !== "function") ||
         typeof now !== "function") {
@@ -55,6 +67,7 @@ export class SkillRpc {
       }
       this.#skills.set(id, entry);
     }
+    this.#effectJournal = effectJournal;
     this.#eventStore = eventStore;
     this.#ledger = tokenLedger;
     this.#now = now;
@@ -156,6 +169,26 @@ export class SkillRpc {
           effectClass: params.effect_class
         });
       }
+      case "skills/effect/operation/get":
+        return this.#record(
+          this.#effectOperation(
+            this.#transaction(params.transaction_id),
+            params.operation_id
+          ),
+          "verification",
+          "to_host",
+          "verification_overhead_tokens"
+        );
+      case "skills/effect/receipt/get":
+        return this.#record(
+          this.#effectReceipt(
+            this.#transaction(params.transaction_id),
+            params.receipt_id
+          ),
+          "verification",
+          "to_host",
+          "verification_overhead_tokens"
+        );
       case "skills/phase/report": {
         const active = this.#transaction(params.transaction_id);
         const receipt = active.transaction.reportPhaseOutcome({
@@ -185,6 +218,40 @@ export class SkillRpc {
     const skill = this.#skills.get(id);
     if (!skill) failure("EG_SKILL_SOURCE_INVALID", "skill is not registered");
     return skill;
+  }
+
+  #effects() {
+    if (!this.#effectJournal) {
+      failure(
+        "EG_VERIFIED_EFFECT_UNAVAILABLE",
+        "verified effects are unavailable"
+      );
+    }
+    return this.#effectJournal;
+  }
+
+  #effectOperation(active, operationId) {
+    const operation = EffectOperationJournal.prototype.load.call(
+      this.#effects(),
+      operationId
+    )?.operation;
+    if (operation?.transaction_id !==
+        active.transaction.snapshot().transaction_id) {
+      failure("EG_OPERATION_NOT_FOUND", "effect operation does not exist");
+    }
+    return operation;
+  }
+
+  #effectReceipt(active, receiptId) {
+    const receipt = EffectOperationJournal.prototype.loadReceipt.call(
+      this.#effects(),
+      receiptId
+    );
+    if (receipt?.transaction_id !==
+        active.transaction.snapshot().transaction_id) {
+      failure("EG_RECEIPT_NOT_FOUND", "Effect Receipt does not exist");
+    }
+    return receipt;
   }
 
   #transaction(id) {
