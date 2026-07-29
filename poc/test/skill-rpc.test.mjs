@@ -21,8 +21,10 @@ import { compilePolicy } from "../src/policy/policy-compiler.mjs";
 import {
   compileVerificationProbe
 } from "../src/policy/verification-probe.mjs";
+import { MCP_VERSION } from "../src/proxy/mcp-contract.mjs";
 import { compileSkillPassport } from "../src/skill/passport-compiler.mjs";
 import { TokenLedger } from "../src/budget/token-ledger.mjs";
+import { SkillMcp } from "../src/skill/skill-mcp.mjs";
 import { SkillEventStore } from "../src/skill/skill-event-store.mjs";
 import { SkillRpc } from "../src/skill/skill-rpc.mjs";
 import { importSkillSource } from "../src/skill/source-import.mjs";
@@ -635,18 +637,109 @@ test("Skill RPC runs only runtime-owned verified effect commands", async () => {
       transaction_id: "rpc-command-not-committed"
     });
     assert.equal(retained.capsule_digest, capsule.capsule_digest);
-    const notCommitted = await client.requestAsync(
-      "skills/effect/execute",
-      {
-        ...params,
-        transaction_id: "rpc-command-not-committed",
-        operation_id: "rpc-command-absent",
-        receipt_id: "rpc-command-absent-receipt",
-        capsule_digest: retained.capsule_digest,
-        arguments: { patch: "DO_NOT_COMMIT" }
+    const publishedArguments = {
+      transaction_id: "rpc-command-not-committed",
+      operation_id: "rpc-command-absent",
+      receipt_id: "rpc-command-absent-receipt",
+      capsule_digest: retained.capsule_digest,
+      arguments: { patch: "DO_NOT_COMMIT" },
+      resource_scope: params.resource_scope,
+      disclosure_digest: params.disclosure_digest
+    };
+    const mcp = new SkillMcp(rpc);
+    const initialized = await mcp.dispatch({
+      jsonrpc: "2.0",
+      id: "initialize",
+      method: "initialize",
+      params: { protocolVersion: MCP_VERSION }
+    });
+    assert.equal(initialized.result.protocolVersion, MCP_VERSION);
+    await mcp.dispatch({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+      params: {}
+    });
+    const unlisted = await mcp.dispatch({
+      jsonrpc: "2.0",
+      id: "unlisted",
+      method: "tools/call",
+      params: {
+        name: "effectgate_apply_patch",
+        arguments: {
+          ...publishedArguments,
+          operation_id: "rpc-command-unlisted"
+        }
       }
+    });
+    assert.equal(unlisted.error.code, -32602);
+    assert.equal(journal.load("rpc-command-unlisted"), undefined);
+    const listed = await mcp.dispatch({
+      jsonrpc: "2.0",
+      id: "list",
+      method: "tools/list",
+      params: {}
+    });
+    assert.equal(listed.result.tools[0].name, "effectgate_apply_patch");
+    assert.equal(listed.result.tools[0].annotations.readOnlyHint, false);
+    assert.equal(
+      JSON.stringify(listed).includes("capability_revision"),
+      false
     );
+    const injected = await mcp.dispatch({
+      jsonrpc: "2.0",
+      id: "injected",
+      method: "tools/call",
+      params: {
+        name: "effectgate_apply_patch",
+        arguments: {
+          ...publishedArguments,
+          operation_id: "rpc-command-mcp-injected",
+          effect_class: "observe"
+        }
+      }
+    });
+    assert.equal(injected.error.code, -32602);
+    assert.equal(journal.load("rpc-command-mcp-injected"), undefined);
+    const denied = await mcp.dispatch({
+      jsonrpc: "2.0",
+      id: "denied",
+      method: "tools/call",
+      params: {
+        name: "effectgate_apply_patch",
+        arguments: {
+          ...publishedArguments,
+          operation_id: "rpc-command-mcp-denied",
+          capsule_digest: digest("f"),
+          arguments: { patch: "MUST_NOT_ESCAPE_MCP_ERROR" }
+        }
+      }
+    });
+    assert.equal(denied.result.isError, true);
+    assert.match(
+      denied.result.structuredContent.effectgate_code,
+      /^EG_/u
+    );
+    assert.equal(
+      JSON.stringify(denied).includes("MUST_NOT_ESCAPE_MCP_ERROR"),
+      false
+    );
+    assert.equal(journal.load("rpc-command-mcp-denied"), undefined);
+    const notCommittedResponse = await mcp.dispatch({
+      jsonrpc: "2.0",
+      id: "call",
+      method: "tools/call",
+      params: {
+        name: "effectgate_apply_patch",
+        arguments: publishedArguments
+      }
+    });
+    const notCommitted = notCommittedResponse.result.structuredContent;
     assert.equal(notCommitted.status, "verified_not_committed");
+    assert.equal(notCommittedResponse.result.isError, false);
+    assert.equal(
+      JSON.stringify(notCommittedResponse).includes("DO_NOT_COMMIT"),
+      false
+    );
     assert.equal(
       journal.loadReceipt("rpc-command-absent-receipt"),
       undefined

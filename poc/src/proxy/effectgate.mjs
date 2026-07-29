@@ -56,12 +56,15 @@ import {
   loadHostCompatibilityEvidence,
   withNativeDeferralMetadata
 } from "./host-compatibility.mjs";
+import {
+  EFFECTGATE_VERSION,
+  MAX_TOOL_RESULT_BYTES,
+  MCP_VERSION
+} from "./mcp-contract.mjs";
 
 export const MAX_FRAME_BYTES = 1024 * 1024;
-export const MAX_TOOL_RESULT_BYTES = 64 * 1024;
 export const DEFAULT_MAX_SESSION_EMITTED_TOKENS = 256 * 1024;
-export const MCP_VERSION = "2025-11-25";
-export const EFFECTGATE_VERSION = "0.17.0";
+export { EFFECTGATE_VERSION, MAX_TOOL_RESULT_BYTES, MCP_VERSION };
 const MAX_PENDING_REQUESTS = 64;
 const MAX_ID_BYTES = 128;
 const CURSOR_INPUT_PATTERN = new RegExp(CURSOR_PATTERN, "u");
