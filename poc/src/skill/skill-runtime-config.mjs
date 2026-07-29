@@ -22,7 +22,9 @@ const CONFIG_KEYS = [
   "skill_source_digest", "transaction_id", "principal_id", "client_id",
   "target_path", "resource_scope"
 ];
-const SOURCE_PATHS = ["SKILL.md", "phases/modify.md"];
+export const SKILL_SOURCE_PATHS = Object.freeze([
+  "SKILL.md", "phases/modify.md"
+]);
 const TOOL_NAME = "effectgate_apply_verified_patch";
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
@@ -43,7 +45,7 @@ function bounded(value, maximum) {
     !value.includes("\0") && value === value.normalize("NFC");
 }
 
-function normalizeConfig(value) {
+export function normalizeSkillMcpConfig(value) {
   const keys = value?.driver === STDIO_EFFECT_DRIVER
     ? [...CONFIG_KEYS, "backend_source_digest"]
     : CONFIG_KEYS;
@@ -90,7 +92,7 @@ export function loadSkillMcpConfig(file) {
   } catch {
     throw new TypeError("invalid Skill MCP configuration");
   }
-  return normalizeConfig(value);
+  return normalizeSkillMcpConfig(value);
 }
 
 function rpcCall(rpc, id, method, params) {
@@ -108,7 +110,7 @@ export async function createConfiguredSkillMcp(configFile) {
   mkdirSync(config.state_directory, { recursive: true, mode: 0o700 });
   const source = importSkillSource({
     root: config.skill_root,
-    paths: SOURCE_PATHS,
+    paths: SKILL_SOURCE_PATHS,
     expectedDigest: config.skill_source_digest
   });
   const passport = compileSkillPassport({

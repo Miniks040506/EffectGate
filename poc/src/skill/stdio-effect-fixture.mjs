@@ -49,15 +49,15 @@ function toolResult(status, isError = false) {
 }
 
 export function runReviewedStdioEffectFixture(args) {
-  if (args.length !== 4 || args[0] !== "--state" ||
+  const probe = args.length === 1 && args[0] === "--probe";
+  if (!probe && (args.length !== 4 || args[0] !== "--state" ||
       args[2] !== "--target" || !bounded(args[1], 1024) ||
-      !bounded(args[3], 512)) {
+      !bounded(args[3], 512))) {
     throw new TypeError("invalid reviewed fixture arguments");
   }
-  const stateFile = resolve(args[1]);
-  const targetPath = args[3];
-  const database = new DatabaseSync(stateFile);
-  database.exec(`
+  const targetPath = probe ? "__effectgate_doctor_probe__" : args[3];
+  const database = probe ? null : new DatabaseSync(resolve(args[1]));
+  database?.exec(`
     CREATE TABLE IF NOT EXISTS fixture_config (
       singleton INTEGER PRIMARY KEY CHECK(singleton=1),
       target_path TEXT NOT NULL
@@ -69,14 +69,14 @@ export function runReviewedStdioEffectFixture(args) {
       committed_at TEXT NOT NULL
     ) STRICT;
   `);
-  const configured = database.prepare(
+  const configured = database?.prepare(
     "SELECT target_path FROM fixture_config WHERE singleton=1"
   ).get();
   if (configured && configured.target_path !== targetPath) {
     database.close();
     throw new Error("reviewed fixture target mismatch");
   }
-  database.prepare(
+  database?.prepare(
     "INSERT OR IGNORE INTO fixture_config VALUES (1, ?)"
   ).run(targetPath);
   let lifecycle = "new";
@@ -105,6 +105,10 @@ export function runReviewedStdioEffectFixture(args) {
       }
       if (message.method === "tools/list") {
         reply(response(id, { tools: [PATCH_TOOL, LOOKUP_TOOL] }));
+        return;
+      }
+      if (probe) {
+        reply(response(id, toolResult("probe_read_only", true)));
         return;
       }
       if (message.method !== "tools/call" ||
@@ -160,11 +164,11 @@ export function runReviewedStdioEffectFixture(args) {
       reply(response(id, toolResult("committed")));
     },
     onError() {
-      database.close();
+      database?.close();
       process.exit(2);
     },
     onEnd() {
-      database.close();
+      database?.close();
     }
   });
 }

@@ -133,14 +133,11 @@ class StdioSession {
   #nextId = 0;
   #pending = new Map();
 
-  constructor({ stateFile, targetPath, cwd }) {
-    this.#child = spawn(process.execPath, [
-      fixtureFile,
-      "--state",
-      stateFile,
-      "--target",
-      targetPath
-    ], {
+  constructor({ stateFile, targetPath, cwd, probe = false }) {
+    const args = probe
+      ? [fixtureFile, "--probe"]
+      : [fixtureFile, "--state", stateFile, "--target", targetPath];
+    this.#child = spawn(process.execPath, args, {
       cwd,
       env: backendEnvironment(),
       shell: false,
@@ -317,4 +314,19 @@ export async function createReviewedStdioEffectBackend({
       return session?.close() ?? Promise.resolve();
     }
   };
+}
+
+export async function probeReviewedStdioEffectBackend({
+  cwd, expectedSourceDigest
+} = {}) {
+  if (!bounded(cwd, 1024) || !DIGEST.test(expectedSourceDigest ?? "") ||
+      sourceDigest() !== expectedSourceDigest) {
+    throw new TypeError("invalid reviewed stdio backend probe");
+  }
+  const session = new StdioSession({ cwd, probe: true });
+  try {
+    await session.initialize(expectedSourceDigest);
+  } finally {
+    await session.close();
+  }
 }

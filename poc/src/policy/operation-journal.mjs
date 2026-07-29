@@ -54,18 +54,23 @@ export class EffectOperationJournal {
   #now;
 
   constructor({ file, now = Date.now,
-    monotonic = () => performance.now() } = {}) {
+    monotonic = () => performance.now(), readOnly = false } = {}) {
     if (!boundedOperationValue(file, 1024) ||
-        typeof now !== "function" || typeof monotonic !== "function") {
+        typeof now !== "function" || typeof monotonic !== "function" ||
+        typeof readOnly !== "boolean") {
       throw new TypeError("invalid operation journal configuration");
     }
     const databaseFile = resolve(file);
-    mkdirSync(dirname(databaseFile), { recursive: true, mode: 0o700 });
-    this.#database = new DatabaseSync(databaseFile);
-    this.#database.exec(OPERATION_SCHEMA);
-    this.#database.exec(IDEMPOTENCY_SCHEMA);
-    this.#database.exec(RECONCILIATION_SCHEMA);
-    this.#database.exec(EFFECT_RECEIPT_SCHEMA);
+    if (!readOnly) {
+      mkdirSync(dirname(databaseFile), { recursive: true, mode: 0o700 });
+    }
+    this.#database = new DatabaseSync(databaseFile, { readOnly });
+    if (!readOnly) {
+      this.#database.exec(OPERATION_SCHEMA);
+      this.#database.exec(IDEMPOTENCY_SCHEMA);
+      this.#database.exec(RECONCILIATION_SCHEMA);
+      this.#database.exec(EFFECT_RECEIPT_SCHEMA);
+    }
     this.#now = now;
     this.#monotonic = monotonic;
   }
@@ -462,6 +467,22 @@ export class EffectOperationJournal {
       ORDER BY operations.created_at, operations.operation_id`).all();
     return deepFreeze(rows.map(({ operation_id: operationId, receipt_id }) => ({
       operation: this.load(operationId).operation,
+      receipt_id: receipt_id ?? null
+    })));
+  }
+
+  listTransaction(transactionId, limit = 100) {
+    if (!boundedOperationValue(transactionId, 128) ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new TypeError("invalid operation journal query");
+    }
+    const rows = this.#database.prepare(`SELECT operations.operation_id,
+      effect_receipts.receipt_id FROM operations
+      LEFT JOIN effect_receipts USING(operation_id)
+      WHERE transaction_id=? ORDER BY operations.created_at,
+        operations.operation_id LIMIT ?`).all(transactionId, limit);
+    return deepFreeze(rows.map(({ operation_id, receipt_id }) => ({
+      operation: this.load(operation_id).operation,
       receipt_id: receipt_id ?? null
     })));
   }

@@ -65,14 +65,19 @@ PRAGMA user_version=1;
 export class SkillEventStore {
   #database;
 
-  constructor({ file } = {}) {
+  constructor({ file, readOnly = false } = {}) {
     if (typeof file !== "string" || file.length < 1) {
       fail("event store file must be a non-empty path");
     }
+    if (typeof readOnly !== "boolean") {
+      fail("event store readOnly must be boolean");
+    }
     const databaseFile = resolve(file);
-    mkdirSync(dirname(databaseFile), { recursive: true, mode: 0o700 });
-    this.#database = new DatabaseSync(databaseFile);
-    this.#database.exec(SCHEMA);
+    if (!readOnly) {
+      mkdirSync(dirname(databaseFile), { recursive: true, mode: 0o700 });
+    }
+    this.#database = new DatabaseSync(databaseFile, { readOnly });
+    if (!readOnly) this.#database.exec(SCHEMA);
   }
 
   startTransaction({ transactionId, passportDigest, skillDigest,
