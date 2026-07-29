@@ -101,6 +101,10 @@ The current preview assumes:
   fixture persists only its target, content digest, idempotency key, and commit
   time in a separate SQLite file. An ambiguous recovered outcome stops the
   configured server for manual resolution.
+- Operator `doctor`, `status`, and `receipt` inspection opens existing
+  databases read-only. Doctor's reviewed-backend reachability check performs
+  only initialization and tool-contract discovery through a no-state fixture
+  mode; it cannot invoke the effect tool or create the backend database.
 - Redaction is a versioned preview heuristic limited to assignment values,
   bearer tokens, and selected token prefixes. It is not comprehensive
   secret/PII detection or protection. More than 4,096 detected spans fails

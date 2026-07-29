@@ -42,6 +42,20 @@ Serve the reviewed verified-effect fixture described in the root README:
 node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp skill serve --config /absolute/path/to/effectgate.json
 ```
 
+Create and inspect that configuration through the non-interactive operator
+commands:
+
+```text
+node src/proxy/effectgate.mjs init --config /path/effectgate.json --state /path/state --skill-root /path/skill --target docs/guide.md --transaction reviewed-transaction --dry-run --json
+node src/proxy/effectgate.mjs doctor --config /path/effectgate.json --json
+node src/proxy/effectgate.mjs status --config /path/effectgate.json --json
+node src/proxy/effectgate.mjs receipt --config /path/effectgate.json --id RECEIPT_ID --json
+```
+
+Use `--apply` instead of `--dry-run` only after reviewing the generated paths.
+Init never overwrites an existing configuration. Doctor's backend handshake and
+all status/receipt database access are non-mutating.
+
 Optionally lower the default 262,144-token local output ceiling:
 
 ```text

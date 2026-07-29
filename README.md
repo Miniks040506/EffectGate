@@ -331,7 +331,29 @@ claude mcp add --transport stdio effectgate -- node /absolute/path/to/EffectGate
 ### Configured verified-effect fixture
 
 Create a reviewed skill root containing `SKILL.md` and `phases/modify.md`.
-Calculate its pinned digest:
+The operator CLI can pin both source digests and create the reviewed stdio
+configuration without overwriting an existing file. Preview first:
+
+```powershell
+node .\poc\src\proxy\effectgate.mjs init --config D:\path\to\effectgate.json --state D:\path\to\effectgate-state --skill-root D:\path\to\skill --target docs/guide.md --transaction reviewed-transaction --dry-run --json
+```
+
+Replace `--dry-run` with `--apply` after reviewing the paths. Diagnose without
+starting the MCP runtime or creating a backend database:
+
+```powershell
+node .\poc\src\proxy\effectgate.mjs doctor --config D:\path\to\effectgate.json
+node .\poc\src\proxy\effectgate.mjs status --config D:\path\to\effectgate.json
+node .\poc\src\proxy\effectgate.mjs receipt --config D:\path\to\effectgate.json --id RECEIPT_ID
+```
+
+Add `--json` to any inspection command for stable machine-readable output.
+`doctor` opens existing databases read-only, performs an exact no-state stdio
+handshake, and reports the missing preview approval channel as a warning.
+`status` and `receipt` validate persisted chains and never expose raw effect
+arguments.
+
+For manual configuration, calculate the skill's pinned digest:
 
 ```powershell
 node --input-type=module -e "import { importSkillSource } from './poc/src/skill/source-import.mjs'; console.log(importSkillSource({root: process.argv[1], paths: ['SKILL.md', 'phases/modify.md']}).source_digest)" "D:\path\to\skill"
