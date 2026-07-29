@@ -11,6 +11,7 @@ import {
 import { compileSkillPassport } from "../src/skill/passport-compiler.mjs";
 import {
   admitPhaseEffectOperation,
+  completePhaseEffectOperation,
   dispatchPhaseEffectOperation,
   EffectAdmissionError,
   planPhaseEffectOperation,
@@ -474,6 +475,18 @@ test("protected intent preparation binds the active phase and Capsule", async ()
         JSON.stringify(lost).includes("MUST_NOT_ESCAPE_RESPONSE_LOSS"),
         false
       );
+      assert.throws(() => completePhaseEffectOperation({
+        operationId: "operation-allowed",
+        receiptId: "receipt-operation-allowed",
+        journal: allowJournal,
+        transaction
+      }), (error) =>
+        error instanceof EffectAdmissionError &&
+        error.safeReasonCode === "verification_required");
+      assert.equal(
+        allowJournal.loadReceipt("receipt-operation-allowed"),
+        undefined
+      );
       const descriptor = compileVerificationProbe({
         schema_version: "1.0.0",
         capability_id: "filesystem.apply_patch",
@@ -550,31 +563,64 @@ test("protected intent preparation binds the active phase and Capsule", async ()
           "reconciling", "verified_committed"
         ]
       );
+      assert.throws(() => prepare({
+        transaction: { admitTool: () => prepared.admission }
+      }), TypeError);
+      const driftedPolicy = compilePolicy({
+        policyId: "skill-protected",
+        rules: [{
+          id: "ask-other-capsule",
+          match: { ...match, capsule_digest: ARTIFACT_DIGEST },
+          decision: "ask"
+        }]
+      });
+      assert.throws(() => prepare({ policy: driftedPolicy }), (error) =>
+        error instanceof EffectAdmissionError &&
+        error.code === "EG_EFFECT_ADMISSION_DENIED" &&
+        error.safeReasonCode === "policy_default_deny");
+
+      const completion = completePhaseEffectOperation({
+        operationId: "operation-allowed",
+        receiptId: "receipt-operation-allowed",
+        journal: allowJournal,
+        transaction
+      });
+      assert.equal(
+        completion.effect_receipt.final_state,
+        "verified_committed"
+      );
+      assert.equal(
+        completion.effect_receipt.verification_evidence_digest,
+        completed.reconciliation.outcome.outcome_digest
+      );
+      assert.deepEqual(
+        completion.phase_receipt.effect_receipt_refs,
+        ["receipt://effect/receipt-operation-allowed"]
+      );
+      assert.deepEqual(transaction.snapshot(), {
+        transaction_id: "transaction-protected",
+        status: "completed",
+        current_phase: null,
+        next_phase_revision: 1,
+        active_capsule_digest: null,
+        receipt_count: 1
+      });
+      assert.deepEqual(
+        allowJournal.loadReceipt("receipt-operation-allowed"),
+        completion.effect_receipt
+      );
+      assert.throws(() => completePhaseEffectOperation({
+        operationId: "operation-allowed",
+        receiptId: "receipt-operation-allowed",
+        journal: allowJournal,
+        transaction
+      }), (error) =>
+        error instanceof EffectAdmissionError &&
+        error.safeReasonCode === "phase_changed");
+      assertCode("EG_PHASE_TRANSITION_DENIED", prepare);
     } finally {
       allowJournal.close();
     }
-    assert.throws(() => prepare({
-      transaction: { admitTool: () => prepared.admission }
-    }), TypeError);
-
-    const driftedPolicy = compilePolicy({
-      policyId: "skill-protected",
-      rules: [{
-        id: "ask-other-capsule",
-        match: { ...match, capsule_digest: ARTIFACT_DIGEST },
-        decision: "ask"
-      }]
-    });
-    assert.throws(() => prepare({ policy: driftedPolicy }), (error) =>
-      error instanceof EffectAdmissionError &&
-      error.code === "EG_EFFECT_ADMISSION_DENIED" &&
-      error.safeReasonCode === "policy_default_deny");
-
-    transaction.reportPhaseOutcome({
-      capsuleDigest: capsule.capsule_digest,
-      status: "completed"
-    });
-    assertCode("EG_PHASE_TRANSITION_DENIED", prepare);
   } finally {
     files.close();
   }

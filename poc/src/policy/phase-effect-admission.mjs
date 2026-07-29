@@ -47,6 +47,13 @@ const DISPATCH_KEYS = new Set([
   "deadlineAt",
   "invoke"
 ]);
+const COMPLETE_KEYS = new Set([
+  "operationId",
+  "receiptId",
+  "journal",
+  "transaction",
+  "signer"
+]);
 
 export class EffectAdmissionError extends Error {
   constructor(safeReasonCode) {
@@ -262,4 +269,71 @@ export async function dispatchPhaseEffectOperation(input = {}) {
       idempotency: prepared.idempotency
     });
   }
+}
+
+export function completePhaseEffectOperation(input = {}) {
+  if (!input || typeof input !== "object" || Array.isArray(input) ||
+      Object.keys(input).some((key) => !COMPLETE_KEYS.has(key)) ||
+      !(input.journal instanceof EffectOperationJournal) ||
+      !(input.transaction instanceof SkillTransaction)) {
+    throw new TypeError("invalid phase effect completion");
+  }
+  const operation = EffectOperationJournal.prototype.load.call(
+    input.journal,
+    input.operationId
+  )?.operation;
+  if (operation?.state !== "verified_committed" ||
+      operation.certainty !== "verified_committed") {
+    throw new EffectAdmissionError("verification_required");
+  }
+  const phase = SkillTransaction.prototype.snapshot.call(
+    input.transaction
+  );
+  if (operation.transaction_id !== phase.transaction_id ||
+      operation.phase !== phase.current_phase ||
+      operation.phase_revision !== phase.next_phase_revision ||
+      operation.capsule_digest !== phase.active_capsule_digest) {
+    throw new EffectAdmissionError("phase_changed");
+  }
+  let receipt = EffectOperationJournal.prototype.loadReceipt.call(
+    input.journal,
+    input.receiptId
+  );
+  if (receipt === undefined) {
+    receipt = EffectOperationJournal.prototype.issueReceipt.call(
+      input.journal,
+      {
+        receiptId: input.receiptId,
+        operationId: input.operationId,
+        signer: input.signer ?? null
+      }
+    );
+  }
+  if (receipt.operation_id !== operation.operation_id ||
+      receipt.intent_digest !== operation.intent_digest ||
+      receipt.transaction_id !== operation.transaction_id ||
+      receipt.phase !== operation.phase ||
+      receipt.phase_revision !== operation.phase_revision ||
+      receipt.capsule_digest !== operation.capsule_digest ||
+      receipt.final_state !== "verified_committed") {
+    throw new EffectAdmissionError("receipt_mismatch");
+  }
+  const phaseReceipt =
+    SkillTransaction.prototype.reportPhaseOutcome.call(
+      input.transaction,
+      {
+        capsuleDigest: operation.capsule_digest,
+        status: "completed",
+        effectReceiptRefs: [
+          `receipt://effect/${receipt.receipt_id}`
+        ]
+      }
+    );
+  return deepFreeze({
+    schema_version: "1.0.0",
+    status: "completed",
+    operation_id: input.operationId,
+    effect_receipt: receipt,
+    phase_receipt: phaseReceipt
+  });
 }
