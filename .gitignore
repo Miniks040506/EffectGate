@@ -13,6 +13,7 @@
 /contracts/*
 !/contracts/context-view.schema.json
 !/contracts/benchmark-report.schema.json
+!/contracts/exposure-recommendation.schema.json
 !/contracts/effect-receipt.schema.json
 !/contracts/effect-operation.schema.json
 !/contracts/idempotency-adapter.schema.json

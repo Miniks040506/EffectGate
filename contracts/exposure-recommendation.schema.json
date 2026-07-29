@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effectgate.dev/v1/exposure-recommendation.schema.json",
+  "title": "EffectGate V1 Exposure Recommendation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "recommendation_id",
+    "report_digest",
+    "evidence_digest",
+    "task_id",
+    "threshold_revision",
+    "status",
+    "suggested_profile",
+    "current_default_profile",
+    "review_required",
+    "automatic_application",
+    "policy_mutation_allowed",
+    "gates",
+    "reasons"
+  ],
+  "properties": {
+    "kind": {"const": "effectgate_exposure_recommendation"},
+    "schema_version": {"const": "1.0.0"},
+    "recommendation_id": {"$ref": "#/$defs/digest"},
+    "report_digest": {"$ref": "#/$defs/digest"},
+    "evidence_digest": {"$ref": "#/$defs/digest"},
+    "task_id": {
+      "type": "string",
+      "pattern": "^BENCH-[A-Z0-9-]{1,64}$"
+    },
+    "threshold_revision": {"$ref": "#/$defs/digest"},
+    "status": {"enum": ["suggested", "hold"]},
+    "suggested_profile": {
+      "oneOf": [
+        {"enum": ["native_deferred", "compact_mux"]},
+        {"type": "null"}
+      ]
+    },
+    "current_default_profile": {"const": "native_deferred"},
+    "review_required": {"const": true},
+    "automatic_application": {"const": false},
+    "policy_mutation_allowed": {"const": false},
+    "gates": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/gate"}
+    },
+    "reasons": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/reason"}
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"status": {"const": "hold"}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {"suggested_profile": {"type": "null"}}
+      }
+    },
+    {
+      "if": {
+        "properties": {"status": {"const": "suggested"}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "suggested_profile": {
+            "enum": ["native_deferred", "compact_mux"]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "reason": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]{0,127}$"
+    },
+    "profile": {
+      "oneOf": [
+        {
+          "enum": [
+            "P0_NATIVE_DEFAULT",
+            "P1_EG_TYPED",
+            "P2_EG_MUX"
+          ]
+        },
+        {"type": "null"}
+      ]
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gate",
+        "profile",
+        "passed",
+        "observed",
+        "threshold",
+        "safe_reason_code"
+      ],
+      "properties": {
+        "gate": {"$ref": "#/$defs/reason"},
+        "profile": {"$ref": "#/$defs/profile"},
+        "passed": {"type": "boolean"},
+        "observed": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "threshold": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "safe_reason_code": {"$ref": "#/$defs/reason"}
+      }
+    }
+  }
+}
