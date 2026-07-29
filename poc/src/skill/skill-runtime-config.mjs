@@ -11,8 +11,12 @@ import { SkillMcp } from "./skill-mcp.mjs";
 import { compileSkillPassport, deepFreeze } from "./passport-compiler.mjs";
 import { SkillRpc } from "./skill-rpc.mjs";
 import { importSkillSource } from "./source-import.mjs";
+import {
+  STDIO_EFFECT_DRIVER,
+  createReviewedStdioEffectBackend
+} from "./stdio-effect-adapter.mjs";
 
-const DRIVER = "effectgate.fixture.memory-patch.v1";
+const MEMORY_DRIVER = "effectgate.fixture.memory-patch.v1";
 const CONFIG_KEYS = [
   "schema_version", "driver", "state_directory", "skill_root",
   "skill_source_digest", "transaction_id", "principal_id", "client_id",
@@ -40,10 +44,15 @@ function bounded(value, maximum) {
 }
 
 function normalizeConfig(value) {
+  const keys = value?.driver === STDIO_EFFECT_DRIVER
+    ? [...CONFIG_KEYS, "backend_source_digest"]
+    : CONFIG_KEYS;
   const targetSegments = value?.target_path?.split("/");
-  if (!exactData(value, CONFIG_KEYS) ||
+  if (!exactData(value, keys) ||
       value.schema_version !== "1.0.0" ||
-      value.driver !== DRIVER ||
+      ![MEMORY_DRIVER, STDIO_EFFECT_DRIVER].includes(value.driver) ||
+      (value.driver === STDIO_EFFECT_DRIVER &&
+        !DIGEST.test(value.backend_source_digest ?? "")) ||
       !bounded(value.state_directory, 1024) ||
       !bounded(value.skill_root, 1024) ||
       !DIGEST.test(value.skill_source_digest ?? "") ||
@@ -141,6 +150,7 @@ export async function createConfiguredSkillMcp(configFile) {
   const journal = new EffectOperationJournal({
     file: join(config.state_directory, "effect-operations.db")
   });
+  let backend;
   try {
     const setup = new SkillRpc({
       skills: [skill], eventStore: store, effectJournal: journal
@@ -173,7 +183,7 @@ export async function createConfiguredSkillMcp(configFile) {
           transaction_id: config.transaction_id
         }).capsule_digest);
     const policyFor = (capsuleDigest) => compilePolicy({
-      policyId: "configured-memory-patch",
+      policyId: "configured-reviewed-patch",
       rules: [{
         id: "allow-reviewed-patch",
         decision: "allow",
@@ -204,7 +214,9 @@ export async function createConfiguredSkillMcp(configFile) {
         "concurrent_duplicate_calls", "server_restart",
         "response_loss_after_commit"
       ],
-      qualification_evidence_digest: digest(`${DRIVER}:idempotency`)
+      qualification_evidence_digest: digest(
+        `${config.driver}:${config.backend_source_digest ?? ""}:idempotency`
+      )
     });
     const descriptor = compileVerificationProbe({
       schema_version: "1.0.0",
@@ -231,8 +243,10 @@ export async function createConfiguredSkillMcp(configFile) {
       },
       limits: {
         max_attempts: 1,
-        per_attempt_timeout_ms: 50,
-        total_timeout_ms: 100,
+        per_attempt_timeout_ms:
+          config.driver === STDIO_EFFECT_DRIVER ? 2000 : 50,
+        total_timeout_ms:
+          config.driver === STDIO_EFFECT_DRIVER ? 2500 : 100,
         max_result_bytes: 4096,
         initial_backoff_ms: 0,
         max_backoff_ms: 0,
@@ -242,9 +256,32 @@ export async function createConfiguredSkillMcp(configFile) {
         trust_level: "qualified_probe",
         redaction: "digest_only"
       },
-      qualification_evidence_digest: digest(`${DRIVER}:probe`)
+      qualification_evidence_digest: digest(
+        `${config.driver}:${config.backend_source_digest ?? ""}:probe`
+      )
     });
-    const backend = new Map();
+    if (config.driver === STDIO_EFFECT_DRIVER) {
+      backend = await createReviewedStdioEffectBackend({
+        stateFile: join(
+          config.state_directory,
+          "stdio-effect-backend.db"
+        ),
+        targetPath: config.target_path,
+        cwd: config.skill_root,
+        expectedSourceDigest: config.backend_source_digest
+      });
+    } else {
+      const memory = new Map();
+      backend = {
+        async apply({ path, content, idempotencyKey }) {
+          memory.set(idempotencyKey, { path, content });
+        },
+        async lookup(idempotencyKey) {
+          return memory.has(idempotencyKey) ? "found" : "not_found";
+        },
+        close() {}
+      };
+    }
     const command = {
       policy: policyFor(recoveryCapsuleDigest),
       adapter,
@@ -256,7 +293,7 @@ export async function createConfiguredSkillMcp(configFile) {
         name: TOOL_NAME,
         title: "Apply Verified Fixture Patch",
         description:
-          "Applies one reviewed in-memory fixture patch and verifies it.",
+          "Applies one reviewed fixture patch and verifies it.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -276,20 +313,25 @@ export async function createConfiguredSkillMcp(configFile) {
         scope.kind === "exact" &&
         scope.value === config.resource_scope,
       invoke: async (request) => {
-        backend.set(request.headers["Idempotency-Key"], {
+        await backend.apply({
           path: request.arguments.path,
-          content: request.arguments.content
+          content: request.arguments.content,
+          idempotencyKey: request.headers["Idempotency-Key"]
         });
       },
-      verify: async ({ arguments: lookup }) => ({
-        data: {
-          status: backend.has(lookup.idempotency_key)
-            ? "found"
-            : "not_found"
-        },
-        evidence_ref: `memory://${config.target_path}`,
-        evidence_digest: digest(`${DRIVER}:evidence`)
-      })
+      verify: async ({ arguments: lookup }) => {
+        const status = await backend.lookup(lookup.idempotency_key);
+        return {
+          data: { status },
+          evidence_ref:
+            `${config.driver === STDIO_EFFECT_DRIVER ? "stdio" : "memory"}` +
+            `://${config.target_path}`,
+          evidence_digest: digest(
+            `${config.driver}:${config.backend_source_digest ?? ""}:` +
+            `evidence:${status}`
+          )
+        };
+      }
     };
     const rpc = new SkillRpc({
       skills: [skill],
@@ -334,12 +376,14 @@ export async function createConfiguredSkillMcp(configFile) {
     }
     return {
       mcp: published,
-      close() {
+      async close() {
+        await backend?.close();
         journal.close();
         store.close();
       }
     };
   } catch (error) {
+    await backend?.close();
     journal.close();
     store.close();
     throw error;

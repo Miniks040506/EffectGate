@@ -294,10 +294,11 @@ The default `mcp serve` proxy is **not**:
 
 The separate configured fixture command exercises the existing approval,
 journal, idempotency, verification, and receipt kernel against an in-memory
-reviewed driver. EffectGate restarts recover its journal and reconcile
-interrupted dispatches without blindly repeating them. The fixture backend
-itself is not restart-durable, and the command does not authorize external
-programs, imported modules, or production writes.
+reviewed driver or the exact bundled stdio fixture. EffectGate restarts
+recover its journal and reconcile interrupted dispatches without blindly
+repeating them. The memory backend is not restart-durable; the stdio fixture
+stores idempotency evidence in its own SQLite file. Neither driver authorizes
+arbitrary programs, imported modules, or production writes.
 
 Read the full [security policy](SECURITY.md) for reporting, supported versions,
 the current threat boundary, and known limitations.
@@ -352,6 +353,25 @@ Then create a configuration containing only the built-in fixture driver:
   "resource_scope": "repo:fixture/path:docs/guide.md"
 }
 ```
+
+To exercise the reviewed child-process adapter, calculate the bundled adapter
+digest:
+
+```powershell
+node --input-type=module -e "import { stdioEffectAdapterSourceDigest as digest } from './poc/src/skill/stdio-effect-adapter.mjs'; console.log(digest())"
+```
+
+Change `driver` to `effectgate.fixture.stdio-patch.v1` and add:
+
+```json
+"backend_source_digest": "sha256:REPLACE_WITH_THE_REPORTED_DIGEST"
+```
+
+This profile fixes the executable to the current Node binary, fixes argv to
+the bundled fixture, fixes the working directory to `skill_root`, inherits
+only the documented environment allowlist, validates the exact MCP server and
+tool contracts, and persists fixture idempotency records in
+`stdio-effect-backend.db`.
 
 Connect an MCP client using:
 
@@ -412,6 +432,9 @@ The dependency-free suite directly verifies:
   idempotent dispatch, lost-response reconciliation, verified Effect/Phase
   Receipts, startup recovery without duplicate dispatch, and stale-state
   denial;
+- digest-pinned reviewed stdio effect initialization, exact tool-contract
+  validation, concurrent duplicate suppression, intent-drift rejection,
+  timeout/crash recovery, and backend restart persistence;
 - real direct, typed-proxy, and eager fixture process runs with exact-payload
   oracles, byte-proxy schema/result events, and joined P1 token provenance;
 - exact compact search/describe/call/fetch contracts, paged admission,
@@ -463,14 +486,14 @@ The dependency-free suite directly verifies:
 
 | Available in this preview | Evidence-gated product direction |
 |---|---|
-| Fixture-only stdio proxy | Reviewed stdio MCP backend adapters |
+| Fixture-only read proxy plus one digest-pinned reviewed stdio effect fixture | Reviewed third-party stdio MCP backend adapters |
 | Typed read-only admission | Signed/pinned backend capability passports |
 | Exact-build Claude Code 2.1.220 Tool Search evidence plus evidence-gated metadata | Automatic build-identity transport and multi-version RC evidence |
 | Quota-limited partitioned filesystem CAS with explicit invalidation | Durable metadata, shared-writer locking, crash-root recovery, and production GC |
 | Cited paging/search/projection plus fail-closed opaque-content withholding | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
 | HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |
 | Basis-aware counters, output guards, optional session ledger, compact mux, real P0–P3 fixture evidence, failure-preserving reports, and review-only exposure recommendations | SQLite-backed evidence and real-host comparison qualification |
-| Verified S3 lifecycle, runtime-owned effect RPC, bounded MCP publication, configured fixture stdio, and interrupted-command startup reconciliation | Reviewed external-backend adapters, multi-process crash qualification, and product flows |
+| Verified S3 lifecycle, runtime-owned effect RPC, bounded MCP publication, configured fixture stdio, interrupted-command startup reconciliation, and durable reviewed child-process effect fixture | Third-party backend review flows, broader crash qualification, and product flows |
 | Deterministic local tests | Compatibility, fuzz, latency, and crash qualification |
 | Sanitized public errors | Unified daemon error catalog and operator diagnostics |
 | Node.js PoC | Tested installer and supported-platform matrix |
