@@ -15,9 +15,12 @@ It remains fixture-only. The configured `memory-patch` profile exercises a
 protected verified effect, but arbitrary backends, real secret-bearing data,
 and production use remain disabled.
 
-The configured profile reopens its SQLite journals on startup, reconciles an
-interrupted dispatch without invoking it again, and publishes no effect tool
-after its one-phase transaction completes.
+The configured profiles reopen their SQLite journals on startup, reconcile an
+interrupted dispatch without invoking it again, and publish no effect tool
+after their one-phase transaction completes. The optional
+`effectgate.fixture.stdio-patch.v1` driver additionally launches only the
+digest-pinned bundled stdio fixture and persists its idempotency records across
+child-process restarts.
 
 ## Run
 

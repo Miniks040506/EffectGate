@@ -81,8 +81,8 @@ out of scope until those features exist.
 The current preview assumes:
 
 - the operating-system user, local Node.js runtime, and checkout are trusted;
-- only bundled deterministic fixtures and the exact built-in memory-patch
-  driver are available;
+- only bundled deterministic fixtures, the exact built-in memory-patch
+  driver, and the digest-pinned bundled stdio-patch fixture are available;
 - MCP clients may send malformed or adversarial protocol input;
 - the fixture may generate documented synthetic secret sentinels but contains
   no real credentials or personal data;
@@ -97,8 +97,10 @@ The current preview assumes:
 - There is no authentication, encryption, tenant isolation, or operator
   approval UI. The configured fixture has a persistent operation journal and
   startup reconciliation that never blindly repeats an interrupted dispatch,
-  but its in-memory backend state does not survive a restart. An ambiguous
-  recovered outcome stops the configured server for manual resolution.
+  but the memory backend state does not survive a restart. The reviewed stdio
+  fixture persists only its target, content digest, idempotency key, and commit
+  time in a separate SQLite file. An ambiguous recovered outcome stops the
+  configured server for manual resolution.
 - Redaction is a versioned preview heuristic limited to assignment values,
   bearer tokens, and selected token prefixes. It is not comprehensive
   secret/PII detection or protection. More than 4,096 detected spans fails
