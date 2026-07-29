@@ -10,12 +10,18 @@ import {
 } from "../src/skill/capsule-compiler.mjs";
 import { compileSkillPassport } from "../src/skill/passport-compiler.mjs";
 import {
+  admitPhaseEffectOperation,
   EffectAdmissionError,
+  planPhaseEffectOperation,
   preparePhaseEffect
 } from "../src/policy/phase-effect-admission.mjs";
 import {
+  ApprovalLeaseError,
   ApprovalLeaseStore
 } from "../src/policy/approval-lease-store.mjs";
+import {
+  EffectOperationJournal
+} from "../src/policy/operation-journal.mjs";
 import { compilePolicy } from "../src/policy/policy-compiler.mjs";
 import { SkillTransaction } from "../src/skill/phase-transaction.mjs";
 import { SkillEventStore } from "../src/skill/skill-event-store.mjs";
@@ -241,7 +247,7 @@ test("protected intent preparation binds the active phase and Capsule", () => {
       policyId: "skill-protected",
       rules: [{ id: "ask-modify", match, decision: "ask" }]
     });
-    const prepare = (overrides = {}) => preparePhaseEffect({
+    const effect = (overrides = {}) => ({
       transaction,
       capsule,
       capsuleDigest: capsule.capsule_digest,
@@ -262,6 +268,8 @@ test("protected intent preparation binds the active phase and Capsule", () => {
       now: () => now,
       ...overrides
     });
+    const prepare = (overrides = {}) =>
+      preparePhaseEffect(effect(overrides));
     const prepared = prepare();
     assert.equal(prepared.status, "approval_required");
     assert.equal(prepared.approval_required, true);
@@ -278,22 +286,93 @@ test("protected intent preparation binds the active phase and Capsule", () => {
       false
     );
     assert.ok(Object.isFrozen(prepared.intent.resource_scope));
+    const operationFile = join(
+      dirname(files.databaseFile),
+      "protected-operation.db"
+    );
     const approval = new ApprovalLeaseStore({
-      file: join(dirname(files.databaseFile), "approval.db"),
+      file: operationFile,
+      now: () => now,
+      monotonic: () => 1000
+    });
+    const journal = new EffectOperationJournal({
+      file: operationFile,
       now: () => now,
       monotonic: () => 1000
     });
     try {
-      const challenge = approval.createChallenge({
-        intent: prepared.intent
+      const pending = planPhaseEffectOperation({
+        operationId: "operation-protected",
+        journal,
+        approvals: approval,
+        effect: effect()
       });
+      assert.equal(pending.status, "awaiting_approval");
+      assert.equal(pending.approval_required, true);
       const lease = approval.approveChallenge({
-        challengeId: challenge.challenge_id,
+        challengeId: pending.challenge.challenge_id,
         approverId: "operator-local",
         channel: "cli"
       });
-      assert.equal(lease.intent_digest, prepared.intent.intent_digest);
+      assert.throws(() => admitPhaseEffectOperation({
+        operationId: "operation-protected",
+        approvals: approval,
+        leaseToken: lease.lease_token,
+        intent: pending.intent,
+        effect: effect({
+          arguments: { patch: "materially changed patch" }
+        })
+      }), (error) =>
+        error instanceof EffectAdmissionError &&
+        error.safeReasonCode === "intent_changed");
+      assert.equal(
+        journal.load("operation-protected").operation.state,
+        "awaiting_approval"
+      );
+      const admitted = admitPhaseEffectOperation({
+        operationId: "operation-protected",
+        approvals: approval,
+        leaseToken: lease.lease_token,
+        intent: pending.intent,
+        effect: effect()
+      });
+      assert.equal(admitted.status, "admitted");
+      assert.equal(
+        admitted.approval_proof.intent_digest,
+        pending.intent.intent_digest
+      );
+      assert.deepEqual(
+        journal.load("operation-protected").events.map(
+          ({ new_state: state }) => state
+        ),
+        ["planned", "preflighted", "awaiting_approval", "admitted"]
+      );
+      assert.throws(() => admitPhaseEffectOperation({
+        operationId: "operation-protected",
+        approvals: approval,
+        leaseToken: lease.lease_token,
+        intent: pending.intent,
+        effect: effect()
+      }), ApprovalLeaseError);
+
+      assert.throws(() => planPhaseEffectOperation({
+        operationId: "operation-no-approval-store",
+        journal,
+        effect: effect()
+      }), (error) =>
+        error instanceof EffectAdmissionError &&
+        error.safeReasonCode === "approval_unavailable");
+      assert.equal(journal.load("operation-no-approval-store"), undefined);
+      assert.throws(() => planPhaseEffectOperation({
+        operationId: "operation-invalid-challenge",
+        journal,
+        approvals: approval,
+        effect: effect(),
+        challengeTtlMs: 0
+      }), TypeError);
+      assert.equal(journal.load("operation-invalid-challenge"), undefined);
     } finally {
+      journal.close();
       approval.close();
     }
 
@@ -304,6 +383,35 @@ test("protected intent preparation binds the active phase and Capsule", () => {
     const allowed = prepare({ policy: allowPolicy });
     assert.equal(allowed.status, "policy_allowed");
     assert.equal(allowed.approval_required, false);
+    const allowFile = join(
+      dirname(files.databaseFile),
+      "allowed-operation.db"
+    );
+    const allowJournal = new EffectOperationJournal({
+      file: allowFile,
+      now: () => now,
+      monotonic: () => 1000
+    });
+    try {
+      const allowedOperation = planPhaseEffectOperation({
+        operationId: "operation-allowed",
+        journal: allowJournal,
+        effect: effect({
+          policy: allowPolicy,
+          arguments: { patch: "different admitted patch" }
+        })
+      });
+      assert.equal(allowedOperation.status, "admitted");
+      assert.equal(allowedOperation.challenge, null);
+      assert.deepEqual(
+        allowJournal.load("operation-allowed").events.map(
+          ({ new_state: state }) => state
+        ),
+        ["planned", "preflighted", "admitted"]
+      );
+    } finally {
+      allowJournal.close();
+    }
     assert.throws(() => prepare({
       transaction: { admitTool: () => prepared.admission }
     }), TypeError);
