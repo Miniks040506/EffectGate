@@ -12,6 +12,7 @@ import {
   verifyVerificationProbe
 } from "../policy/verification-probe.mjs";
 import { compileInstructionCapsule } from "./capsule-compiler.mjs";
+import { deepFreeze } from "./passport-compiler.mjs";
 import { SkillTransaction } from "./phase-transaction.mjs";
 import { SkillSourceError } from "./source-import.mjs";
 import { skillReferencePath } from "./skill-graph.mjs";
@@ -19,6 +20,13 @@ import { skillReferencePath } from "./skill-graph.mjs";
 const CAPSULE_TTL_MS = 5 * 60 * 1000;
 const EFFECT_TTL_MS = 5 * 60 * 1000;
 const DISPATCH_TTL_MS = 60 * 1000;
+const EFFECT_CLASSES = new Set([
+  "observe", "disclose", "mutate_reversible", "mutate_irreversible",
+  "destructive", "external_commit", "credential_use", "code_execution"
+]);
+const EXTERNAL_EFFECTS = new Set([
+  "disclose", "external_commit", "credential_use", "code_execution"
+]);
 const ASYNC_METHODS = new Set(["skills/effect/execute"]);
 const METHODS = new Set([
   "skills/list",
@@ -82,21 +90,126 @@ function runtimeId(value) {
     !value.includes("\0") && value === value.normalize("NFC");
 }
 
+function effectTool(command) {
+  const tool = command.tool;
+  let inputSchema;
+  try {
+    inputSchema = structuredClone(tool?.inputSchema);
+  } catch {
+    throw new TypeError("invalid effect command tool");
+  }
+  const schemaBytes = Buffer.byteLength(JSON.stringify(inputSchema));
+  if (!tool || typeof tool !== "object" || Array.isArray(tool) ||
+      Reflect.ownKeys(tool).length !== 4 ||
+      !["name", "title", "description", "inputSchema"].every(
+        (key) => Object.hasOwn(tool, key)
+      ) ||
+      !/^[A-Za-z0-9_.-]{1,128}$/u.test(tool.name ?? "") ||
+      !runtimeId(tool.title) ||
+      typeof tool.description !== "string" ||
+      Buffer.byteLength(tool.description, "utf8") > 2048 ||
+      !inputSchema || typeof inputSchema !== "object" ||
+      Array.isArray(inputSchema) || inputSchema.type !== "object" ||
+      inputSchema.additionalProperties !== false ||
+      schemaBytes > 32 * 1024) {
+    throw new TypeError("invalid effect command tool");
+  }
+  const identifier = {
+    type: "string",
+    minLength: 1,
+    maxLength: 128,
+    pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+  };
+  const digest = {
+    type: "string",
+    pattern: "^sha256:[a-f0-9]{64}$"
+  };
+  return deepFreeze({
+    contract: {
+      name: tool.name,
+      title: tool.title,
+      description: tool.description,
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "transaction_id", "operation_id", "receipt_id", "capsule_digest",
+          "arguments", "resource_scope", "disclosure_digest"
+        ],
+        properties: {
+          transaction_id: identifier,
+          operation_id: identifier,
+          receipt_id: identifier,
+          capsule_digest: digest,
+          arguments: inputSchema,
+          resource_scope: {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "value"],
+            properties: {
+              kind: { type: "string", enum: ["exact", "prefix"] },
+              value: { type: "string", minLength: 1, maxLength: 2048 }
+            }
+          },
+          disclosure_digest: digest
+        }
+      },
+      outputSchema: {
+        type: "object",
+        oneOf: [
+          { required: ["schema_version", "status", "operation_id"] },
+          { required: ["effectgate_code"] }
+        ],
+        properties: {
+          schema_version: { const: "1.0.0" },
+          status: {
+            type: "string",
+            enum: [
+              "completed", "verified_not_committed", "manual_resolution"
+            ]
+          },
+          operation_id: identifier,
+          effect_receipt: { type: "object" },
+          phase_receipt: { type: "object" },
+          effectgate_code: {
+            type: "string",
+            pattern: "^EG_[A-Z0-9_]+$"
+          },
+          safe_reason_code: { type: "string", maxLength: 128 }
+        }
+      },
+      annotations: {
+        readOnlyHint: command.effectClass === "observe",
+        destructiveHint: !["observe", "mutate_reversible"].includes(
+          command.effectClass
+        ),
+        idempotentHint: true,
+        openWorldHint: EXTERNAL_EFFECTS.has(command.effectClass)
+      }
+    },
+    capability_id: command.adapter.capability_id,
+    capability_revision: command.adapter.capability_revision,
+    effect_class: command.effectClass
+  });
+}
+
 function effectCommandRegistry(commands = []) {
   if (!Array.isArray(commands)) {
     throw new TypeError("invalid effect command registry");
   }
   const registry = new Map();
+  const toolNames = new Set();
   for (const command of commands) {
     const keys = [
       "policy", "adapter", "descriptor", "principalId", "clientId",
-      "invoke", "verify"
+      "effectClass", "tool", "invoke", "verify"
     ];
     if (!command || typeof command !== "object" || Array.isArray(command) ||
         Reflect.ownKeys(command).length !== keys.length ||
         keys.some((key) => !Object.hasOwn(command, key)) ||
         !runtimeId(command.principalId) ||
         !runtimeId(command.clientId) ||
+        !EFFECT_CLASSES.has(command.effectClass) ||
         typeof command.invoke !== "function" ||
         typeof command.verify !== "function") {
       throw new TypeError("invalid effect command registry");
@@ -107,14 +220,16 @@ function effectCommandRegistry(commands = []) {
       command.adapter.capability_id,
       command.adapter.capability_revision
     );
-    if (registry.has(key) ||
+    const publication = effectTool(command);
+    if (registry.has(key) || toolNames.has(publication.contract.name) ||
         command.descriptor.capability_id !==
           command.adapter.capability_id ||
         command.descriptor.capability_revision !==
           command.adapter.capability_revision) {
       throw new TypeError("invalid effect command registry");
     }
-    registry.set(key, Object.freeze({ ...command }));
+    toolNames.add(publication.contract.name);
+    registry.set(key, Object.freeze({ ...command, publication }));
   }
   return registry;
 }
@@ -200,6 +315,13 @@ export class SkillRpc {
     } catch (error) {
       return caughtError(id, error);
     }
+  }
+
+  effectTools() {
+    return [...this.#effectCommands.values()]
+      .map(({ publication }) => publication)
+      .sort((left, right) =>
+        left.contract.name < right.contract.name ? -1 : 1);
   }
 
   #call(method, params) {
@@ -340,6 +462,9 @@ export class SkillRpc {
         "EG_EFFECT_COMMAND_UNAVAILABLE",
         "effect command is unavailable"
       );
+    }
+    if (params.effect_class !== command.effectClass) {
+      failure("EG_EFFECT_COMMAND_INVALID", "effect command is invalid");
     }
     const current = this.#now();
     if (!Number.isFinite(current)) {

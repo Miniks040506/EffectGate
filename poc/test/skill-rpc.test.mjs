@@ -531,7 +531,7 @@ test("Skill RPC runs only runtime-owned verified effect commands", async () => {
     });
     const backend = new Set();
     let writes = 0;
-    const client = new SkillRpcClient(new SkillRpc({
+    const rpc = new SkillRpc({
       skills: [skill],
       eventStore: store,
       effectJournal: journal,
@@ -541,6 +541,20 @@ test("Skill RPC runs only runtime-owned verified effect commands", async () => {
         descriptor,
         principalId: "principal-local",
         clientId: "effectgate-rpc",
+        effectClass: "mutate_reversible",
+        tool: {
+          name: "effectgate_apply_patch",
+          title: "Apply Verified Patch",
+          description: "Applies and verifies one phase-bound patch.",
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["patch"],
+            properties: {
+              patch: { type: "string", maxLength: 4096 }
+            }
+          }
+        },
         invoke: async (request) => {
           if (request.arguments.patch !== "DO_NOT_COMMIT") {
             writes += 1;
@@ -558,7 +572,8 @@ test("Skill RPC runs only runtime-owned verified effect commands", async () => {
         })
       }],
       now: () => now
-    }));
+    });
+    const client = new SkillRpcClient(rpc);
     const params = {
       transaction_id: "rpc-command-owner",
       operation_id: "rpc-command-operation",
