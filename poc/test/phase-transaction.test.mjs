@@ -9,6 +9,14 @@ import {
   instructionCapsuleDigest
 } from "../src/skill/capsule-compiler.mjs";
 import { compileSkillPassport } from "../src/skill/passport-compiler.mjs";
+import {
+  EffectAdmissionError,
+  preparePhaseEffect
+} from "../src/policy/phase-effect-admission.mjs";
+import {
+  ApprovalLeaseStore
+} from "../src/policy/approval-lease-store.mjs";
+import { compilePolicy } from "../src/policy/policy-compiler.mjs";
 import { SkillTransaction } from "../src/skill/phase-transaction.mjs";
 import { SkillEventStore } from "../src/skill/skill-event-store.mjs";
 import { SkillSourceError, importSkillSource } from "../src/skill/source-import.mjs";
@@ -203,6 +211,122 @@ test("phase transaction persists and recovers its admissible state", () => {
     assert.equal(expired.active_capsule_digest, null);
   } finally {
     store.close();
+    files.close();
+  }
+});
+
+test("protected intent preparation binds the active phase and Capsule", () => {
+  const files = fixture();
+  const now = Date.parse("2026-07-28T00:00:00.000Z");
+  try {
+    const transaction = new SkillTransaction({
+      transactionId: "transaction-protected",
+      passport: files.passport,
+      initialPhase: "modify",
+      now: () => now
+    });
+    const capsule = files.capsule("modify", 1);
+    transaction.activateCapsule(capsule);
+    const match = {
+      skill_id: files.passport.skill.id,
+      skill_digest: files.passport.skill.source_digest,
+      phase: "modify",
+      phase_revision: 1,
+      capsule_digest: capsule.capsule_digest,
+      capability_id: "filesystem.apply_patch",
+      capability_revision: "patch-v1",
+      effect_class: "mutate_reversible"
+    };
+    const policy = compilePolicy({
+      policyId: "skill-protected",
+      rules: [{ id: "ask-modify", match, decision: "ask" }]
+    });
+    const prepare = (overrides = {}) => preparePhaseEffect({
+      transaction,
+      capsule,
+      capsuleDigest: capsule.capsule_digest,
+      capabilityId: "filesystem.apply_patch",
+      capabilityRevision: "patch-v1",
+      effectClass: "mutate_reversible",
+      policy,
+      principalId: "principal-local",
+      clientId: "effectgate-test",
+      sessionId: "session-protected",
+      arguments: { patch: "MUST_NOT_APPEAR_IN_PREPARATION" },
+      resourceScope: {
+        kind: "exact",
+        value: "repo:effectgate/path:docs/guide.md"
+      },
+      disclosureDigest: ARTIFACT_DIGEST,
+      expiresAt: "2026-07-28T00:05:00.000Z",
+      now: () => now,
+      ...overrides
+    });
+    const prepared = prepare();
+    assert.equal(prepared.status, "approval_required");
+    assert.equal(prepared.approval_required, true);
+    assert.equal(prepared.intent.skill_digest, match.skill_digest);
+    assert.equal(prepared.intent.phase, match.phase);
+    assert.equal(prepared.intent.phase_revision, match.phase_revision);
+    assert.equal(prepared.intent.capsule_digest, match.capsule_digest);
+    assert.equal(
+      prepared.intent.capability_revision,
+      match.capability_revision
+    );
+    assert.equal(
+      JSON.stringify(prepared).includes("MUST_NOT_APPEAR_IN_PREPARATION"),
+      false
+    );
+    assert.ok(Object.isFrozen(prepared.intent.resource_scope));
+    const approval = new ApprovalLeaseStore({
+      file: join(dirname(files.databaseFile), "approval.db"),
+      now: () => now,
+      monotonic: () => 1000
+    });
+    try {
+      const challenge = approval.createChallenge({
+        intent: prepared.intent
+      });
+      const lease = approval.approveChallenge({
+        challengeId: challenge.challenge_id,
+        approverId: "operator-local",
+        channel: "cli"
+      });
+      assert.equal(lease.intent_digest, prepared.intent.intent_digest);
+    } finally {
+      approval.close();
+    }
+
+    const allowPolicy = compilePolicy({
+      policyId: "skill-protected",
+      rules: [{ id: "allow-modify", match, decision: "allow" }]
+    });
+    const allowed = prepare({ policy: allowPolicy });
+    assert.equal(allowed.status, "policy_allowed");
+    assert.equal(allowed.approval_required, false);
+    assert.throws(() => prepare({
+      transaction: { admitTool: () => prepared.admission }
+    }), TypeError);
+
+    const driftedPolicy = compilePolicy({
+      policyId: "skill-protected",
+      rules: [{
+        id: "ask-other-capsule",
+        match: { ...match, capsule_digest: ARTIFACT_DIGEST },
+        decision: "ask"
+      }]
+    });
+    assert.throws(() => prepare({ policy: driftedPolicy }), (error) =>
+      error instanceof EffectAdmissionError &&
+      error.code === "EG_EFFECT_ADMISSION_DENIED" &&
+      error.safeReasonCode === "policy_default_deny");
+
+    transaction.reportPhaseOutcome({
+      capsuleDigest: capsule.capsule_digest,
+      status: "completed"
+    });
+    assertCode("EG_PHASE_TRANSITION_DENIED", prepare);
+  } finally {
     files.close();
   }
 });
