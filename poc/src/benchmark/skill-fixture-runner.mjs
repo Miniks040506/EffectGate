@@ -181,6 +181,21 @@ const measureVisible = (values) => BYTE_PROXY_COUNTER.measure({
   content: values.map(JSON.stringify).join("\n")
 });
 
+function recordTokens(
+  ledger, values, stage, category, direction = "to_host"
+) {
+  const content = values.map(JSON.stringify).join("\n");
+  const tokenCount = BYTE_PROXY_COUNTER.measure({ content });
+  ledger.append({
+    stage,
+    direction,
+    tokenCount,
+    bytes: Buffer.byteLength(content),
+    category
+  });
+  return tokenCount;
+}
+
 async function runS3Profile(context, skill, workspace, startedAt) {
   const store = new SkillEventStore({
     file: join(workspace, `${context.runId}-skill.db`)
@@ -189,6 +204,13 @@ async function runS3Profile(context, skill, workspace, startedAt) {
     file: join(workspace, `${context.runId}-effect.db`),
     now: () => NOW,
     monotonic: () => 1000
+  });
+  const ledger = new TokenLedger({
+    file: join(workspace, `${context.runId}.jsonl`),
+    runId: context.runId,
+    sessionId: context.pairId,
+    profile: context.ledgerProfile,
+    now: () => NOW
   });
   try {
     const transaction = new SkillTransaction({
@@ -349,6 +371,30 @@ async function runS3Profile(context, skill, workspace, startedAt) {
       verify,
       verifyReceipt
     ];
+    const skillCatalogTokens = recordTokens(
+      ledger, visible.slice(0, 2), "skill_catalog",
+      "skill_catalog_tokens_emitted"
+    );
+    const skillInstructionTokens = recordTokens(
+      ledger, [inspect, modify, verify], "skill_instruction",
+      "skill_instruction_tokens_emitted"
+    );
+    const instructionFetchTokens = recordTokens(
+      ledger, [reference], "instruction_dependency",
+      "instruction_dependency_fetch_tokens"
+    );
+    const phaseReceiptTokens = recordTokens(
+      ledger, phaseReceipts, "phase_receipt",
+      "phase_receipt_tokens_emitted"
+    );
+    const verificationTokens = recordTokens(
+      ledger,
+      [verified.reconciliation, completion.effect_receipt],
+      "verification",
+      "verification_overhead_tokens",
+      "internal"
+    );
+    ledger.verify();
     return {
       ...metricBase(startedAt, visible),
       task_success:
@@ -361,19 +407,17 @@ async function runS3Profile(context, skill, workspace, startedAt) {
         duplicates === 0,
       fetch_count: 1,
       tool_call_count: 3,
-      skill_catalog_tokens: measureVisible(visible.slice(0, 2)),
-      skill_instruction_tokens: measureVisible([inspect, modify, verify]),
+      skill_catalog_tokens: skillCatalogTokens,
+      skill_instruction_tokens: skillInstructionTokens,
       instruction_fetch_count: 1,
-      instruction_fetch_tokens: measureVisible([reference]),
-      phase_receipt_tokens: measureVisible(phaseReceipts),
-      verification_tokens: measureVisible([
-        verified.reconciliation,
-        completion.effect_receipt
-      ]),
+      instruction_fetch_tokens: instructionFetchTokens,
+      phase_receipt_tokens: phaseReceiptTokens,
+      verification_tokens: verificationTokens,
       wrong_phase_transition: !wrongPhaseDenied,
       duplicate_write_count: duplicates
     };
   } finally {
+    ledger.close();
     journal.close();
     store.close();
   }

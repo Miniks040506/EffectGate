@@ -37,8 +37,9 @@ test("Skill profiles share a fixture and retain verified S3 evidence", async () 
       profiles.S1_FULL_LOAD_DIAGNOSTIC.metrics.skill_instruction_tokens.value > 0
     );
     assert.ok(s2.skill_instruction_tokens.value > 0);
-    assert.equal(profiles.S3_EG_CAPSULE_VERIFIED.status, "completed");
-    const s3 = profiles.S3_EG_CAPSULE_VERIFIED.metrics;
+    const s3Event = profiles.S3_EG_CAPSULE_VERIFIED;
+    assert.equal(s3Event.status, "completed");
+    const s3 = s3Event.metrics;
     assert.equal(s3.task_success, true);
     assert.equal(s3.duplicate_write_count, 0);
     assert.equal(s3.wrong_phase_transition, false);
@@ -48,6 +49,46 @@ test("Skill profiles share a fixture and retain verified S3 evidence", async () 
     const retained = readdirSync(workspace);
     assert.ok(retained.some((name) => name.endsWith("-effect.db")));
     assert.ok(retained.some((name) => name.endsWith("-skill.db")));
+    const ledgerText = readFileSync(
+      join(workspace, `${s3Event.run_id}.jsonl`),
+      "utf8"
+    );
+    const [ledgerHeader, ...ledgerEntries] = ledgerText.trimEnd()
+      .split("\n").map(JSON.parse);
+    assert.equal(ledgerHeader.run_id, s3Event.run_id);
+    assert.equal(ledgerHeader.session_id, s3Event.pair_id);
+    assert.equal(ledgerHeader.profile, "native_deferred");
+    const ledgerValues = Object.fromEntries(ledgerEntries.map((entry) => [
+      entry.safe_metadata.category,
+      entry.token_count.value
+    ]));
+    assert.deepEqual(new Set(Object.keys(ledgerValues)), new Set([
+      "skill_catalog_tokens_emitted",
+      "skill_instruction_tokens_emitted",
+      "instruction_dependency_fetch_tokens",
+      "phase_receipt_tokens_emitted",
+      "verification_overhead_tokens"
+    ]));
+    assert.equal(
+      ledgerValues.skill_instruction_tokens_emitted,
+      s3.skill_instruction_tokens.value
+    );
+    assert.equal(
+      ledgerValues.instruction_dependency_fetch_tokens,
+      s3.instruction_fetch_tokens.value
+    );
+    assert.equal(
+      ledgerValues.phase_receipt_tokens_emitted,
+      s3.phase_receipt_tokens.value
+    );
+    assert.equal(
+      ledgerValues.verification_overhead_tokens,
+      s3.verification_tokens.value
+    );
+    assert.doesNotMatch(
+      ledgerText,
+      /Verified fixture content|Inspection reference|response loss/iu
+    );
     const records = readFileSync(file, "utf8").trimEnd()
       .split("\n").map(JSON.parse);
     assert.deepEqual(records, [result.header, ...result.events]);
