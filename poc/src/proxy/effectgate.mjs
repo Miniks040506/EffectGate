@@ -91,7 +91,8 @@ const TOKEN_LEDGER_PROFILES = new Set([
   "eager_diagnostic"
 ]);
 const SERVE_USAGE =
-  "Usage: effectgate.mjs fixture | mcp skill serve --config FILE | " +
+  "Usage: effectgate.mjs init|doctor|status|receipt ... | fixture | " +
+  "mcp skill serve --config FILE | " +
   "mcp serve [--source NAME] " +
   "[--max-session-emitted-tokens COUNT] [--token-ledger FILE] " +
   "[--run-id ID] [--profile PROFILE] [--host-evidence FILE]";
@@ -1824,6 +1825,14 @@ export function runProxy(args) {
 }
 
 export async function main(args = process.argv.slice(2)) {
+  if (["init", "doctor", "status", "receipt"].includes(args[0])) {
+    const { runOperatorCli } = await import(
+      "../operator/operator-cli.mjs"
+    );
+    process.exitCode = await runOperatorCli(args);
+    return;
+  }
+
   if (args[0] === "fixture" && args.length === 1) {
     runFixture();
     return;
