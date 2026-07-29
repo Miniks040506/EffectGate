@@ -11,8 +11,9 @@ retained artifact   -> fetch / literal search / JSON or JSONL projection
                     -> CSV or TSV projection / Markdown heading extraction
 ```
 
-It remains fixture-only. Arbitrary backends, protected effects, real
-secret-bearing data, and production use are disabled.
+It remains fixture-only. The configured `memory-patch` profile exercises a
+protected verified effect, but arbitrary backends, real secret-bearing data,
+and production use remain disabled.
 
 ## Run
 
@@ -26,6 +27,12 @@ Point an MCP stdio client at:
 
 ```text
 node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp serve
+```
+
+Serve the reviewed verified-effect fixture described in the root README:
+
+```text
+node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp skill serve --config /absolute/path/to/effectgate.json
 ```
 
 Optionally lower the default 262,144-token local output ceiling:

@@ -5,8 +5,10 @@
 EffectGate is currently a fixture-only Phase 1 preview. It includes a bounded,
 filesystem-backed Context View path with deterministic high-signal credential
 redaction, conservative opaque-content withholding, and volatile session
-metadata. It is not production-ready and must not be used to protect real tool
-effects, secrets, or untrusted external backends.
+metadata. A separate configured profile exercises protected effects against a
+reviewed in-memory fixture with a persistent local journal. It is not
+production-ready and must not be used to protect real tool effects, secrets,
+or untrusted external backends.
 
 ## Supported versions
 
@@ -52,7 +54,8 @@ Reports are especially useful when they demonstrate:
 
 - a bypass of frame, pending-request, timeout, or backpressure limits;
 - invocation of a tool outside the admitted public catalog;
-- access to an arbitrary backend or protected/write operation;
+- access to an arbitrary backend or a protected/write operation outside the
+  exact configured fixture binding;
 - leakage of raw backend errors, process data, credentials, or hidden names;
 - protocol confusion, request-correlation failure, or namespace collision;
 - skipped, duplicated, oversized, or uncited Context View bytes;
@@ -78,7 +81,8 @@ out of scope until those features exist.
 The current preview assumes:
 
 - the operating-system user, local Node.js runtime, and checkout are trusted;
-- only the bundled deterministic fixture is launched;
+- only bundled deterministic fixtures and the exact built-in memory-patch
+  driver are available;
 - MCP clients may send malformed or adversarial protocol input;
 - the fixture may generate documented synthetic secret sentinels but contains
   no real credentials or personal data;
@@ -90,8 +94,10 @@ The current preview assumes:
 
 - The fixture child runs with the current user's operating-system permissions;
   EffectGate is not an OS sandbox.
-- There is no authentication, encryption, tenant isolation, persistent audit
-  journal, approval flow, or reconciliation.
+- There is no authentication, encryption, tenant isolation, or operator
+  approval UI. The configured fixture has a persistent operation journal and
+  reconciliation evidence, but its in-memory backend state does not survive a
+  restart.
 - Redaction is a versioned preview heuristic limited to assignment values,
   bearer tokens, and selected token prefixes. It is not comprehensive
   secret/PII detection or protection. More than 4,096 detected spans fails

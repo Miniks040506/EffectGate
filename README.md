@@ -24,7 +24,8 @@
 > [!CAUTION]
 > **This is a fixture-only Phase 1 preview.** Its bounded Context View path is
 > real and tested, but its small heuristic ruleset is not comprehensive secret
-> protection. It cannot launch arbitrary backends, execute writes, or provide a
+> protection. Its configured effect path writes only to an in-memory fixture;
+> it cannot launch arbitrary backends, execute production writes, or provide a
 > production security boundary.
 
 EffectGate is being built to sit between an AI host and its MCP tools. The
@@ -281,16 +282,20 @@ The preview treats MCP input as adversarial but trusts the local
 operating-system user, the Node.js runtime, and the checked-out repository
 files.
 
-It is **not**:
+The default `mcp serve` proxy is **not**:
 
 - an operating-system sandbox;
 - an authentication or encryption layer;
 - a comprehensive secret/PII detector or tenant-isolation system;
 - a durable indexed CAS or end-to-end streaming backend adapter;
 - a durable audit journal;
-- an approval, verification, or reconciliation engine;
 - an independent JSON Schema validator for tool-call arguments;
 - approved for external backends, protected effects, or production use.
+
+The separate configured fixture command exercises the existing approval,
+journal, idempotency, verification, and receipt kernel against an in-memory
+reviewed driver. Its backend state is not restart-durable and it does not
+authorize external programs, imported modules, or production writes.
 
 Read the full [security policy](SECURITY.md) for reporting, supported versions,
 the current threat boundary, and known limitations.
@@ -319,6 +324,43 @@ For Claude Code:
 ```powershell
 claude mcp add --transport stdio effectgate -- node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp serve
 ```
+
+### Configured verified-effect fixture
+
+Create a reviewed skill root containing `SKILL.md` and `phases/modify.md`.
+Calculate its pinned digest:
+
+```powershell
+node --input-type=module -e "import { importSkillSource } from './poc/src/skill/source-import.mjs'; console.log(importSkillSource({root: process.argv[1], paths: ['SKILL.md', 'phases/modify.md']}).source_digest)" "D:\path\to\skill"
+```
+
+Then create a configuration containing only the built-in fixture driver:
+
+```json
+{
+  "schema_version": "1.0.0",
+  "driver": "effectgate.fixture.memory-patch.v1",
+  "state_directory": "D:\\path\\to\\effectgate-state",
+  "skill_root": "D:\\path\\to\\skill",
+  "skill_source_digest": "sha256:REPLACE_WITH_64_HEX_CHARACTERS",
+  "transaction_id": "reviewed-transaction",
+  "principal_id": "local-operator",
+  "client_id": "local-mcp-client",
+  "target_path": "docs/guide.md",
+  "resource_scope": "repo:fixture/path:docs/guide.md"
+}
+```
+
+Connect an MCP client using:
+
+```text
+node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp skill serve --config /absolute/path/to/effectgate.json
+```
+
+The published tool hides and runtime-binds the transaction, Capsule,
+capability revision, effect class, policy, idempotency adapter, and
+verification probe. Only operation/receipt IDs, the declared patch arguments,
+the exact resource scope, and a disclosure digest remain caller inputs.
 
 After discovery:
 
@@ -421,7 +463,7 @@ The dependency-free suite directly verifies:
 | Cited paging/search/projection plus fail-closed opaque-content withholding | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
 | HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |
 | Basis-aware counters, output guards, optional session ledger, compact mux, real P0–P3 fixture evidence, failure-preserving reports, and review-only exposure recommendations | SQLite-backed evidence and real-host comparison qualification |
-| Verified S3 lifecycle, runtime-owned effect RPC, and bounded in-process MCP publication | Reviewed command configuration, stdio wiring, and product flows |
+| Verified S3 lifecycle, runtime-owned effect RPC, bounded MCP publication, and configured fixture stdio | Reviewed external-backend adapters, restart recovery, and product flows |
 | Deterministic local tests | Compatibility, fuzz, latency, and crash qualification |
 | Sanitized public errors | Unified daemon error catalog and operator diagnostics |
 | Node.js PoC | Tested installer and supported-platform matrix |

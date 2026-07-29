@@ -2,6 +2,7 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
@@ -76,7 +77,8 @@ const TOKEN_LEDGER_PROFILES = new Set([
   "eager_diagnostic"
 ]);
 const SERVE_USAGE =
-  "Usage: effectgate.mjs fixture | mcp serve [--source NAME] " +
+  "Usage: effectgate.mjs fixture | mcp skill serve --config FILE | " +
+  "mcp serve [--source NAME] " +
   "[--max-session-emitted-tokens COUNT] [--token-ledger FILE] " +
   "[--run-id ID] [--profile PROFILE] [--host-evidence FILE]";
 const SESSION_OUTPUT_LIMIT_MESSAGE =
@@ -869,6 +871,51 @@ export function runFixture() {
           ? `The request exceeds the ${MAX_FRAME_BYTES}-byte frame limit.`
           : "The request is not valid UTF-8 JSON.";
       reply(errorMessage(null, code, message));
+    }
+  });
+}
+
+export function runConfiguredSkillMcp(runtime) {
+  if (!runtime?.mcp || typeof runtime.mcp.dispatch !== "function" ||
+      typeof runtime.close !== "function") {
+    throw new TypeError("invalid configured Skill MCP runtime");
+  }
+  let queue = Promise.resolve();
+  const reply = async (message) => {
+    if (!writeMessage(process.stdout, message)) {
+      await once(process.stdout, "drain");
+    }
+  };
+  const enqueue = (task) => {
+    queue = queue.then(task);
+  };
+  readBoundedJsonLines(process.stdin, {
+    onMessage(message) {
+      enqueue(async () => {
+        let response;
+        try {
+          response = await runtime.mcp.dispatch(message);
+        } catch {
+          response = errorMessage(
+            message?.id,
+            -32603,
+            "The configured Skill MCP operation failed."
+          );
+        }
+        if (response !== null) await reply(response);
+      });
+    },
+    onError(kind) {
+      enqueue(() => reply(errorMessage(
+        null,
+        kind === "frame_too_large" ? -32001 : -32700,
+        kind === "frame_too_large"
+          ? `The request exceeds the ${MAX_FRAME_BYTES}-byte frame limit.`
+          : "The request is not valid UTF-8 JSON."
+      )));
+    },
+    onEnd() {
+      queue.finally(() => runtime.close());
     }
   });
 }
@@ -1866,6 +1913,16 @@ export async function main(args = process.argv.slice(2)) {
 
   if (args[0] === "mcp" && args[1] === "serve") {
     runProxy(args.slice(2));
+    return;
+  }
+
+  if (args.length === 5 && args[0] === "mcp" &&
+      args[1] === "skill" && args[2] === "serve" &&
+      args[3] === "--config") {
+    const { createConfiguredSkillMcp } = await import(
+      "../skill/skill-runtime-config.mjs"
+    );
+    runConfiguredSkillMcp(createConfiguredSkillMcp(args[4]));
     return;
   }
 
