@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdtempSync, readFileSync, readdirSync, rmSync
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import { runSkillFixtureBenchmark } from "../src/benchmark/skill-fixture-runner.mjs";
 
-test("Skill profiles share a fixture and retain unavailable verification", async () => {
+test("Skill profiles share a fixture and retain verified S3 evidence", async () => {
   const workspace = mkdtempSync(join(tmpdir(), "effectgate-skill-bench-"));
   const file = join(workspace, "evidence.jsonl");
   try {
@@ -35,13 +37,17 @@ test("Skill profiles share a fixture and retain unavailable verification", async
       profiles.S1_FULL_LOAD_DIAGNOSTIC.metrics.skill_instruction_tokens.value > 0
     );
     assert.ok(s2.skill_instruction_tokens.value > 0);
-    assert.deepEqual(
-      [
-        profiles.S3_EG_CAPSULE_VERIFIED.status,
-        profiles.S3_EG_CAPSULE_VERIFIED.failure_code
-      ],
-      ["failed", "verified_effect_unavailable"]
-    );
+    assert.equal(profiles.S3_EG_CAPSULE_VERIFIED.status, "completed");
+    const s3 = profiles.S3_EG_CAPSULE_VERIFIED.metrics;
+    assert.equal(s3.task_success, true);
+    assert.equal(s3.duplicate_write_count, 0);
+    assert.equal(s3.wrong_phase_transition, false);
+    assert.equal(s3.tool_call_count, 3);
+    assert.ok(s3.verification_tokens.value > 0);
+    assert.ok(s3.phase_receipt_tokens.value > 0);
+    const retained = readdirSync(workspace);
+    assert.ok(retained.some((name) => name.endsWith("-effect.db")));
+    assert.ok(retained.some((name) => name.endsWith("-skill.db")));
     const records = readFileSync(file, "utf8").trimEnd()
       .split("\n").map(JSON.parse);
     assert.deepEqual(records, [result.header, ...result.events]);
