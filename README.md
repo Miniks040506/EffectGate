@@ -121,7 +121,7 @@ namespace; it does not select a backend.
 | Continuity | Artifacts with an unfetched cursor are pinned; recent retries use a bounded page cache; explicit invalidation revokes cached and live cursors |
 | Page bound | At most 4,096 source bytes, cut only at a valid UTF-8 boundary |
 | Redaction | Versioned assignment, bearer-token, and common token-prefix rules run before every emitted page; more than 4,096 detected spans fails closed |
-| Benchmark evidence | Seeded P0–P3 order, stable pair/run IDs, real execution of all four small-read fixture profiles, exclusive JSONL creation, retained failures, and deterministic median/p95/bootstrap-CI reports |
+| Benchmark evidence | Seeded P0–P3 order, stable pair/run IDs, real execution of all four small-read fixture profiles, exclusive JSONL creation, retained failures, deterministic median/p95/bootstrap-CI reports, and review-only exposure recommendations |
 | Errors | Backend errors and stderr content are not passed through verbatim |
 | Flow control | Client input and fixture output pause while downstream writables are backpressured |
 
@@ -358,6 +358,8 @@ The dependency-free suite directly verifies:
   Context View identity binding, corruption denial, and secret containment;
 - deterministic P0–P3 paired order and run identity, complete profile coverage,
   retained/sanitized runner failures, and evidence no-overwrite protection;
+- fail-closed exposure recommendations with measured quality gates, explicit
+  review requirements, no policy mutation, and no direct-bypass suggestion;
 - real direct, typed-proxy, and eager fixture process runs with exact-payload
   oracles, byte-proxy schema/result events, and joined P1 token provenance;
 - exact compact search/describe/call/fetch contracts, paged admission,
@@ -415,7 +417,7 @@ The dependency-free suite directly verifies:
 | Quota-limited partitioned filesystem CAS with explicit invalidation | Durable metadata, shared-writer locking, crash-root recovery, and production GC |
 | Cited paging/search/projection plus fail-closed opaque-content withholding | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
 | HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |
-| Basis-aware counters, output guards, optional session ledger, compact mux, real P0–P3 fixture evidence, and failure-preserving statistical reports | SQLite-backed evidence and real-host comparison qualification |
+| Basis-aware counters, output guards, optional session ledger, compact mux, real P0–P3 fixture evidence, failure-preserving reports, and review-only exposure recommendations | SQLite-backed evidence and real-host comparison qualification |
 | Deterministic local tests | Compatibility, fuzz, latency, and crash qualification |
 | Sanitized public errors | Intent approval, durable journal, verification, and reconciliation |
 | Node.js PoC | Tested installer and supported-platform matrix |

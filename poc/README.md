@@ -90,6 +90,7 @@ Run the deterministic `BENCH-SMALL-005` fixture adapter with:
 ```powershell
 npm run benchmark:fixture -- --output .\benchmark.jsonl --ledger-directory .\benchmark-ledgers --repetitions 1
 npm run benchmark:report -- --input .\benchmark.jsonl --output .\benchmark-report.json
+npm run benchmark:recommend -- --evidence .\benchmark.jsonl --output .\exposure-recommendation.json
 ```
 
 It executes the direct native fixture (P0), typed EffectGate proxy (P1),
@@ -118,6 +119,15 @@ token counters separated by measurement basis, and emits median, p95, and
 deterministic percentile-bootstrap 95% intervals. Fewer than 30 repetitions
 are explicitly marked non-qualifying. It does not launch a model or claim
 token savings; real host adapters remain separate qualification work.
+
+The recommender validates the same raw evidence and emits the
+[`exposure-recommendation` contract](../contracts/exposure-recommendation.schema.json).
+It requires at least 30 repetitions, failure-free candidates, conservative
+success/fetch/latency bounds, comparable measured total-input-token counts,
+and exact native-deferral compatibility evidence. Its output is review-only:
+it cannot change configuration or policy, never auto-applies a profile, and
+never recommends direct bypass. Fixture evidence has no host-session token
+count, so it intentionally produces `hold`.
 
 The fixture exposes:
 
@@ -252,6 +262,6 @@ process-local, and backend results still arrive as complete strings. The
 preview has no durable index,
 end-to-end streaming adapter, comprehensive secret/PII detection, regex/ranked
 search, JSONPath or richer predicates, full CommonMark structure, SQLite
-ledger/multi-writer recovery, real model/host benchmark adapter, statistical
-report, confidence interval, compact-mux quality qualification, approval flow,
-fuzz qualification, or production support claim.
+ledger/multi-writer recovery, real model/host benchmark adapter, externally
+qualified compact-mux comparison, approval flow, fuzz qualification, or
+production support claim.
