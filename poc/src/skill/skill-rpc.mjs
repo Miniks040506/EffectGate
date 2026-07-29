@@ -1,11 +1,25 @@
 import { BYTE_PROXY_COUNTER } from "../budget/token-counter.mjs";
+import {
+  verifyIdempotencyAdapter
+} from "../policy/idempotency-adapter.mjs";
 import { EffectOperationJournal } from "../policy/operation-journal.mjs";
+import {
+  completePhaseEffectOperation,
+  dispatchPhaseEffectOperation,
+  planPhaseEffectOperation
+} from "../policy/phase-effect-admission.mjs";
+import {
+  verifyVerificationProbe
+} from "../policy/verification-probe.mjs";
 import { compileInstructionCapsule } from "./capsule-compiler.mjs";
 import { SkillTransaction } from "./phase-transaction.mjs";
 import { SkillSourceError } from "./source-import.mjs";
 import { skillReferencePath } from "./skill-graph.mjs";
 
 const CAPSULE_TTL_MS = 5 * 60 * 1000;
+const EFFECT_TTL_MS = 5 * 60 * 1000;
+const DISPATCH_TTL_MS = 60 * 1000;
+const ASYNC_METHODS = new Set(["skills/effect/execute"]);
 const METHODS = new Set([
   "skills/list",
   "skills/passport/get",
@@ -32,7 +46,81 @@ function rpcError(id, code, message, data) {
   };
 }
 
+function validRequest(request) {
+  const id = request?.id;
+  return request && request.jsonrpc === "2.0" &&
+    (Number.isSafeInteger(id) || typeof id === "string") &&
+    typeof request.method === "string" &&
+    request.params && typeof request.params === "object" &&
+    !Array.isArray(request.params);
+}
+
+function caughtError(id, error) {
+  if (error instanceof SkillSourceError) {
+    return rpcError(id, -32010, error.message, {
+      effectgate_code: error.code
+    });
+  }
+  if (/^EG_[A-Z0-9_]+$/u.test(error?.code ?? "")) {
+    return rpcError(id, -32010, "The effect operation was denied.", {
+      effectgate_code: error.code,
+      ...(error.safeReasonCode
+        ? { safe_reason_code: error.safeReasonCode }
+        : {})
+    });
+  }
+  return rpcError(id, -32603, "The Skill RPC operation failed.");
+}
+
+function commandKey(capabilityId, capabilityRevision) {
+  return `${capabilityId}\0${capabilityRevision}`;
+}
+
+function runtimeId(value) {
+  return typeof value === "string" && value.length >= 1 &&
+    value.length <= 128 && Buffer.byteLength(value, "utf8") <= 512 &&
+    !value.includes("\0") && value === value.normalize("NFC");
+}
+
+function effectCommandRegistry(commands = []) {
+  if (!Array.isArray(commands)) {
+    throw new TypeError("invalid effect command registry");
+  }
+  const registry = new Map();
+  for (const command of commands) {
+    const keys = [
+      "policy", "adapter", "descriptor", "principalId", "clientId",
+      "invoke", "verify"
+    ];
+    if (!command || typeof command !== "object" || Array.isArray(command) ||
+        Reflect.ownKeys(command).length !== keys.length ||
+        keys.some((key) => !Object.hasOwn(command, key)) ||
+        !runtimeId(command.principalId) ||
+        !runtimeId(command.clientId) ||
+        typeof command.invoke !== "function" ||
+        typeof command.verify !== "function") {
+      throw new TypeError("invalid effect command registry");
+    }
+    verifyIdempotencyAdapter(command.adapter);
+    verifyVerificationProbe(command.descriptor);
+    const key = commandKey(
+      command.adapter.capability_id,
+      command.adapter.capability_revision
+    );
+    if (registry.has(key) ||
+        command.descriptor.capability_id !==
+          command.adapter.capability_id ||
+        command.descriptor.capability_revision !==
+          command.adapter.capability_revision) {
+      throw new TypeError("invalid effect command registry");
+    }
+    registry.set(key, Object.freeze({ ...command }));
+  }
+  return registry;
+}
+
 export class SkillRpc {
+  #effectCommands;
   #effectJournal;
   #eventStore;
   #ledger;
@@ -44,6 +132,7 @@ export class SkillRpc {
     skills,
     eventStore,
     effectJournal,
+    effectCommands,
     tokenLedger,
     now = Date.now
   } = {}) {
@@ -68,6 +157,10 @@ export class SkillRpc {
       this.#skills.set(id, entry);
     }
     this.#effectJournal = effectJournal;
+    this.#effectCommands = effectCommandRegistry(effectCommands);
+    if (this.#effectCommands.size > 0 && !this.#effectJournal) {
+      throw new TypeError("invalid Skill RPC configuration");
+    }
     this.#eventStore = eventStore;
     this.#ledger = tokenLedger;
     this.#now = now;
@@ -75,11 +168,7 @@ export class SkillRpc {
 
   dispatch(request) {
     const id = request?.id;
-    if (!request || request.jsonrpc !== "2.0" ||
-        !(Number.isSafeInteger(id) || typeof id === "string") ||
-        typeof request.method !== "string" ||
-        !request.params || typeof request.params !== "object" ||
-        Array.isArray(request.params)) {
+    if (!validRequest(request)) {
       return rpcError(id, -32600, "The JSON-RPC request is invalid.");
     }
     if (!METHODS.has(request.method)) {
@@ -92,12 +181,24 @@ export class SkillRpc {
         result: this.#call(request.method, request.params)
       };
     } catch (error) {
-      if (error instanceof SkillSourceError) {
-        return rpcError(id, -32010, error.message, {
-          effectgate_code: error.code
-        });
-      }
-      return rpcError(id, -32603, "The Skill RPC operation failed.");
+      return caughtError(id, error);
+    }
+  }
+
+  async dispatchAsync(request) {
+    const id = request?.id;
+    if (!validRequest(request)) {
+      return rpcError(id, -32600, "The JSON-RPC request is invalid.");
+    }
+    if (!ASYNC_METHODS.has(request.method)) return this.dispatch(request);
+    try {
+      return {
+        jsonrpc: "2.0",
+        id,
+        result: await this.#executeEffect(request.params)
+      };
+    } catch (error) {
+      return caughtError(id, error);
     }
   }
 
@@ -218,6 +319,101 @@ export class SkillRpc {
     const skill = this.#skills.get(id);
     if (!skill) failure("EG_SKILL_SOURCE_INVALID", "skill is not registered");
     return skill;
+  }
+
+  async #executeEffect(params) {
+    const keys = [
+      "transaction_id", "operation_id", "receipt_id", "capsule_digest",
+      "capability_id", "capability_revision", "effect_class", "arguments",
+      "resource_scope", "disclosure_digest"
+    ];
+    if (Reflect.ownKeys(params).length !== keys.length ||
+        keys.some((key) => !Object.hasOwn(params, key))) {
+      failure("EG_EFFECT_COMMAND_INVALID", "effect command is invalid");
+    }
+    const active = this.#transaction(params.transaction_id);
+    const command = this.#effectCommands.get(commandKey(
+      params.capability_id, params.capability_revision
+    ));
+    if (!command) {
+      failure(
+        "EG_EFFECT_COMMAND_UNAVAILABLE",
+        "effect command is unavailable"
+      );
+    }
+    const current = this.#now();
+    if (!Number.isFinite(current)) {
+      failure("EG_PHASE_TRANSITION_DENIED", "Skill RPC clock is invalid");
+    }
+    const effect = {
+      transaction: active.transaction,
+      capsule: active.capsule,
+      capsuleDigest: params.capsule_digest,
+      capabilityId: params.capability_id,
+      capabilityRevision: params.capability_revision,
+      effectClass: params.effect_class,
+      policy: command.policy,
+      principalId: command.principalId,
+      clientId: command.clientId,
+      sessionId: params.transaction_id,
+      arguments: params.arguments,
+      resourceScope: params.resource_scope,
+      disclosureDigest: params.disclosure_digest,
+      expiresAt: new Date(current + EFFECT_TTL_MS).toISOString(),
+      now: this.#now
+    };
+    planPhaseEffectOperation({
+      operationId: params.operation_id,
+      journal: this.#effects(),
+      effect
+    });
+    const dispatched = await dispatchPhaseEffectOperation({
+      operationId: params.operation_id,
+      journal: this.#effects(),
+      effect,
+      adapter: command.adapter,
+      request: { arguments: params.arguments, headers: {} },
+      deadlineAt: new Date(current + DISPATCH_TTL_MS).toISOString(),
+      invoke: command.invoke
+    });
+    if (dispatched.response_received) {
+      EffectOperationJournal.prototype.markUncertain.call(this.#effects(), {
+        operationId: params.operation_id,
+        evidenceRef: dispatched.idempotency.dispatch_digest,
+        reason: "post_dispatch_verification_required"
+      });
+    }
+    const operation = await EffectOperationJournal.prototype.reconcile.call(
+      this.#effects(),
+      {
+        operationId: params.operation_id,
+        descriptor: command.descriptor,
+        idempotency: dispatched.idempotency,
+        invoke: command.verify
+      }
+    );
+    let result;
+    if (operation.state === "verified_committed") {
+      result = completePhaseEffectOperation({
+        operationId: params.operation_id,
+        receiptId: params.receipt_id,
+        journal: this.#effects(),
+        transaction: active.transaction
+      });
+      active.capsule = undefined;
+    } else {
+      result = {
+        schema_version: "1.0.0",
+        status: operation.state,
+        operation_id: params.operation_id
+      };
+    }
+    return this.#record(
+      result,
+      "verification",
+      "to_host",
+      "verification_overhead_tokens"
+    );
   }
 
   #effects() {
