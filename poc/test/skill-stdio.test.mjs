@@ -138,11 +138,34 @@ test("reviewed configuration serves one bound verified-effect MCP tool",
       );
     } finally {
       await server.stop();
-      assert.equal(existsSync(join(stateDirectory, "skill-events.db")), true);
-      assert.equal(
-        existsSync(join(stateDirectory, "effect-operations.db")),
-        true
-      );
-      rmSync(root, { recursive: true, force: true });
+      const restarted = new RpcProcess([
+        "mcp", "skill", "serve", "--config", configFile
+      ]);
+      try {
+        await restarted.request("initialize", {
+          protocolVersion: MCP_VERSION,
+          clientInfo: { name: "effectgate-restart-test", version: "1.0.0" }
+        });
+        restarted.send({
+          jsonrpc: "2.0",
+          method: "notifications/initialized",
+          params: {}
+        });
+        assert.equal(
+          (await restarted.request("tools/list")).result.tools.length,
+          0
+        );
+      } finally {
+        await restarted.stop();
+        assert.equal(
+          existsSync(join(stateDirectory, "skill-events.db")),
+          true
+        );
+        assert.equal(
+          existsSync(join(stateDirectory, "effect-operations.db")),
+          true
+        );
+        rmSync(root, { recursive: true, force: true });
+      }
     }
   });

@@ -94,7 +94,7 @@ function rpcCall(rpc, id, method, params) {
   return response.result;
 }
 
-export function createConfiguredSkillMcp(configFile) {
+export async function createConfiguredSkillMcp(configFile) {
   const config = loadSkillMcpConfig(configFile);
   mkdirSync(config.state_directory, { recursive: true, mode: 0o700 });
   const source = importSkillSource({
@@ -152,22 +152,42 @@ export function createConfiguredSkillMcp(configFile) {
         initial_phase: "modify"
       });
     }
-    const capsule = rpcCall(setup, 2, "skills/capsule/get", {
+    const transaction = rpcCall(setup, 2, "skills/transaction/get", {
       transaction_id: config.transaction_id
     });
-    const match = {
-      skill_id: "document-editor",
-      skill_digest: source.source_digest,
-      phase: "modify",
-      phase_revision: 1,
-      capsule_digest: capsule.capsule_digest,
-      capability_id: "filesystem.apply_patch",
-      capability_revision: "patch-v1",
-      effect_class: "mutate_reversible"
-    };
-    const policy = compilePolicy({
+    if (!["awaiting_capsule", "active"].includes(transaction.status)) {
+      return {
+        mcp: new SkillMcp(setup),
+        close() {
+          journal.close();
+          store.close();
+        }
+      };
+    }
+    const persisted = store.load(config.transaction_id);
+    const lastEvent = persisted.events.at(-1);
+    const recoveryCapsuleDigest = transaction.active_capsule_digest ??
+      (lastEvent?.kind === "capsule_activated"
+        ? lastEvent.payload.capsule_digest
+        : rpcCall(setup, 3, "skills/capsule/get", {
+          transaction_id: config.transaction_id
+        }).capsule_digest);
+    const policyFor = (capsuleDigest) => compilePolicy({
       policyId: "configured-memory-patch",
-      rules: [{ id: "allow-reviewed-patch", match, decision: "allow" }]
+      rules: [{
+        id: "allow-reviewed-patch",
+        decision: "allow",
+        match: {
+          skill_id: "document-editor",
+          skill_digest: source.source_digest,
+          phase: "modify",
+          phase_revision: 1,
+          capsule_digest: capsuleDigest,
+          capability_id: "filesystem.apply_patch",
+          capability_revision: "patch-v1",
+          effect_class: "mutate_reversible"
+        }
+      }]
     });
     const adapter = compileIdempotencyAdapter({
       schema_version: "1.0.0",
@@ -225,66 +245,95 @@ export function createConfiguredSkillMcp(configFile) {
       qualification_evidence_digest: digest(`${DRIVER}:probe`)
     });
     const backend = new Map();
+    const command = {
+      policy: policyFor(recoveryCapsuleDigest),
+      adapter,
+      descriptor,
+      principalId: config.principal_id,
+      clientId: config.client_id,
+      effectClass: "mutate_reversible",
+      tool: {
+        name: TOOL_NAME,
+        title: "Apply Verified Fixture Patch",
+        description:
+          "Applies one reviewed in-memory fixture patch and verifies it.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["path", "content"],
+          properties: {
+            path: { const: config.target_path },
+            content: { type: "string", maxLength: 65536 }
+          }
+        }
+      },
+      validate: (argumentsValue, scope) =>
+        exactData(argumentsValue, ["path", "content"]) &&
+        argumentsValue.path === config.target_path &&
+        typeof argumentsValue.content === "string" &&
+        Buffer.byteLength(argumentsValue.content, "utf8") <= 65536 &&
+        exactData(scope, ["kind", "value"]) &&
+        scope.kind === "exact" &&
+        scope.value === config.resource_scope,
+      invoke: async (request) => {
+        backend.set(request.headers["Idempotency-Key"], {
+          path: request.arguments.path,
+          content: request.arguments.content
+        });
+      },
+      verify: async ({ arguments: lookup }) => ({
+        data: {
+          status: backend.has(lookup.idempotency_key)
+            ? "found"
+            : "not_found"
+        },
+        evidence_ref: `memory://${config.target_path}`,
+        evidence_digest: digest(`${DRIVER}:evidence`)
+      })
+    };
     const rpc = new SkillRpc({
       skills: [skill],
       eventStore: store,
       effectJournal: journal,
-      effectCommands: [{
-        policy,
-        adapter,
-        descriptor,
-        principalId: config.principal_id,
-        clientId: config.client_id,
-        effectClass: "mutate_reversible",
-        tool: {
-          name: TOOL_NAME,
-          title: "Apply Verified Fixture Patch",
-          description:
-            "Applies one reviewed in-memory fixture patch and verifies it.",
-          inputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["path", "content"],
-            properties: {
-              path: { const: config.target_path },
-              content: { type: "string", maxLength: 65536 }
-            }
-          }
-        },
-        validate: (argumentsValue, scope) =>
-          exactData(argumentsValue, ["path", "content"]) &&
-          argumentsValue.path === config.target_path &&
-          typeof argumentsValue.content === "string" &&
-          Buffer.byteLength(argumentsValue.content, "utf8") <= 65536 &&
-          exactData(scope, ["kind", "value"]) &&
-          scope.kind === "exact" &&
-          scope.value === config.resource_scope,
-        invoke: async (request) => {
-          backend.set(request.headers["Idempotency-Key"], {
-            path: request.arguments.path,
-            content: request.arguments.content
-          });
-        },
-        verify: async ({ arguments: lookup }) => ({
-          data: {
-            status: backend.has(lookup.idempotency_key)
-              ? "found"
-              : "not_found"
-          },
-          evidence_ref: `memory://${config.target_path}`,
-          evidence_digest: digest(`${DRIVER}:evidence`)
-        })
-      }]
+      effectCommands: [command]
     });
-    return {
-      mcp: new SkillMcp(rpc, {
+    await SkillRpc.prototype.recoverEffects.call(rpc);
+    const current = rpcCall(rpc, 4, "skills/transaction/get", {
+      transaction_id: config.transaction_id
+    });
+    let published;
+    if (["awaiting_capsule", "active"].includes(current.status)) {
+      const capsule = rpcCall(rpc, 5, "skills/capsule/get", {
+        transaction_id: config.transaction_id
+      });
+      const publishedRpc = capsule.capsule_digest === recoveryCapsuleDigest
+        ? rpc
+        : new SkillRpc({
+          skills: [skill],
+          eventStore: store,
+          effectJournal: journal,
+          effectCommands: [{
+            ...command,
+            policy: policyFor(capsule.capsule_digest)
+          }]
+        });
+      published = new SkillMcp(publishedRpc, {
         bindings: {
           [TOOL_NAME]: {
             transaction_id: config.transaction_id,
             capsule_digest: capsule.capsule_digest
           }
         }
-      }),
+      });
+    } else {
+      published = new SkillMcp(new SkillRpc({
+        skills: [skill],
+        eventStore: store,
+        effectJournal: journal
+      }));
+    }
+    return {
+      mcp: published,
       close() {
         journal.close();
         store.close();

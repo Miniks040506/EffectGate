@@ -1922,7 +1922,7 @@ export async function main(args = process.argv.slice(2)) {
     const { createConfiguredSkillMcp } = await import(
       "../skill/skill-runtime-config.mjs"
     );
-    runConfiguredSkillMcp(createConfiguredSkillMcp(args[4]));
+    runConfiguredSkillMcp(await createConfiguredSkillMcp(args[4]));
     return;
   }
 
