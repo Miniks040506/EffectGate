@@ -144,16 +144,6 @@ export function decideNativeDeferral(
     });
   }
   if (
-    manifest.evidence_state !== "pass" ||
-    manifest.tool_search.state !== "enabled_observed"
-  ) {
-    return Object.freeze({
-      eligible: false,
-      reason: "support_not_proven",
-      ...common
-    });
-  }
-  if (
     clientInfo === null ||
     typeof clientInfo !== "object" ||
     Array.isArray(clientInfo) ||
@@ -164,6 +154,26 @@ export function decideNativeDeferral(
     return Object.freeze({
       eligible: false,
       reason: "client_identity_mismatch",
+      ...common
+    });
+  }
+  if (
+    manifest.evidence_state === "pass" &&
+    manifest.tool_search.state === "disabled_observed"
+  ) {
+    return Object.freeze({
+      eligible: false,
+      reason: "native_deferral_unavailable",
+      ...common
+    });
+  }
+  if (
+    manifest.evidence_state !== "pass" ||
+    manifest.tool_search.state !== "enabled_observed"
+  ) {
+    return Object.freeze({
+      eligible: false,
+      reason: "support_not_proven",
       ...common
     });
   }

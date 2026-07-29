@@ -261,11 +261,23 @@ function profileReport(events, profile, seed) {
   const runs = events.filter((event) => event.profile === profile);
   const completed = runs.filter((event) => event.status === "completed");
   const failures = new Map();
+  const compatibility = new Map();
   for (const event of runs.filter(({ status }) => status === "failed")) {
     failures.set(
       event.failure_code,
       (failures.get(event.failure_code) ?? 0) + 1
     );
+  }
+  for (const { metrics } of completed) {
+    const { native_deferral: state, evidence_digest: evidence } =
+      metrics.compatibility;
+    const value = compatibility.get(state) ?? {
+      count: 0,
+      evidence: new Set()
+    };
+    value.count += 1;
+    if (evidence !== undefined) value.evidence.add(evidence);
+    compatibility.set(state, value);
   }
   const measurements = [];
   for (const metric of NUMERIC_METRICS) {
@@ -307,7 +319,7 @@ function profileReport(events, profile, seed) {
     }
   }
   for (const [, group] of [...tokenGroups].sort(([left], [right]) =>
-    left.localeCompare(right))) {
+    left < right ? -1 : left > right ? 1 : 0)) {
     measurements.push({
       metric: group.metric,
       basis: group.basis,
@@ -350,9 +362,15 @@ function profileReport(events, profile, seed) {
     completed_runs: completed.length,
     failed_runs: runs.length - completed.length,
     failures: [...failures].sort(([left], [right]) =>
-      left.localeCompare(right)).map(([failure_code, count]) => ({
+      left < right ? -1 : left > right ? 1 : 0).map(([failure_code, count]) => ({
       failure_code,
       count
+    })),
+    compatibility: [...compatibility].sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0).map(([state, value]) => ({
+      state,
+      count: value.count,
+      evidence_digests: [...value.evidence].sort()
     })),
     rates,
     measurements

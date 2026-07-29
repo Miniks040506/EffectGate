@@ -126,6 +126,31 @@
         "count": {"type": "integer", "minimum": 1}
       }
     },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "count", "evidence_digests"],
+      "properties": {
+        "state": {
+          "enum": [
+            "qualified",
+            "native_deferral_unavailable",
+            "evidence_not_configured",
+            "evidence_expired",
+            "support_not_proven",
+            "client_identity_mismatch",
+            "profile_not_native_deferred",
+            "not_applicable"
+          ]
+        },
+        "count": {"type": "integer", "minimum": 1},
+        "evidence_digests": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/digest"}
+        }
+      }
+    },
     "rate": {
       "type": "object",
       "additionalProperties": false,
@@ -188,6 +213,7 @@
         "completed_runs",
         "failed_runs",
         "failures",
+        "compatibility",
         "rates",
         "measurements"
       ],
@@ -199,6 +225,10 @@
         "failures": {
           "type": "array",
           "items": {"$ref": "#/$defs/failure"}
+        },
+        "compatibility": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/compatibility"}
         },
         "rates": {
           "type": "array",

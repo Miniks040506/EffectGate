@@ -11,7 +11,8 @@ import test from "node:test";
 
 import {
   BENCHMARK_PROFILES,
-  runPairedBenchmark
+  runPairedBenchmark,
+  validateBenchmarkMetrics
 } from "../src/benchmark/paired-harness.mjs";
 
 function digest(value) {
@@ -166,6 +167,18 @@ test("paired harness rejects invalid metrics and never overwrites evidence", asy
       }),
       { code: "EEXIST" }
     );
+    const valid = metrics(files.base.promptDigest, "P0_NATIVE_DEFAULT");
+    assert.throws(() => validateBenchmarkMetrics({
+      ...valid,
+      compatibility: { native_deferral: "qualified" }
+    }), /invalid benchmark metrics/);
+    assert.throws(() => validateBenchmarkMetrics({
+      ...valid,
+      total_input_tokens: {
+        ...valid.total_input_tokens,
+        calibration_error_bound: 0.1
+      }
+    }), /invalid benchmark metrics/);
   } finally {
     files.close();
   }

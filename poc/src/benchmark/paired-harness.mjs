@@ -79,8 +79,13 @@ const COMPATIBILITY_KEYS = new Set([
   "native_deferral",
   "evidence_digest"
 ]);
+const EVIDENCE_REQUIRED_STATES = new Set([
+  "qualified",
+  "native_deferral_unavailable"
+]);
 const NATIVE_DEFERRAL_STATES = new Set([
   "qualified",
+  "native_deferral_unavailable",
   "evidence_not_configured",
   "evidence_expired",
   "support_not_proven",
@@ -124,7 +129,9 @@ function validTokenCount(value) {
     boundedString(value.counter_version) &&
     DIGEST_PATTERN.test(value.input_digest) &&
     (value.calibration_error_bound === undefined ||
-      (Number.isFinite(value.calibration_error_bound) &&
+      ((value.basis === "byte_proxy" ||
+        value.basis === "tokenizer_estimate") &&
+      Number.isFinite(value.calibration_error_bound) &&
         value.calibration_error_bound >= 0 &&
         value.calibration_error_bound <= 1))
   );
@@ -137,8 +144,10 @@ function validCompatibility(value) {
     !Array.isArray(value) &&
     Object.keys(value).every((key) => COMPATIBILITY_KEYS.has(key)) &&
     NATIVE_DEFERRAL_STATES.has(value.native_deferral) &&
-    (value.evidence_digest === undefined ||
-      DIGEST_PATTERN.test(value.evidence_digest))
+    (EVIDENCE_REQUIRED_STATES.has(value.native_deferral)
+      ? DIGEST_PATTERN.test(value.evidence_digest)
+      : value.evidence_digest === undefined ||
+        DIGEST_PATTERN.test(value.evidence_digest))
   );
 }
 

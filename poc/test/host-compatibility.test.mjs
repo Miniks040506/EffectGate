@@ -126,6 +126,12 @@ test("EG-014B retains exact-build Claude Tool Search evidence", () => {
 test("host evidence fails closed on mismatch, weak state, expiry, or corruption", () => {
   const files = evidenceFile();
   const partialFiles = evidenceFile(manifest({ evidence_state: "partial" }));
+  const disabledFiles = evidenceFile(manifest({
+    tool_search: {
+      state: "disabled_observed",
+      configuration_digest: digest("tool-search-disabled")
+    }
+  }));
   try {
     const evidence = loadHostCompatibilityEvidence(files.file);
     const options = {
@@ -146,6 +152,13 @@ test("host evidence fails closed on mismatch, weak state, expiry, or corruption"
         options
       ).reason,
       "support_not_proven"
+    );
+    assert.equal(
+      decideNativeDeferral(
+        loadHostCompatibilityEvidence(disabledFiles.file),
+        options
+      ).reason,
+      "native_deferral_unavailable"
     );
     assert.equal(
       decideNativeDeferral(evidence, {
@@ -175,6 +188,7 @@ test("host evidence fails closed on mismatch, weak state, expiry, or corruption"
   } finally {
     files.close();
     partialFiles.close();
+    disabledFiles.close();
   }
 });
 

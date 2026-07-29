@@ -131,6 +131,9 @@ function assertContract(report) {
     for (const failure of value.failures) {
       assertKeys(failure, CONTRACT.$defs.failure);
     }
+    for (const compatibility of value.compatibility) {
+      assertKeys(compatibility, CONTRACT.$defs.compatibility);
+    }
     for (const item of value.rates) {
       assertKeys(item, CONTRACT.$defs.rate);
       assertKeys(item.summary, CONTRACT.$defs.rate_summary);
