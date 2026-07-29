@@ -202,7 +202,7 @@ function effectCommandRegistry(commands = []) {
   for (const command of commands) {
     const keys = [
       "policy", "adapter", "descriptor", "principalId", "clientId",
-      "effectClass", "tool", "invoke", "verify"
+      "effectClass", "tool", "validate", "invoke", "verify"
     ];
     if (!command || typeof command !== "object" || Array.isArray(command) ||
         Reflect.ownKeys(command).length !== keys.length ||
@@ -210,6 +210,7 @@ function effectCommandRegistry(commands = []) {
         !runtimeId(command.principalId) ||
         !runtimeId(command.clientId) ||
         !EFFECT_CLASSES.has(command.effectClass) ||
+        typeof command.validate !== "function" ||
         typeof command.invoke !== "function" ||
         typeof command.verify !== "function") {
       throw new TypeError("invalid effect command registry");
@@ -464,6 +465,18 @@ export class SkillRpc {
       );
     }
     if (params.effect_class !== command.effectClass) {
+      failure("EG_EFFECT_COMMAND_INVALID", "effect command is invalid");
+    }
+    let validArguments = false;
+    try {
+      validArguments = command.validate(
+        params.arguments,
+        params.resource_scope
+      ) === true;
+    } catch {
+      validArguments = false;
+    }
+    if (!validArguments) {
       failure("EG_EFFECT_COMMAND_INVALID", "effect command is invalid");
     }
     const current = this.#now();

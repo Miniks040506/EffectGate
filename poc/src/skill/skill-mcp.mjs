@@ -3,6 +3,7 @@ import {
   MAX_TOOL_RESULT_BYTES,
   MCP_VERSION
 } from "../proxy/mcp-contract.mjs";
+import { deepFreeze } from "./passport-compiler.mjs";
 import { SkillRpc } from "./skill-rpc.mjs";
 
 const MAX_ID_BYTES = 128;
@@ -69,23 +70,55 @@ function toolError(response) {
   };
 }
 
+function boundPublication(publication, binding) {
+  if (binding === undefined) {
+    return { ...publication, call_keys: CALL_ARGUMENT_KEYS, binding: {} };
+  }
+  if (!exactData(binding, ["transaction_id", "capsule_digest"]) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(
+        binding.transaction_id ?? ""
+      ) ||
+      !/^sha256:[a-f0-9]{64}$/u.test(binding.capsule_digest ?? "")) {
+    throw new TypeError("invalid Skill MCP binding");
+  }
+  const contract = structuredClone(publication.contract);
+  for (const key of ["transaction_id", "capsule_digest"]) {
+    contract.inputSchema.required =
+      contract.inputSchema.required.filter((name) => name !== key);
+    delete contract.inputSchema.properties[key];
+  }
+  return {
+    ...publication,
+    contract: deepFreeze(contract),
+    call_keys: CALL_ARGUMENT_KEYS.filter(
+      (key) => !Object.hasOwn(binding, key)
+    ),
+    binding: deepFreeze({ ...binding })
+  };
+}
+
 export class SkillMcp {
   #admitted = new Map();
   #lifecycle = "new";
   #rpc;
   #tools;
 
-  constructor(rpc) {
-    if (!(rpc instanceof SkillRpc)) {
+  constructor(rpc, { bindings = {} } = {}) {
+    if (!(rpc instanceof SkillRpc) ||
+        !bindings || typeof bindings !== "object" ||
+        Array.isArray(bindings)) {
       throw new TypeError("invalid Skill MCP runtime");
     }
     this.#rpc = rpc;
-    this.#tools = new Map(
-      SkillRpc.prototype.effectTools.call(rpc).map((publication) => [
-        publication.contract.name,
-        publication
-      ])
-    );
+    const publications = SkillRpc.prototype.effectTools.call(rpc);
+    const names = new Set(publications.map(({ contract }) => contract.name));
+    if (Object.keys(bindings).some((name) => !names.has(name))) {
+      throw new TypeError("invalid Skill MCP binding");
+    }
+    this.#tools = new Map(publications.map((publication) => [
+      publication.contract.name,
+      boundPublication(publication, bindings[publication.contract.name])
+    ]));
   }
 
   async dispatch(request) {
@@ -153,13 +186,15 @@ export class SkillMcp {
       return error(id, -32601, "The requested method is unavailable.");
     }
     if (!exactData(request.params, ["name", "arguments"]) ||
-        typeof request.params.name !== "string" ||
-        !exactData(request.params.arguments, CALL_ARGUMENT_KEYS)) {
+        typeof request.params.name !== "string") {
       return error(id, -32602, "The effect tool arguments are invalid.");
     }
     const publication = this.#admitted.get(request.params.name);
     if (!publication) {
       return error(id, -32602, "The effect tool name is invalid.");
+    }
+    if (!exactData(request.params.arguments, publication.call_keys)) {
+      return error(id, -32602, "The effect tool arguments are invalid.");
     }
     const response = await SkillRpc.prototype.dispatchAsync.call(
       this.#rpc,
@@ -169,6 +204,7 @@ export class SkillMcp {
         method: "skills/effect/execute",
         params: {
           ...request.params.arguments,
+          ...publication.binding,
           capability_id: publication.capability_id,
           capability_revision: publication.capability_revision,
           effect_class: publication.effect_class

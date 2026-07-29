@@ -557,6 +557,8 @@ test("Skill RPC runs only runtime-owned verified effect commands", async () => {
             }
           }
         },
+        validate: (argumentsValue) =>
+          typeof argumentsValue?.patch === "string",
         invoke: async (request) => {
           if (request.arguments.patch !== "DO_NOT_COMMIT") {
             writes += 1;
