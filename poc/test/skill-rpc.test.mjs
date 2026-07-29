@@ -12,8 +12,12 @@ import test from "node:test";
 
 import { compileEffectIntent } from "../src/policy/effect-intent.mjs";
 import {
+  compileIdempotencyAdapter
+} from "../src/policy/idempotency-adapter.mjs";
+import {
   EffectOperationJournal
 } from "../src/policy/operation-journal.mjs";
+import { compilePolicy } from "../src/policy/policy-compiler.mjs";
 import {
   compileVerificationProbe
 } from "../src/policy/verification-probe.mjs";
@@ -416,6 +420,228 @@ test("Skill RPC exposes only transaction-bound verified effect evidence", async 
       eventStore: store,
       effectJournal: { load: () => operation }
     }), TypeError);
+  } finally {
+    journal.close();
+    store.close();
+    rmSync(skill.root, { recursive: true, force: true });
+  }
+});
+
+test("Skill RPC runs only runtime-owned verified effect commands", async () => {
+  const skill = fixture();
+  const now = Date.parse("2026-07-28T00:00:00.000Z");
+  const store = new SkillEventStore({
+    file: join(skill.root, "command-events.db")
+  });
+  const journal = new EffectOperationJournal({
+    file: join(skill.root, "command-effects.db"),
+    now: () => now,
+    monotonic: () => 1000
+  });
+  try {
+    const setup = new SkillRpcClient(new SkillRpc({
+      skills: [skill],
+      eventStore: store,
+      effectJournal: journal,
+      now: () => now
+    }));
+    setup.request("skills/transaction/start", {
+      transaction_id: "rpc-command-owner",
+      skill_id: "document-editor",
+      initial_phase: "modify"
+    });
+    const capsule = setup.request("skills/capsule/get", {
+      transaction_id: "rpc-command-owner"
+    });
+    const match = {
+      skill_id: "document-editor",
+      skill_digest: skill.source.source_digest,
+      phase: "modify",
+      phase_revision: 1,
+      capsule_digest: capsule.capsule_digest,
+      capability_id: "filesystem.apply_patch",
+      capability_revision: "patch-v1",
+      effect_class: "mutate_reversible"
+    };
+    const policy = compilePolicy({
+      policyId: "rpc-command",
+      rules: [{ id: "allow-patch", match, decision: "allow" }]
+    });
+    const adapter = compileIdempotencyAdapter({
+      schema_version: "1.0.0",
+      capability_id: "filesystem.apply_patch",
+      capability_revision: "patch-v1",
+      key_placement: {
+        target: "headers",
+        name: "Idempotency-Key"
+      },
+      lookup: {
+        capability_id: "filesystem.patch.lookup",
+        capability_revision: "lookup-v1",
+        key_argument: "idempotency_key"
+      },
+      qualified_scenarios: [
+        "same_key_same_intent",
+        "same_key_different_intent",
+        "concurrent_duplicate_calls",
+        "server_restart",
+        "response_loss_after_commit"
+      ],
+      qualification_evidence_digest: digest("a")
+    });
+    const descriptor = compileVerificationProbe({
+      schema_version: "1.0.0",
+      capability_id: "filesystem.apply_patch",
+      capability_revision: "patch-v1",
+      kind: "lookup_by_idempotency_key",
+      probe: {
+        capability_id: "filesystem.patch.lookup",
+        capability_revision: "lookup-v1",
+        effect_class: "observe"
+      },
+      arguments: [{
+        name: "idempotency_key",
+        source: "idempotency_key"
+      }],
+      predicates: {
+        committed: [{ path: "/status", equals: { literal: "found" } }],
+        not_committed: [{
+          path: "/status",
+          equals: { literal: "not_found" }
+        }],
+        ambiguous: [{
+          path: "/status",
+          equals: { literal: "ambiguous" }
+        }]
+      },
+      limits: {
+        max_attempts: 1,
+        per_attempt_timeout_ms: 50,
+        total_timeout_ms: 100,
+        max_result_bytes: 4096,
+        initial_backoff_ms: 0,
+        max_backoff_ms: 0,
+        observation_window_ms: 0
+      },
+      evidence: {
+        trust_level: "qualified_probe",
+        redaction: "digest_only"
+      },
+      qualification_evidence_digest: digest("b")
+    });
+    const backend = new Set();
+    let writes = 0;
+    const client = new SkillRpcClient(new SkillRpc({
+      skills: [skill],
+      eventStore: store,
+      effectJournal: journal,
+      effectCommands: [{
+        policy,
+        adapter,
+        descriptor,
+        principalId: "principal-local",
+        clientId: "effectgate-rpc",
+        invoke: async (request) => {
+          if (request.arguments.patch !== "DO_NOT_COMMIT") {
+            writes += 1;
+            backend.add(request.headers["Idempotency-Key"]);
+          }
+        },
+        verify: async ({ arguments: lookup }) => ({
+          data: {
+            status: backend.has(lookup.idempotency_key)
+              ? "found"
+              : "not_found"
+          },
+          evidence_ref: "evidence://rpc/patch",
+          evidence_digest: digest("c")
+        })
+      }],
+      now: () => now
+    }));
+    const params = {
+      transaction_id: "rpc-command-owner",
+      operation_id: "rpc-command-operation",
+      receipt_id: "rpc-command-receipt",
+      capsule_digest: capsule.capsule_digest,
+      capability_id: "filesystem.apply_patch",
+      capability_revision: "patch-v1",
+      effect_class: "mutate_reversible",
+      arguments: { patch: "MUST_NOT_ESCAPE_EFFECT_COMMAND" },
+      resource_scope: {
+        kind: "exact",
+        value: "repo:fixture/path:docs/guide.md"
+      },
+      disclosure_digest: digest("d")
+    };
+    await assert.rejects(
+      client.requestAsync("skills/effect/execute", {
+        ...params,
+        operation_id: "rpc-command-injected",
+        policy: { decision: "allow" }
+      }),
+      (error) => error.effectgateCode === "EG_EFFECT_COMMAND_INVALID"
+    );
+    assert.equal(journal.load("rpc-command-injected"), undefined);
+
+    const result = await client.requestAsync(
+      "skills/effect/execute",
+      params
+    );
+    assert.equal(result.status, "completed");
+    assert.equal(result.effect_receipt.final_state, "verified_committed");
+    assert.deepEqual(result.phase_receipt.effect_receipt_refs, [
+      "receipt://effect/rpc-command-receipt"
+    ]);
+    assert.equal(writes, 1);
+    assert.equal(
+      JSON.stringify(result).includes("MUST_NOT_ESCAPE_EFFECT_COMMAND"),
+      false
+    );
+    assert.deepEqual(
+      journal.load("rpc-command-operation").events.map(
+        ({ new_state: state }) => state
+      ),
+      [
+        "planned", "preflighted", "admitted", "executing", "uncertain",
+        "reconciling", "verified_committed"
+      ]
+    );
+    assert.equal(client.request("skills/transaction/get", {
+      transaction_id: "rpc-command-owner"
+    }).status, "completed");
+
+    client.request("skills/transaction/start", {
+      transaction_id: "rpc-command-not-committed",
+      skill_id: "document-editor",
+      initial_phase: "modify"
+    });
+    const retained = client.request("skills/capsule/get", {
+      transaction_id: "rpc-command-not-committed"
+    });
+    assert.equal(retained.capsule_digest, capsule.capsule_digest);
+    const notCommitted = await client.requestAsync(
+      "skills/effect/execute",
+      {
+        ...params,
+        transaction_id: "rpc-command-not-committed",
+        operation_id: "rpc-command-absent",
+        receipt_id: "rpc-command-absent-receipt",
+        capsule_digest: retained.capsule_digest,
+        arguments: { patch: "DO_NOT_COMMIT" }
+      }
+    );
+    assert.equal(notCommitted.status, "verified_not_committed");
+    assert.equal(
+      journal.loadReceipt("rpc-command-absent-receipt"),
+      undefined
+    );
+    assert.equal(client.request("skills/transaction/get", {
+      transaction_id: "rpc-command-not-committed"
+    }).status, "active");
+    assert.equal(client.request("skills/capsule/get", {
+      transaction_id: "rpc-command-not-committed"
+    }).capsule_digest, retained.capsule_digest);
   } finally {
     journal.close();
     store.close();
