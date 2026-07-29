@@ -11,6 +11,7 @@ import {
   SKILL_BENCHMARK_PROFILES,
   validateBenchmarkMetrics
 } from "./paired-harness.mjs";
+import { TokenLedger } from "../budget/token-ledger.mjs";
 import { canonicalJson, deepFreeze } from "../skill/passport-compiler.mjs";
 
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
@@ -37,6 +38,23 @@ const TOKEN_METRICS = [
   "instruction_fetch_tokens", "phase_receipt_tokens",
   "verification_tokens"
 ];
+const S3_LEDGER_BINDINGS = Object.freeze({
+  skill_catalog_tokens_emitted: [
+    "skill_catalog", "to_host", "skill_catalog_tokens"
+  ],
+  skill_instruction_tokens_emitted: [
+    "skill_instruction", "to_host", "skill_instruction_tokens"
+  ],
+  instruction_dependency_fetch_tokens: [
+    "instruction_dependency", "to_host", "instruction_fetch_tokens"
+  ],
+  phase_receipt_tokens_emitted: [
+    "phase_receipt", "to_host", "phase_receipt_tokens"
+  ],
+  verification_overhead_tokens: [
+    "verification", "internal", "verification_tokens"
+  ]
+});
 // ponytail: fixed resamples keep reports reproducible; raise only by evidence policy.
 const BOOTSTRAP_RESAMPLES = 2_000;
 const MAX_EVIDENCE_BYTES = 64 * 1024 * 1024;
@@ -257,6 +275,58 @@ function readEvidence(file) {
   };
 }
 
+function joinS3Ledgers(file, events) {
+  const directory = dirname(resolve(file));
+  return events.filter((event) =>
+    event.profile === "S3_EG_CAPSULE_VERIFIED" &&
+    event.status === "completed"
+  ).map((event) => {
+    const ledgerFile = resolve(directory, `${event.run_id}.jsonl`);
+    if (!fs.existsSync(ledgerFile)) {
+      throw new TypeError("invalid benchmark ledger evidence");
+    }
+    let ledger;
+    try {
+      ledger = new TokenLedger({
+        file: ledgerFile,
+        runId: event.run_id,
+        sessionId: event.pair_id,
+        profile: SKILL_BENCHMARK_PROFILES[event.profile]
+      });
+      const snapshot = ledger.snapshot();
+      if (snapshot.entries.length !==
+          Object.keys(S3_LEDGER_BINDINGS).length) {
+        throw new Error();
+      }
+      const entries = new Map(snapshot.entries.map((entry) => [
+        entry.safe_metadata?.category,
+        entry
+      ]));
+      if (entries.size !== snapshot.entries.length) throw new Error();
+      for (const [category, [stage, direction, metric]] of
+        Object.entries(S3_LEDGER_BINDINGS)) {
+        const entry = entries.get(category);
+        if (entry?.stage !== stage ||
+            entry.direction !== direction ||
+            canonicalJson(entry.token_count) !==
+              canonicalJson(event.metrics[metric])) {
+          throw new Error();
+        }
+      }
+      return {
+        run_id: event.run_id,
+        profile: event.profile,
+        integrity_digest: ledger.verify(),
+        entry_count: snapshot.entries.length
+      };
+    } catch {
+      throw new TypeError("invalid benchmark ledger evidence");
+    } finally {
+      ledger?.close();
+    }
+  }).sort((left, right) => left.run_id.localeCompare(right.run_id));
+}
+
 function profileReport(events, profile, seed) {
   const runs = events.filter((event) => event.profile === profile);
   const completed = runs.filter((event) => event.status === "completed");
@@ -381,6 +451,7 @@ export function generateBenchmarkReport({ file } = {}) {
   const { bytes, header, events } = readEvidence(file);
   const evidenceDigest = `sha256:${sha256(bytes)}`;
   const completed = events.filter(({ status }) => status === "completed");
+  const ledgerEvidence = joinS3Ledgers(file, events);
   return deepFreeze({
     kind: "effectgate_benchmark_report",
     schema_version: "1.0.0",
@@ -402,6 +473,7 @@ export function generateBenchmarkReport({ file } = {}) {
     total_runs: events.length,
     completed_runs: completed.length,
     failed_runs: events.length - completed.length,
+    ledger_evidence: ledgerEvidence,
     profile_reports: header.profiles.map((profile) =>
       profileReport(events, profile, evidenceDigest))
   });

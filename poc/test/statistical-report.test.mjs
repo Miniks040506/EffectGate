@@ -17,6 +17,9 @@ import {
   runPairedBenchmark
 } from "../src/benchmark/paired-harness.mjs";
 import {
+  runSkillFixtureBenchmark
+} from "../src/benchmark/skill-fixture-runner.mjs";
+import {
   generateBenchmarkReport,
   writeBenchmarkReport
 } from "../src/benchmark/statistical-report.mjs";
@@ -126,6 +129,13 @@ function assertContract(report) {
     report.evidence_digest,
     new RegExp(CONTRACT.$defs.digest.pattern, "u")
   );
+  for (const evidence of report.ledger_evidence) {
+    assertKeys(evidence, CONTRACT.$defs.ledger_evidence);
+    assert.match(
+      evidence.integrity_digest,
+      new RegExp(CONTRACT.$defs.digest.pattern, "u")
+    );
+  }
   for (const value of report.profile_reports) {
     assertKeys(value, CONTRACT.$defs.profile_report);
     for (const failure of value.failures) {
@@ -221,6 +231,59 @@ test("statistical report retains failures and deterministic measurements", async
       input: files.evidence,
       output: files.output
     }), { code: "EEXIST" });
+  } finally {
+    files.close();
+  }
+});
+
+test("skill report joins exact S3 ledger integrity evidence", async () => {
+  const files = fixture();
+  try {
+    const benchmarkResult = await runSkillFixtureBenchmark({
+      file: files.evidence,
+      workspace: files.directory
+    });
+    const s3 = benchmarkResult.events.find(
+      ({ profile: id }) => id === "S3_EG_CAPSULE_VERIFIED"
+    );
+    const report = generateBenchmarkReport({ file: files.evidence });
+    assertContract(report);
+    assert.deepEqual(report.ledger_evidence, [{
+      run_id: s3.run_id,
+      profile: "S3_EG_CAPSULE_VERIFIED",
+      integrity_digest: report.ledger_evidence[0].integrity_digest,
+      entry_count: 5
+    }]);
+    assert.doesNotMatch(
+      JSON.stringify(report),
+      /Verified fixture content|Inspection reference|response loss/iu
+    );
+
+    const ledgerFile = join(files.directory, `${s3.run_id}.jsonl`);
+    const ledger = readFileSync(ledgerFile, "utf8");
+    writeFileSync(
+      ledgerFile,
+      ledger.replace(
+        '"profile":"native_deferred"',
+        '"profile":"eager_diagnostic"'
+      )
+    );
+    assert.throws(
+      () => generateBenchmarkReport({ file: files.evidence }),
+      {
+        name: "TypeError",
+        message: "invalid benchmark ledger evidence"
+      }
+    );
+    writeFileSync(ledgerFile, ledger);
+    rmSync(ledgerFile);
+    assert.throws(
+      () => generateBenchmarkReport({ file: files.evidence }),
+      {
+        name: "TypeError",
+        message: "invalid benchmark ledger evidence"
+      }
+    );
   } finally {
     files.close();
   }
