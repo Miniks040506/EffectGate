@@ -2,6 +2,13 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+import {
+  createOperatorRpcServer
+} from "../operator/operator-rpc.mjs";
+import {
+  decideConfiguredApproval,
+  inspectConfiguredApproval
+} from "../operator/operator-state.mjs";
 import { compileIdempotencyAdapter } from "../policy/idempotency-adapter.mjs";
 import { ApprovalLeaseStore } from "../policy/approval-lease-store.mjs";
 import { EffectOperationJournal } from "../policy/operation-journal.mjs";
@@ -113,6 +120,58 @@ function rpcCall(rpc, id, method, params) {
   return response.result;
 }
 
+async function operatorRequest(config, rpc, request) {
+  const keys = {
+    "approval.inspect": ["schema_version", "method", "operation_id"],
+    "approval.approve": [
+      "schema_version", "method", "operation_id", "approver_id",
+      "intent_digest"
+    ],
+    "approval.deny": ["schema_version", "method", "operation_id"],
+    "operation.reconcile": ["schema_version", "method", "operation_id"]
+  }[request?.method];
+  if (!keys || !exactData(request, keys) ||
+      request.schema_version !== "1.0.0" ||
+      !IDENTIFIER.test(request.operation_id ?? "") ||
+      (request.method === "approval.approve" &&
+        (!IDENTIFIER.test(request.approver_id ?? "") ||
+          !DIGEST.test(request.intent_digest ?? "")))) {
+    throw new TypeError("invalid operator request");
+  }
+  if (request.method === "operation.reconcile") {
+    return rpc.reconcileEffect(request.operation_id);
+  }
+  if (request.method === "approval.deny") {
+    const denied = decideConfiguredApproval(
+      config, request.operation_id, { decision: "deny" }
+    );
+    rpc.forgetApprovalReview(request.operation_id);
+    return denied;
+  }
+  const review = rpc.approvalReview(request.operation_id);
+  if (request.method === "approval.inspect") {
+    return {
+      ...inspectConfiguredApproval(config, request.operation_id),
+      exact_arguments: review.exact_arguments
+    };
+  }
+  if (review.intent_digest !== request.intent_digest) {
+    const error = new Error("approval review changed");
+    error.code = "EG_APPROVAL_INTENT_CHANGED";
+    throw error;
+  }
+  const approved = decideConfiguredApproval(
+    config,
+    request.operation_id,
+    {
+      decision: "approve",
+      approverId: request.approver_id
+    }
+  );
+  rpc.forgetApprovalReview(request.operation_id);
+  return approved;
+}
+
 export async function createConfiguredSkillMcp(configFile) {
   const config = loadSkillMcpConfig(configFile);
   mkdirSync(config.state_directory, { recursive: true, mode: 0o700 });
@@ -166,6 +225,7 @@ export async function createConfiguredSkillMcp(configFile) {
       })
     : undefined;
   let backend;
+  let operatorServer;
   try {
     const setup = new SkillRpc({
       skills: [skill],
@@ -261,11 +321,10 @@ export async function createConfiguredSkillMcp(configFile) {
         }]
       },
       limits: {
-        max_attempts: 1,
+        max_attempts: 3,
         per_attempt_timeout_ms:
           config.driver === STDIO_EFFECT_DRIVER ? 2000 : 50,
-        total_timeout_ms:
-          config.driver === STDIO_EFFECT_DRIVER ? 2500 : 100,
+        total_timeout_ms: 300_000,
         max_result_bytes: 4096,
         initial_backoff_ms: 0,
         max_backoff_ms: 0,
@@ -364,11 +423,12 @@ export async function createConfiguredSkillMcp(configFile) {
       transaction_id: config.transaction_id
     });
     let published;
+    let publishedRpc;
     if (["awaiting_capsule", "active"].includes(current.status)) {
       const capsule = rpcCall(rpc, 5, "skills/capsule/get", {
         transaction_id: config.transaction_id
       });
-      const publishedRpc = capsule.capsule_digest === recoveryCapsuleDigest
+      publishedRpc = capsule.capsule_digest === recoveryCapsuleDigest
         ? rpc
         : new SkillRpc({
           skills: [skill],
@@ -389,16 +449,24 @@ export async function createConfiguredSkillMcp(configFile) {
         }
       });
     } else {
-      published = new SkillMcp(new SkillRpc({
+      publishedRpc = new SkillRpc({
         skills: [skill],
         eventStore: store,
         effectJournal: journal,
         approvalStore: approvals
-      }));
+      });
+      published = new SkillMcp(publishedRpc);
+    }
+    if (config.approval_mode === "cli") {
+      operatorServer = await createOperatorRpcServer({
+        stateDirectory: config.state_directory,
+        dispatch: (request) => operatorRequest(config, publishedRpc, request)
+      });
     }
     return {
       mcp: published,
       async close() {
+        await operatorServer?.close();
         await backend?.close();
         approvals?.close();
         journal.close();
@@ -406,6 +474,7 @@ export async function createConfiguredSkillMcp(configFile) {
       }
     };
   } catch (error) {
+    await operatorServer?.close();
     await backend?.close();
     approvals?.close();
     journal.close();

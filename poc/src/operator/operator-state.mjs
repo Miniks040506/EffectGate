@@ -231,8 +231,8 @@ export function inspectConfiguredResolution(config, operationId) {
   const journal = new EffectOperationJournal({ file, readOnly: true });
   try {
     const operation = ownedOperation(journal, config, operationId);
-    if (operation.state !== "uncertain") {
-      throw new Error("effect operation is not uncertain");
+    if (!["uncertain", "reconciling"].includes(operation.state)) {
+      throw new Error("effect operation cannot be resolved");
     }
     return {
       operation_id: operationId,
@@ -240,7 +240,13 @@ export function inspectConfiguredResolution(config, operationId) {
       certainty: operation.certainty,
       effect_class: operation.effect_class,
       resource_scope: operation.resource_scope,
-      recovery_reason: operation.recovery_reason
+      recovery_reason: operation.recovery_reason,
+      verification_attempts:
+        operation.reconciliation?.attempts.length ?? 0,
+      verification_limit:
+        operation.reconciliation?.max_attempts ?? null,
+      verification_deadline:
+        operation.reconciliation?.deadline_at ?? null
     };
   } finally {
     journal.close();
