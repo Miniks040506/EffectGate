@@ -1,7 +1,12 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import {
+  ApprovalLeaseStore
+} from "../policy/approval-lease-store.mjs";
+import { verifyEffectIntent } from "../policy/effect-intent.mjs";
 import { EffectOperationJournal } from "../policy/operation-journal.mjs";
 import { SkillEventStore } from "../skill/skill-event-store.mjs";
 
@@ -48,6 +53,55 @@ function phaseStatus(loaded) {
     : "awaiting_capsule";
 }
 
+function operationIntent(operation) {
+  const intent = {
+    schema_version: "1.0.0",
+    principal_id: operation.principal_id,
+    client_id: operation.client_id,
+    session_id: operation.session_id,
+    transaction_id: operation.transaction_id,
+    skill_id: operation.skill_id,
+    skill_digest: operation.skill_digest,
+    phase: operation.phase,
+    phase_revision: operation.phase_revision,
+    capsule_digest: operation.capsule_digest,
+    capability_id: operation.capability_id,
+    capability_revision: operation.capability_revision,
+    effect_class: operation.effect_class,
+    canonical_arguments_hash: operation.canonical_arguments_hash,
+    resource_scope: operation.resource_scope,
+    disclosure_digest: operation.disclosure_digest,
+    policy_revision: operation.policy_revision,
+    expires_at: operation.intent_expires_at,
+    intent_digest: operation.intent_digest
+  };
+  verifyEffectIntent(intent);
+  return intent;
+}
+
+function ownedOperation(journal, config, operationId) {
+  const operation = journal.load(operationId)?.operation;
+  if (operation?.transaction_id !== config.transaction_id) {
+    throw new Error("effect operation does not exist");
+  }
+  return operation;
+}
+
+function approvalCard(operation) {
+  return {
+    operation_id: operation.operation_id,
+    challenge_id: operation.challenge_id,
+    effect_class: operation.effect_class,
+    capability_id: operation.capability_id,
+    capability_revision: operation.capability_revision,
+    resource_scope: operation.resource_scope,
+    canonical_arguments_hash: operation.canonical_arguments_hash,
+    disclosure_digest: operation.disclosure_digest,
+    intent_digest: operation.intent_digest,
+    expires_at: operation.intent_expires_at
+  };
+}
+
 export function inspectConfiguredStatus(config) {
   const skillFile = join(config.state_directory, "skill-events.db");
   if (!existsSync(skillFile)) {
@@ -87,7 +141,10 @@ export function inspectConfiguredStatus(config) {
     state: operation.state,
     certainty: operation.certainty,
     receipt_id,
-    updated_at: operation.updated_at
+    updated_at: operation.updated_at,
+    approval: operation.state === "awaiting_approval"
+      ? approvalCard(operation)
+      : null
   }));
   return {
     status: phaseStatus(loaded),
@@ -100,6 +157,127 @@ export function inspectConfiguredStatus(config) {
         .includes(operation.state)).length,
     operations
   };
+}
+
+export function inspectConfiguredApproval(config, operationId) {
+  const file = join(config.state_directory, "effect-operations.db");
+  if (!existsSync(file)) throw new Error("effect operation does not exist");
+  const journal = new EffectOperationJournal({ file, readOnly: true });
+  try {
+    const operation = ownedOperation(journal, config, operationId);
+    if (operation.state !== "awaiting_approval") {
+      throw new Error("effect operation is not awaiting approval");
+    }
+    return approvalCard(operation);
+  } finally {
+    journal.close();
+  }
+}
+
+export function decideConfiguredApproval(
+  config,
+  operationId,
+  { decision, approverId }
+) {
+  if (config.approval_mode !== "cli") {
+    throw new Error("CLI approval is not configured");
+  }
+  const file = join(config.state_directory, "effect-operations.db");
+  if (!existsSync(file)) throw new Error("effect operation does not exist");
+  const journal = new EffectOperationJournal({ file });
+  const approvals = new ApprovalLeaseStore({ file });
+  try {
+    const operation = ownedOperation(journal, config, operationId);
+    if (operation.state !== "awaiting_approval") {
+      throw new Error("effect operation is not awaiting approval");
+    }
+    if (decision === "deny") {
+      approvals.revoke({ challengeId: operation.challenge_id });
+      const denied = journal.cancel(operationId);
+      return {
+        status: "denied",
+        operation_id: operationId,
+        state: denied.state
+      };
+    }
+    const lease = approvals.approveChallenge({
+      challengeId: operation.challenge_id,
+      approverId,
+      channel: "cli"
+    });
+    // ponytail: two safe commits; combine if approval contention appears.
+    const proof = approvals.admitOperation({
+      leaseToken: lease.lease_token,
+      intent: operationIntent(operation),
+      operationId
+    });
+    return {
+      status: "approved",
+      operation_id: operationId,
+      state: journal.load(operationId).operation.state,
+      lease_ref: lease.lease_ref,
+      approval_proof_digest: proof.approval_proof_digest,
+      expires_at: lease.expires_at
+    };
+  } finally {
+    approvals.close();
+    journal.close();
+  }
+}
+
+export function inspectConfiguredResolution(config, operationId) {
+  const file = join(config.state_directory, "effect-operations.db");
+  if (!existsSync(file)) throw new Error("effect operation does not exist");
+  const journal = new EffectOperationJournal({ file, readOnly: true });
+  try {
+    const operation = ownedOperation(journal, config, operationId);
+    if (operation.state !== "uncertain") {
+      throw new Error("effect operation is not uncertain");
+    }
+    return {
+      operation_id: operationId,
+      state: operation.state,
+      certainty: operation.certainty,
+      effect_class: operation.effect_class,
+      resource_scope: operation.resource_scope,
+      recovery_reason: operation.recovery_reason
+    };
+  } finally {
+    journal.close();
+  }
+}
+
+export function manuallyResolveConfiguredOperation(
+  config,
+  operationId,
+  receiptId,
+  note
+) {
+  const file = join(config.state_directory, "effect-operations.db");
+  if (!existsSync(file)) throw new Error("effect operation does not exist");
+  const noteDigest = `sha256:${createHash("sha256")
+    .update("effectgate.operator-resolution-note.v1\0")
+    .update(note)
+    .digest("hex")}`;
+  const journal = new EffectOperationJournal({ file });
+  try {
+    ownedOperation(journal, config, operationId);
+    const operation = journal.requireManualResolution({
+      operationId,
+      evidenceDigest: noteDigest
+    });
+    const receipt = journal.issueReceipt({ receiptId, operationId });
+    return {
+      status: operation.state,
+      operation_id: operationId,
+      certainty: operation.certainty,
+      receipt_id: receipt.receipt_id,
+      receipt_hash: receipt.receipt_hash,
+      note_digest: noteDigest
+    };
+  } finally {
+    journal.close();
+  }
 }
 
 export function inspectConfiguredReceipt(config, receiptId) {

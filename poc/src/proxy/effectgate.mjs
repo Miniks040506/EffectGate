@@ -1825,7 +1825,9 @@ export function runProxy(args) {
 }
 
 export async function main(args = process.argv.slice(2)) {
-  if (["init", "doctor", "status", "receipt"].includes(args[0])) {
+  if ([
+    "init", "doctor", "status", "receipt", "approve", "resolve"
+  ].includes(args[0])) {
     const { runOperatorCli } = await import(
       "../operator/operator-cli.mjs"
     );

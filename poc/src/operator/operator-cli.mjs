@@ -22,15 +22,22 @@ import {
 } from "../skill/stdio-effect-adapter.mjs";
 import {
   databaseIntegrity,
+  decideConfiguredApproval,
   inspectConfiguredReceipt,
+  inspectConfiguredApproval,
+  inspectConfiguredResolution,
   inspectConfiguredStatus,
+  manuallyResolveConfiguredOperation,
   recoveryBacklog
 } from "./operator-state.mjs";
 
 const USAGE = "Usage: effectgate.mjs init --config FILE --state DIRECTORY " +
   "--skill-root DIRECTORY --target PATH --transaction ID " +
   "(--dry-run | --apply) [--json] | doctor|status --config FILE [--json] | " +
-  "receipt --config FILE --id ID [--json]";
+  "receipt --config FILE --id ID [--json] | approve --config FILE " +
+  "--operation ID [--approver ID --yes | --deny] [--json] | resolve " +
+  "--config FILE --operation ID [--manual --receipt ID --note TEXT --yes] " +
+  "[--json]";
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const VALUE_OPTIONS = Object.freeze({
   "--config": "configFile",
@@ -38,11 +45,18 @@ const VALUE_OPTIONS = Object.freeze({
   "--skill-root": "skillRoot",
   "--target": "targetPath",
   "--transaction": "transactionId",
-  "--id": "id"
+  "--id": "id",
+  "--operation": "operationId",
+  "--receipt": "receiptId",
+  "--approver": "approverId",
+  "--note": "note"
 });
 const FLAG_OPTIONS = Object.freeze({
   "--dry-run": "dryRun",
   "--apply": "apply",
+  "--deny": "deny",
+  "--manual": "manual",
+  "--yes": "yes",
   "--json": "json"
 });
 const ALLOWED = Object.freeze({
@@ -52,7 +66,13 @@ const ALLOWED = Object.freeze({
   ]),
   doctor: new Set(["configFile", "json"]),
   status: new Set(["configFile", "json"]),
-  receipt: new Set(["configFile", "id", "json"])
+  receipt: new Set(["configFile", "id", "json"]),
+  approve: new Set([
+    "configFile", "operationId", "approverId", "yes", "deny", "json"
+  ]),
+  resolve: new Set([
+    "configFile", "operationId", "receiptId", "manual", "note", "yes", "json"
+  ])
 });
 
 function fail() {
@@ -89,6 +109,20 @@ function parse(args) {
           !IDENTIFIER.test(values.transactionId ?? "") ||
           values.dryRun === values.apply)) ||
       (command === "receipt" && !IDENTIFIER.test(values.id ?? ""))) fail();
+  if (command === "approve" &&
+      (!IDENTIFIER.test(values.operationId ?? "") ||
+        (values.yes && values.deny) ||
+        (values.yes && !IDENTIFIER.test(values.approverId ?? "")) ||
+        (!values.yes && values.approverId !== undefined))) fail();
+  const resolutionAction = [
+    values.manual, values.yes, values.note !== undefined,
+    values.receiptId !== undefined
+  ].filter(Boolean).length;
+  if (command === "resolve" &&
+      (!IDENTIFIER.test(values.operationId ?? "") ||
+        ![0, 4].includes(resolutionAction) ||
+        (resolutionAction === 4 &&
+          !IDENTIFIER.test(values.receiptId ?? "")))) fail();
   return values;
 }
 
@@ -122,7 +156,8 @@ function init(options) {
     client_id: "local-mcp-client",
     target_path: options.targetPath,
     resource_scope: `repo:reviewed/path:${options.targetPath}`,
-    backend_source_digest: stdioEffectAdapterSourceDigest()
+    backend_source_digest: stdioEffectAdapterSourceDigest(),
+    approval_mode: "cli"
   });
   const created = {
     config_parent: !existsSync(dirname(configFile)),
@@ -211,7 +246,13 @@ async function doctor(options) {
   }
   const backlog = recoveryBacklog(config);
   add("recovery_backlog", backlog === 0 ? "pass" : "warn", backlog);
-  add("approval_channel", "warn", "not configured in preview");
+  add(
+    "approval_channel",
+    config.approval_mode === "cli" ? "pass" : "warn",
+    config.approval_mode === "cli"
+      ? "single-use local CLI approval"
+      : "not configured in preview"
+  );
   add("token_counter", "pass", "built-in byte proxy");
   const status = checks.some((check) => check.status === "fail")
     ? "fail"
@@ -245,6 +286,47 @@ function receipt(options) {
   };
 }
 
+function approve(options) {
+  const config = loadSkillMcpConfig(options.configFile);
+  if (!options.yes && !options.deny) {
+    return {
+      schema_version: "1.0.0",
+      command: "approve",
+      status: "confirmation_required",
+      approval: inspectConfiguredApproval(config, options.operationId)
+    };
+  }
+  return {
+    schema_version: "1.0.0",
+    command: "approve",
+    ...decideConfiguredApproval(config, options.operationId, {
+      decision: options.deny ? "deny" : "approve",
+      approverId: options.approverId
+    })
+  };
+}
+
+function resolveOperation(options) {
+  const config = loadSkillMcpConfig(options.configFile);
+  if (!options.manual) {
+    return {
+      schema_version: "1.0.0",
+      command: "resolve",
+      status: "confirmation_required",
+      resolution: inspectConfiguredResolution(
+        config, options.operationId
+      )
+    };
+  }
+  return {
+    schema_version: "1.0.0",
+    command: "resolve",
+    ...manuallyResolveConfiguredOperation(
+      config, options.operationId, options.receiptId, options.note
+    )
+  };
+}
+
 function human(result) {
   if (result.command === "doctor") {
     return [
@@ -262,6 +344,16 @@ function human(result) {
   if (result.command === "init") {
     return `EffectGate configuration ${result.status}: ${result.config_file}`;
   }
+  if (result.command === "approve") {
+    const operationId =
+      result.operation_id ?? result.approval.operation_id;
+    return `Approval ${result.status}: ${operationId}`;
+  }
+  if (result.command === "resolve") {
+    const operationId =
+      result.operation_id ?? result.resolution.operation_id;
+    return `Resolution ${result.status}: ${operationId}`;
+  }
   return JSON.stringify(result.receipt, null, 2);
 }
 
@@ -270,7 +362,9 @@ export async function operatorCommand(args) {
   if (options.command === "init") return init(options);
   if (options.command === "doctor") return doctor(options);
   if (options.command === "status") return status(options);
-  return receipt(options);
+  if (options.command === "receipt") return receipt(options);
+  if (options.command === "approve") return approve(options);
+  return resolveOperation(options);
 }
 
 export async function runOperatorCli(args, output = process.stdout) {
