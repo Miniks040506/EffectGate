@@ -3,10 +3,13 @@ import {
   chmodSync,
   existsSync,
   lstatSync,
+  mkdirSync,
+  rmdirSync,
   rmSync
 } from "node:fs";
 import { createConnection, createServer } from "node:net";
-import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 
 import { MAX_FRAME_BYTES } from "../proxy/jsonl-rpc.mjs";
@@ -15,11 +18,32 @@ const TIMEOUT_MS = 5000;
 
 function endpointFor(stateDirectory) {
   const root = resolve(stateDirectory);
-  if (process.platform !== "win32") {
-    return join(root, ".effectgate-operator.sock");
-  }
   const id = createHash("sha256").update(root).digest("hex").slice(0, 32);
-  return `\\\\.\\pipe\\effectgate-${id}`;
+  if (process.platform === "win32") {
+    return `\\\\.\\pipe\\effectgate-${id}`;
+  }
+  const uid = process.getuid();
+  return join(
+    tmpdir(),
+    `eg-${uid}-${id.slice(0, 8)}`,
+    `${id.slice(8)}.sock`
+  );
+}
+
+function ensureEndpointDirectory(endpoint) {
+  const directory = dirname(endpoint);
+  try {
+    mkdirSync(directory, { mode: 0o700 });
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
+  const details = lstatSync(directory);
+  if (!details.isDirectory() ||
+      details.uid !== process.getuid() ||
+      (details.mode & 0o077) !== 0) {
+    throw new Error("operator RPC endpoint directory is unsafe");
+  }
+  return directory;
 }
 
 function frame(value) {
@@ -91,7 +115,10 @@ export async function createOperatorRpcServer({
     throw new TypeError("invalid operator RPC server");
   }
   const endpoint = endpointFor(stateDirectory);
-  if (process.platform !== "win32" && existsSync(endpoint)) {
+  const endpointDirectory = process.platform === "win32"
+    ? undefined
+    : ensureEndpointDirectory(endpoint);
+  if (endpointDirectory && existsSync(endpoint)) {
     if (!lstatSync(endpoint).isSocket()) {
       throw new Error("operator RPC endpoint is unsafe");
     }
@@ -153,7 +180,14 @@ export async function createOperatorRpcServer({
     endpoint,
     async close() {
       await new Promise((accept) => server.close(accept));
-      if (process.platform !== "win32") rmSync(endpoint, { force: true });
+      if (endpointDirectory) {
+        rmSync(endpoint, { force: true });
+        try {
+          rmdirSync(endpointDirectory);
+        } catch (error) {
+          if (!["ENOENT", "ENOTEMPTY"].includes(error.code)) throw error;
+        }
+      }
     }
   };
 }

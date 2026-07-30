@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
+import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
@@ -1959,7 +1960,8 @@ export async function main(args = process.argv.slice(2)) {
   throw new Error(SERVE_USAGE);
 }
 
-const isMain = process.argv[1] === fileURLToPath(import.meta.url);
+const isMain = process.argv[1] !== undefined &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
 if (isMain) {
   main().catch((error) => {
     process.stderr.write(`[effectgate] ${error.message}\n`);
