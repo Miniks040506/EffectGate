@@ -133,13 +133,15 @@ class StdioSession {
   #nextId = 0;
   #pending = new Map();
 
-  constructor({ stateFile, targetPath, cwd, probe = false }) {
+  constructor({
+    stateFile, targetPath, cwd, secretEnvironment, probe = false
+  }) {
     const args = probe
       ? [fixtureFile, "--probe"]
       : [fixtureFile, "--state", stateFile, "--target", targetPath];
     this.#child = spawn(process.execPath, args, {
       cwd,
-      env: backendEnvironment(),
+      env: backendEnvironment(secretEnvironment),
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true
@@ -253,7 +255,7 @@ class StdioSession {
 }
 
 export async function createReviewedStdioEffectBackend({
-  stateFile, targetPath, cwd, expectedSourceDigest
+  stateFile, targetPath, cwd, expectedSourceDigest, secretEnvironment
 } = {}) {
   if (!bounded(stateFile, 1024) || !bounded(targetPath, 512) ||
       !bounded(cwd, 1024) || !DIGEST.test(expectedSourceDigest ?? "") ||
@@ -262,7 +264,9 @@ export async function createReviewedStdioEffectBackend({
   }
   let session;
   const start = async () => {
-    const next = new StdioSession({ stateFile, targetPath, cwd });
+    const next = new StdioSession({
+      stateFile, targetPath, cwd, secretEnvironment
+    });
     try {
       await next.initialize(expectedSourceDigest);
     } catch (error) {
@@ -317,13 +321,13 @@ export async function createReviewedStdioEffectBackend({
 }
 
 export async function probeReviewedStdioEffectBackend({
-  cwd, expectedSourceDigest
+  cwd, expectedSourceDigest, secretEnvironment
 } = {}) {
   if (!bounded(cwd, 1024) || !DIGEST.test(expectedSourceDigest ?? "") ||
       sourceDigest() !== expectedSourceDigest) {
     throw new TypeError("invalid reviewed stdio backend probe");
   }
-  const session = new StdioSession({ cwd, probe: true });
+  const session = new StdioSession({ cwd, secretEnvironment, probe: true });
   try {
     await session.initialize(expectedSourceDigest);
   } finally {

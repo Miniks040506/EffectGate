@@ -1,5 +1,10 @@
 import process from "node:process";
 
+import {
+  BACKEND_BASE_ENVIRONMENT,
+  normalizeSecretEnvironment
+} from "../config/layered-config.mjs";
+
 export const MAX_FRAME_BYTES = 1024 * 1024;
 const MAX_ID_BYTES = 128;
 
@@ -84,21 +89,14 @@ export function readBoundedJsonLines(
   });
 }
 
-export function backendEnvironment() {
-  const allowed = [
-    "PATH",
-    "Path",
-    "PATHEXT",
-    "SystemRoot",
-    "SYSTEMROOT",
-    "WINDIR",
-    "COMSPEC",
-    "TEMP",
-    "TMP"
-  ];
-  return Object.fromEntries(
-    allowed
+export function backendEnvironment(secretEnvironment = {}) {
+  const secrets = normalizeSecretEnvironment(secretEnvironment);
+  return Object.freeze({
+    ...Object.fromEntries(
+      BACKEND_BASE_ENVIRONMENT
       .filter((name) => process.env[name] !== undefined)
       .map((name) => [name, process.env[name]])
-  );
+    ),
+    ...secrets
+  });
 }

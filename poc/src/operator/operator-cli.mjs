@@ -8,10 +8,14 @@ import {
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 
+import {
+  resolveEnvironmentSecretRefs
+} from "../config/layered-config.mjs";
 import { EFFECTGATE_VERSION } from "../proxy/mcp-contract.mjs";
 import {
   SKILL_SOURCE_PATHS,
   loadSkillMcpConfig,
+  loadSkillMcpConfigBundle,
   normalizeSkillMcpConfig
 } from "../skill/skill-runtime-config.mjs";
 import { importSkillSource } from "../skill/source-import.mjs";
@@ -198,18 +202,29 @@ function init(options) {
 
 async function doctor(options) {
   const checks = [];
+  let configurationLayers = [];
   const add = (name, status, detail) =>
     checks.push(detail === undefined ? { name, status } : {
       name, status, detail
     });
   let config;
   try {
-    config = loadSkillMcpConfig(options.configFile);
-    add("configuration", "pass", "schema 1.0.0");
+    const loaded = loadSkillMcpConfigBundle(options.configFile);
+    config = loaded.config;
+    configurationLayers = loaded.layers;
+    add(
+      "configuration",
+      "pass",
+      `schema 1.0.0; ${configurationLayers.length} layer(s), parent first`
+    );
   } catch {
     add("configuration", "fail", "invalid or unreadable");
     return {
-      schema_version: "1.0.0", command: "doctor", status: "fail", checks
+      schema_version: "1.0.0",
+      command: "doctor",
+      status: "fail",
+      configuration_layers: configurationLayers,
+      checks
     };
   }
   add(
@@ -233,15 +248,31 @@ async function doctor(options) {
   } catch {
     add("state_directory", "fail", "no writable ancestor");
   }
+  let secretEnvironment;
+  try {
+    secretEnvironment = resolveEnvironmentSecretRefs(config.secret_refs);
+    add(
+      "secret_references",
+      "pass",
+      `${Object.keys(secretEnvironment).length} environment reference(s)`
+    );
+  } catch {
+    add("secret_references", "fail", "missing or invalid");
+  }
   if (config.driver === STDIO_EFFECT_DRIVER) {
-    try {
-      await probeReviewedStdioEffectBackend({
-        cwd: config.skill_root,
-        expectedSourceDigest: config.backend_source_digest
-      });
-      add("backend", "pass", "exact stdio handshake");
-    } catch {
-      add("backend", "fail", "identity or reachability failure");
+    if (secretEnvironment === undefined) {
+      add("backend", "fail", "secret references unavailable");
+    } else {
+      try {
+        await probeReviewedStdioEffectBackend({
+          cwd: config.skill_root,
+          expectedSourceDigest: config.backend_source_digest,
+          secretEnvironment
+        });
+        add("backend", "pass", "exact stdio handshake");
+      } catch {
+        add("backend", "fail", "identity or reachability failure");
+      }
     }
   } else {
     add("backend", "warn", "memory fixture is process-local");
@@ -267,7 +298,11 @@ async function doctor(options) {
     ? "fail"
     : checks.some((check) => check.status === "warn") ? "warn" : "pass";
   return {
-    schema_version: "1.0.0", command: "doctor", status, checks
+    schema_version: "1.0.0",
+    command: "doctor",
+    status,
+    configuration_layers: configurationLayers,
+    checks
   };
 }
 

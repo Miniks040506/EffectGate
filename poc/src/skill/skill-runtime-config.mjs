@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+import {
+  loadLayeredConfiguration,
+  normalizeEnvironmentSecretRefs,
+  resolveEnvironmentSecretRefs
+} from "../config/layered-config.mjs";
 import {
   createOperatorRpcServer
 } from "../operator/operator-rpc.mjs";
@@ -55,11 +60,20 @@ function bounded(value, maximum) {
 
 export function normalizeSkillMcpConfig(value) {
   const stdio = value?.driver === STDIO_EFFECT_DRIVER;
+  let secretRefs;
+  try {
+    secretRefs = value?.secret_refs === undefined
+      ? undefined
+      : normalizeEnvironmentSecretRefs(value.secret_refs);
+  } catch {
+    throw new TypeError("invalid Skill MCP configuration");
+  }
   const keys = stdio
     ? [
         ...CONFIG_KEYS,
         "backend_source_digest",
-        ...(value.approval_mode === undefined ? [] : ["approval_mode"])
+        ...(value.approval_mode === undefined ? [] : ["approval_mode"]),
+        ...(secretRefs === undefined ? [] : ["secret_refs"])
       ]
     : CONFIG_KEYS;
   const targetSegments = value?.target_path?.split("/");
@@ -70,6 +84,7 @@ export function normalizeSkillMcpConfig(value) {
         !DIGEST.test(value.backend_source_digest ?? "")) ||
       (value.approval_mode !== undefined &&
         (!stdio || value.approval_mode !== "cli")) ||
+      (!stdio && secretRefs !== undefined) ||
       !bounded(value.state_directory, 1024) ||
       !bounded(value.skill_root, 1024) ||
       !DIGEST.test(value.skill_source_digest ?? "") ||
@@ -85,29 +100,26 @@ export function normalizeSkillMcpConfig(value) {
   }
   return deepFreeze({
     ...value,
+    ...(secretRefs === undefined ? {} : { secret_refs: secretRefs }),
     state_directory: resolve(value.state_directory),
     skill_root: resolve(value.skill_root)
   });
 }
 
-export function loadSkillMcpConfig(file) {
-  if (!bounded(file, 1024)) {
-    throw new TypeError("invalid Skill MCP configuration path");
-  }
-  const path = resolve(file);
-  let value;
+export function loadSkillMcpConfigBundle(file) {
   try {
-    const size = statSync(path).size;
-    if (size < 2 || size > 64 * 1024) {
-      throw new TypeError("invalid Skill MCP configuration");
-    }
-    const bytes = readFileSync(path);
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    value = JSON.parse(text);
+    const loaded = loadLayeredConfiguration(file);
+    return deepFreeze({
+      config: normalizeSkillMcpConfig(loaded.value),
+      layers: loaded.files
+    });
   } catch {
     throw new TypeError("invalid Skill MCP configuration");
   }
-  return normalizeSkillMcpConfig(value);
+}
+
+export function loadSkillMcpConfig(file) {
+  return loadSkillMcpConfigBundle(file).config;
 }
 
 function rpcCall(rpc, id, method, params) {
@@ -173,7 +185,10 @@ async function operatorRequest(config, rpc, request) {
 }
 
 export async function createConfiguredSkillMcp(configFile) {
-  const config = loadSkillMcpConfig(configFile);
+  const config = loadSkillMcpConfigBundle(configFile).config;
+  const secretEnvironment = resolveEnvironmentSecretRefs(
+    config.secret_refs
+  );
   mkdirSync(config.state_directory, { recursive: true, mode: 0o700 });
   const source = importSkillSource({
     root: config.skill_root,
@@ -346,7 +361,8 @@ export async function createConfiguredSkillMcp(configFile) {
         ),
         targetPath: config.target_path,
         cwd: config.skill_root,
-        expectedSourceDigest: config.backend_source_digest
+        expectedSourceDigest: config.backend_source_digest,
+        secretEnvironment
       });
     } else {
       const memory = new Map();
