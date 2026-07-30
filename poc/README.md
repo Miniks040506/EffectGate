@@ -31,6 +31,19 @@ npm test
 npm start
 ```
 
+Install the checked-out preview as a global `effectgate` command:
+
+```powershell
+npm install --global .
+effectgate mcp serve
+```
+
+The packed artifact is dependency-free and contains only runtime source, this
+guide, package metadata, and the Apache-2.0 license. The automated package
+qualification packs it offline, installs that exact tarball into a clean
+temporary consumer, checks the generated command shim, and completes an MCP
+initialize exchange through the installed CLI.
+
 Point an MCP stdio client at:
 
 ```text

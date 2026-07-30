@@ -60,6 +60,18 @@ npm --prefix poc start
 bundled deterministic fixture. No package installation or network listener is
 involved.
 
+To install the same preview as an `effectgate` command from a checked-out
+repository:
+
+```powershell
+npm install --global ./poc
+effectgate mcp serve
+```
+
+The package contains only the runtime source, focused operating guide, and
+Apache-2.0 license. Tests, qualification evidence, and design files are not
+installed.
+
 ## Architecture
 
 ```mermaid
