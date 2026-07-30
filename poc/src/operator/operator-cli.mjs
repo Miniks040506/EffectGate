@@ -20,11 +20,10 @@ import {
   probeReviewedStdioEffectBackend,
   stdioEffectAdapterSourceDigest
 } from "../skill/stdio-effect-adapter.mjs";
+import { operatorRpcRequest } from "./operator-rpc.mjs";
 import {
   databaseIntegrity,
-  decideConfiguredApproval,
   inspectConfiguredReceipt,
-  inspectConfiguredApproval,
   inspectConfiguredResolution,
   inspectConfiguredStatus,
   manuallyResolveConfiguredOperation,
@@ -35,10 +34,11 @@ const USAGE = "Usage: effectgate.mjs init --config FILE --state DIRECTORY " +
   "--skill-root DIRECTORY --target PATH --transaction ID " +
   "(--dry-run | --apply) [--json] | doctor|status --config FILE [--json] | " +
   "receipt --config FILE --id ID [--json] | approve --config FILE " +
-  "--operation ID [--approver ID --yes | --deny] [--json] | resolve " +
-  "--config FILE --operation ID [--manual --receipt ID --note TEXT --yes] " +
-  "[--json]";
+  "--operation ID [--approver ID --intent DIGEST --yes | --deny] [--json] " +
+  "| resolve --config FILE --operation ID [--reconcile | " +
+  "--manual --receipt ID --note TEXT --yes] [--json]";
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const DIGEST = /^sha256:[a-f0-9]{64}$/u;
 const VALUE_OPTIONS = Object.freeze({
   "--config": "configFile",
   "--state": "stateDirectory",
@@ -49,6 +49,7 @@ const VALUE_OPTIONS = Object.freeze({
   "--operation": "operationId",
   "--receipt": "receiptId",
   "--approver": "approverId",
+  "--intent": "intentDigest",
   "--note": "note"
 });
 const FLAG_OPTIONS = Object.freeze({
@@ -56,6 +57,7 @@ const FLAG_OPTIONS = Object.freeze({
   "--apply": "apply",
   "--deny": "deny",
   "--manual": "manual",
+  "--reconcile": "reconcile",
   "--yes": "yes",
   "--json": "json"
 });
@@ -68,10 +70,12 @@ const ALLOWED = Object.freeze({
   status: new Set(["configFile", "json"]),
   receipt: new Set(["configFile", "id", "json"]),
   approve: new Set([
-    "configFile", "operationId", "approverId", "yes", "deny", "json"
+    "configFile", "operationId", "approverId", "intentDigest",
+    "yes", "deny", "json"
   ]),
   resolve: new Set([
-    "configFile", "operationId", "receiptId", "manual", "note", "yes", "json"
+    "configFile", "operationId", "receiptId", "manual", "reconcile",
+    "note", "yes", "json"
   ])
 });
 
@@ -112,14 +116,19 @@ function parse(args) {
   if (command === "approve" &&
       (!IDENTIFIER.test(values.operationId ?? "") ||
         (values.yes && values.deny) ||
-        (values.yes && !IDENTIFIER.test(values.approverId ?? "")) ||
-        (!values.yes && values.approverId !== undefined))) fail();
+        (values.yes &&
+          (!IDENTIFIER.test(values.approverId ?? "") ||
+            !DIGEST.test(values.intentDigest ?? ""))) ||
+        (!values.yes &&
+          (values.approverId !== undefined ||
+            values.intentDigest !== undefined)))) fail();
   const resolutionAction = [
     values.manual, values.yes, values.note !== undefined,
     values.receiptId !== undefined
   ].filter(Boolean).length;
   if (command === "resolve" &&
       (!IDENTIFIER.test(values.operationId ?? "") ||
+        (values.reconcile && resolutionAction !== 0) ||
         ![0, 4].includes(resolutionAction) ||
         (resolutionAction === 4 &&
           !IDENTIFIER.test(values.receiptId ?? "")))) fail();
@@ -286,28 +295,52 @@ function receipt(options) {
   };
 }
 
-function approve(options) {
+async function approve(options) {
   const config = loadSkillMcpConfig(options.configFile);
+  const method = options.deny
+    ? "approval.deny"
+    : options.yes ? "approval.approve" : "approval.inspect";
+  const approval = await operatorRpcRequest(config.state_directory, {
+    schema_version: "1.0.0",
+    method,
+    operation_id: options.operationId,
+    ...(options.yes
+      ? {
+          approver_id: options.approverId,
+          intent_digest: options.intentDigest
+        }
+      : {})
+  });
   if (!options.yes && !options.deny) {
     return {
       schema_version: "1.0.0",
       command: "approve",
       status: "confirmation_required",
-      approval: inspectConfiguredApproval(config, options.operationId)
+      approval
     };
   }
   return {
     schema_version: "1.0.0",
     command: "approve",
-    ...decideConfiguredApproval(config, options.operationId, {
-      decision: options.deny ? "deny" : "approve",
-      approverId: options.approverId
-    })
+    ...approval
   };
 }
 
-function resolveOperation(options) {
+async function resolveOperation(options) {
   const config = loadSkillMcpConfig(options.configFile);
+  if (options.reconcile) {
+    const outcome = await operatorRpcRequest(config.state_directory, {
+      schema_version: "1.0.0",
+      method: "operation.reconcile",
+      operation_id: options.operationId
+    });
+    return {
+      schema_version: "1.0.0",
+      command: "resolve",
+      status: outcome.state,
+      outcome
+    };
+  }
   if (!options.manual) {
     return {
       schema_version: "1.0.0",
@@ -347,11 +380,19 @@ function human(result) {
   if (result.command === "approve") {
     const operationId =
       result.operation_id ?? result.approval.operation_id;
-    return `Approval ${result.status}: ${operationId}`;
+    const review = result.status === "confirmation_required"
+      ? `\nExact arguments:\n${
+          JSON.stringify(result.approval.exact_arguments, null, 2)
+        }\nApprove this intent with --intent ${
+          result.approval.intent_digest
+        }`
+      : "";
+    return `Approval ${result.status}: ${operationId}${review}`;
   }
   if (result.command === "resolve") {
     const operationId =
-      result.operation_id ?? result.resolution.operation_id;
+      result.operation_id ?? result.resolution?.operation_id ??
+        result.outcome.operation_id;
     return `Resolution ${result.status}: ${operationId}`;
   }
   return JSON.stringify(result.receipt, null, 2);
