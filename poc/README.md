@@ -35,6 +35,7 @@ Install the checked-out preview as a global `effectgate` command:
 
 ```powershell
 npm install --global .
+effectgate --version
 effectgate mcp serve
 ```
 
@@ -43,6 +44,8 @@ guide, package metadata, and the Apache-2.0 license. The automated package
 qualification packs it offline, installs that exact tarball into a clean
 temporary consumer, checks the generated command shim, and completes an MCP
 initialize exchange through the installed CLI.
+Re-running the install command leaves external configuration and state
+untouched. The package has no install or uninstall lifecycle scripts.
 
 Point an MCP stdio client at:
 

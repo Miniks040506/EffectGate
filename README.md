@@ -65,12 +65,15 @@ repository:
 
 ```powershell
 npm install --global ./poc
+effectgate --version
 effectgate mcp serve
 ```
 
 The package contains only the runtime source, focused operating guide, and
 Apache-2.0 license. Tests, qualification evidence, and design files are not
-installed.
+installed. Re-running the install command upgrades or reinstalls the CLI
+without touching configuration or state stored outside the package directory.
+The package defines no install or uninstall lifecycle scripts.
 
 ## Architecture
 

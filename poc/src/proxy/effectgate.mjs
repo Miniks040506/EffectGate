@@ -102,7 +102,7 @@ const TOKEN_LEDGER_PROFILES = new Set([
   "eager_diagnostic"
 ]);
 const SERVE_USAGE =
-  "Usage: effectgate.mjs init|doctor|status|receipt ... | fixture | " +
+  "Usage: effectgate [--version] | init|doctor|status|receipt ... | fixture | " +
   "mcp skill serve --config FILE | " +
   "mcp serve [--source NAME | --config FILE] " +
   "[--max-session-emitted-tokens COUNT] [--token-ledger FILE] " +
@@ -1919,6 +1919,11 @@ export function runProxy(args) {
 }
 
 export async function main(args = process.argv.slice(2)) {
+  if (args.length === 1 && ["--version", "-v"].includes(args[0])) {
+    process.stdout.write(`${EFFECTGATE_VERSION}\n`);
+    return;
+  }
+
   if ([
     "init", "doctor", "status", "receipt", "approve", "resolve"
   ].includes(args[0])) {

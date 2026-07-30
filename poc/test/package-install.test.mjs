@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync
 } from "node:fs";
@@ -40,13 +41,18 @@ function runNpm(args, cwd, cache) {
   return result.stdout;
 }
 
-test("packed CLI installs and starts from runtime-only files", () => {
+test("packed CLI reports its version and preserves state on reinstall", () => {
   const root = mkdtempSync(join(tmpdir(), "effectgate-install-"));
   const packDirectory = join(root, "pack");
   const installDirectory = join(root, "consumer");
+  const stateDirectory = join(root, "state");
   const cache = join(root, "npm-cache");
   mkdirSync(packDirectory);
   mkdirSync(installDirectory);
+  mkdirSync(stateDirectory);
+  const stateFile = join(stateDirectory, "preserve.json");
+  const state = JSON.stringify({ owner: "user", revision: 17 });
+  writeFileSync(stateFile, state);
   writeFileSync(
     join(installDirectory, "package.json"),
     JSON.stringify({ name: "effectgate-install-smoke", private: true })
@@ -104,6 +110,33 @@ test("packed CLI installs and starts from runtime-only files", () => {
     );
     assert.ok(existsSync(installedCli));
     assert.ok(existsSync(bin));
+    const installedManifest = JSON.parse(readFileSync(
+      join(installedRoot, "package.json"),
+      "utf8"
+    ));
+    assert.equal(installedManifest.version, packed.version);
+    for (const lifecycle of [
+      "preinstall", "install", "postinstall",
+      "preuninstall", "uninstall", "postuninstall"
+    ]) {
+      assert.equal(installedManifest.scripts?.[lifecycle], undefined);
+    }
+
+    const version = spawnSync(process.execPath, [installedCli, "--version"], {
+      encoding: "utf8"
+    });
+    assert.equal(version.status, 0, version.stderr);
+    assert.equal(version.stdout.trim(), packed.version);
+
+    runNpm([
+      "install",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--package-lock=false",
+      tarball
+    ], installDirectory, cache);
+    assert.equal(readFileSync(stateFile, "utf8"), state);
 
     const launch = spawnSync(process.execPath, [installedCli, "fixture"], {
       encoding: "utf8",
