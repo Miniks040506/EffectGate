@@ -345,6 +345,13 @@ export class EffectOperationJournal {
     if (!OPERATION_PATTERNS.digest.test(evidenceDigest ?? "")) {
       operationFail("EG_RECONCILIATION_EVIDENCE_INVALID");
     }
+    if (this.load(operationId)?.operation.state === "reconciling") {
+      return this.#finishReconciliation({
+        operationId,
+        outcome: "manual_resolution",
+        runEvidenceDigest: evidenceDigest
+      });
+    }
     const clock = this.#begin();
     try {
       const operation = this.#database.prepare(
@@ -370,9 +377,14 @@ export class EffectOperationJournal {
 
   async reconcile({
     operationId, descriptor, idempotency = null, invoke,
-    probeNow, sleep
+    probeNow, sleep, attemptLimit
   } = {}) {
     verifyVerificationProbe(descriptor);
+    if (attemptLimit !== undefined &&
+        (!Number.isSafeInteger(attemptLimit) ||
+          attemptLimit < 1 || attemptLimit > 10)) {
+      throw new TypeError("invalid reconciliation attempt limit");
+    }
     const prepared = this.#prepareReconciliation(operationId, descriptor);
     const reconciliation = prepared.operation.reconciliation;
     const attempts = reconciliation.attempts;
@@ -417,7 +429,7 @@ export class EffectOperationJournal {
       idempotency,
       invoke,
       attemptOffset: attempts.length,
-      attemptLimit: remainingAttempts,
+      attemptLimit: Math.min(remainingAttempts, attemptLimit ?? 10),
       elapsedOffsetMs: Math.min(
         elapsed, descriptor.limits.total_timeout_ms
       ),
@@ -433,6 +445,12 @@ export class EffectOperationJournal {
     if (probeNow !== undefined) runner.now = probeNow;
     if (sleep !== undefined) runner.sleep = sleep;
     const run = await runVerificationProbe(runner);
+    const retained = this.load(operationId).operation;
+    if (run.outcome === "ambiguous" && attemptLimit !== undefined &&
+        retained.reconciliation.attempts.length <
+          retained.reconciliation.max_attempts) {
+      return retained;
+    }
     return this.#finishReconciliation({
       operationId,
       outcome: run.outcome === "ambiguous"

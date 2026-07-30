@@ -10,7 +10,8 @@ import { EffectOperationJournal } from "../policy/operation-journal.mjs";
 import {
   completePhaseEffectOperation,
   dispatchPhaseEffectOperation,
-  planPhaseEffectOperation
+  planPhaseEffectOperation,
+  preparePhaseEffect
 } from "../policy/phase-effect-admission.mjs";
 import {
   verifyVerificationProbe
@@ -24,6 +25,7 @@ import { skillReferencePath } from "./skill-graph.mjs";
 const CAPSULE_TTL_MS = 5 * 60 * 1000;
 const EFFECT_TTL_MS = 5 * 60 * 1000;
 const DISPATCH_TTL_MS = 60 * 1000;
+const MAX_APPROVAL_REVIEWS = 32;
 const EFFECT_CLASSES = new Set([
   "observe", "disclose", "mutate_reversible", "mutate_irreversible",
   "destructive", "external_commit", "credential_use", "code_execution"
@@ -243,6 +245,7 @@ function effectCommandRegistry(commands = []) {
 }
 
 export class SkillRpc {
+  #approvalReviews = new Map();
   #approvals;
   #effectCommands;
   #effectJournal;
@@ -330,109 +333,162 @@ export class SkillRpc {
     }
   }
 
+  approvalReview(operationId) {
+    this.#pruneApprovalReviews();
+    const operation = EffectOperationJournal.prototype.load.call(
+      this.#effects(), operationId
+    )?.operation;
+    const review = this.#approvalReviews.get(operationId);
+    if (operation?.state !== "awaiting_approval" || !review ||
+        review.intent_digest !== operation.intent_digest) {
+      failure(
+        "EG_APPROVAL_ARGUMENTS_UNAVAILABLE",
+        "exact approval arguments are unavailable"
+      );
+    }
+    return review;
+  }
+
+  forgetApprovalReview(operationId) {
+    this.#approvalReviews.delete(operationId);
+  }
+
+  #pruneApprovalReviews() {
+    const current = this.#now();
+    if (!Number.isFinite(current)) {
+      this.#approvalReviews.clear();
+      failure("EG_PHASE_TRANSITION_DENIED", "Skill RPC clock is invalid");
+    }
+    for (const [operationId, review] of this.#approvalReviews) {
+      if (Date.parse(review.expires_at) <= current) {
+        this.#approvalReviews.delete(operationId);
+      }
+    }
+  }
+
+  async reconcileEffect(operationId) {
+    const candidate =
+      EffectOperationJournal.prototype.recoveryCandidates.call(
+        this.#effects()
+      ).find(({ operation }) => operation.operation_id === operationId);
+    if (!candidate ||
+        !["uncertain", "reconciling"].includes(candidate.operation.state)) {
+      failure(
+        "EG_OPERATION_RETRY_DENIED",
+        "effect operation cannot be reconciled"
+      );
+    }
+    return deepFreeze(await this.#recoverCandidate(candidate, true));
+  }
+
   async recoverEffects() {
     const journal = this.#effects();
     const startup = EffectOperationJournal.prototype.recover.call(journal);
     const outcomes = [];
     for (const candidate of
       EffectOperationJournal.prototype.recoveryCandidates.call(journal)) {
-      let operation = candidate.operation;
-      if (operation.state === "manual_resolution") {
-        failure(
-          "EG_OPERATION_RETRY_DENIED",
-          "effect recovery requires manual resolution"
-        );
-      }
-      if (["uncertain", "reconciling"].includes(operation.state)) {
-        const command = this.#effectCommands.get(commandKey(
-          operation.capability_id,
-          operation.capability_revision
-        ));
-        if (!command) {
-          failure(
-            "EG_EFFECT_COMMAND_UNAVAILABLE",
-            "effect recovery command is unavailable"
-          );
-        }
-        const active = this.#transaction(operation.transaction_id);
-        const phase = active.transaction.snapshot();
-        if (!["active", "awaiting_capsule"].includes(phase.status) ||
-            phase.current_phase !== operation.phase ||
-            phase.next_phase_revision !== operation.phase_revision ||
-            (phase.status === "active" &&
-              phase.active_capsule_digest !== operation.capsule_digest)) {
-          failure(
-            "EG_PHASE_TRANSITION_DENIED",
-            "effect recovery phase is unavailable"
-          );
-        }
-        const binding = deriveIdempotencyBinding({
-          adapter: command.adapter,
-          operation
-        });
-        const persisted = operation.idempotency;
-        const fields = [
-          "adapter_digest", "key_hash", "key_target", "key_name",
-          "lookup_capability_id", "lookup_capability_revision"
-        ];
-        if (!persisted ||
-            fields.some((field) => persisted[field] !== binding[field])) {
-          failure(
-            "EG_IDEMPOTENCY_BINDING_MISMATCH",
-            "effect recovery binding is invalid"
-          );
-        }
-        operation = await EffectOperationJournal.prototype.reconcile.call(
-          journal,
-          {
-            operationId: operation.operation_id,
-            descriptor: command.descriptor,
-            idempotency: { adapter: command.adapter, binding },
-            invoke: command.verify
-          }
-        );
-        if (operation.state === "manual_resolution") {
-          failure(
-            "EG_OPERATION_RETRY_DENIED",
-            "effect recovery requires manual resolution"
-          );
-        }
-      }
-      let receiptId = candidate.receipt_id;
-      if (operation.state === "verified_committed") {
-        const active = this.#transaction(operation.transaction_id);
-        const phase = active.transaction.snapshot();
-        const current = ["active", "awaiting_capsule"].includes(
-          phase.status
-        ) &&
-          phase.current_phase === operation.phase &&
-          phase.next_phase_revision === operation.phase_revision &&
-          (phase.status === "awaiting_capsule" ||
-            phase.active_capsule_digest === operation.capsule_digest);
-        if (current) {
-          receiptId ??=
-            `recovery-${operation.intent_digest.slice("sha256:".length)}`;
-          completePhaseEffectOperation({
-            operationId: operation.operation_id,
-            receiptId,
-            journal,
-            transaction: active.transaction,
-            recovering: true
-          });
-          active.capsule = undefined;
-        }
-      }
-      outcomes.push({
-        operation_id: operation.operation_id,
-        state: operation.state,
-        receipt_id: receiptId
-      });
+      outcomes.push(await this.#recoverCandidate(candidate));
     }
     return deepFreeze({
       schema_version: "1.0.0",
       startup,
       outcomes
     });
+  }
+
+  async #recoverCandidate(candidate, allowManual = false) {
+    const journal = this.#effects();
+    let operation = candidate.operation;
+    if (operation.state === "manual_resolution") {
+      failure(
+        "EG_OPERATION_RETRY_DENIED",
+        "effect recovery requires manual resolution"
+      );
+    }
+    if (["uncertain", "reconciling"].includes(operation.state)) {
+      const command = this.#effectCommands.get(commandKey(
+        operation.capability_id,
+        operation.capability_revision
+      ));
+      if (!command) {
+        failure(
+          "EG_EFFECT_COMMAND_UNAVAILABLE",
+          "effect recovery command is unavailable"
+        );
+      }
+      const active = this.#transaction(operation.transaction_id);
+      const phase = active.transaction.snapshot();
+      if (!["active", "awaiting_capsule"].includes(phase.status) ||
+          phase.current_phase !== operation.phase ||
+          phase.next_phase_revision !== operation.phase_revision ||
+          (phase.status === "active" &&
+            phase.active_capsule_digest !== operation.capsule_digest)) {
+        failure(
+          "EG_PHASE_TRANSITION_DENIED",
+          "effect recovery phase is unavailable"
+        );
+      }
+      const binding = deriveIdempotencyBinding({
+        adapter: command.adapter,
+        operation
+      });
+      const persisted = operation.idempotency;
+      const fields = [
+        "adapter_digest", "key_hash", "key_target", "key_name",
+        "lookup_capability_id", "lookup_capability_revision"
+      ];
+      if (!persisted ||
+          fields.some((field) => persisted[field] !== binding[field])) {
+        failure(
+          "EG_IDEMPOTENCY_BINDING_MISMATCH",
+          "effect recovery binding is invalid"
+        );
+      }
+      operation = await EffectOperationJournal.prototype.reconcile.call(
+        journal,
+        {
+          operationId: operation.operation_id,
+          descriptor: command.descriptor,
+          idempotency: { adapter: command.adapter, binding },
+          invoke: command.verify,
+          attemptLimit: 1
+        }
+      );
+      if (operation.state === "manual_resolution" && !allowManual) {
+        failure(
+          "EG_OPERATION_RETRY_DENIED",
+          "effect recovery requires manual resolution"
+        );
+      }
+    }
+    let receiptId = candidate.receipt_id;
+    if (operation.state === "verified_committed") {
+      const active = this.#transaction(operation.transaction_id);
+      const phase = active.transaction.snapshot();
+      const current = ["active", "awaiting_capsule"].includes(phase.status) &&
+        phase.current_phase === operation.phase &&
+        phase.next_phase_revision === operation.phase_revision &&
+        (phase.status === "awaiting_capsule" ||
+          phase.active_capsule_digest === operation.capsule_digest);
+      if (current) {
+        receiptId ??=
+          `recovery-${operation.intent_digest.slice("sha256:".length)}`;
+        completePhaseEffectOperation({
+          operationId: operation.operation_id,
+          receiptId,
+          journal,
+          transaction: active.transaction,
+          recovering: true
+        });
+        active.capsule = undefined;
+      }
+    }
+    return {
+      operation_id: operation.operation_id,
+      state: operation.state,
+      certainty: operation.certainty,
+      receipt_id: receiptId
+    };
   }
 
   effectTools() {
@@ -624,7 +680,15 @@ export class SkillRpc {
       now: this.#now
     };
     let challenge;
+    let intent;
     if (!operation) {
+      this.#pruneApprovalReviews();
+      if (this.#approvalReviews.size >= MAX_APPROVAL_REVIEWS) {
+        failure(
+          "EG_APPROVAL_CHANNEL_BUSY",
+          "too many effects are awaiting local approval"
+        );
+      }
       const planned = planPhaseEffectOperation({
         operationId: params.operation_id,
         journal,
@@ -632,15 +696,30 @@ export class SkillRpc {
         effect
       });
       challenge = planned.challenge;
+      intent = planned.intent;
       operation = EffectOperationJournal.prototype.load.call(
         journal,
         params.operation_id
       ).operation;
+    } else {
+      intent = preparePhaseEffect(effect).intent;
+      if (intent.intent_digest !== operation.intent_digest) {
+        failure(
+          "EG_EFFECT_ADMISSION_DENIED",
+          "effect arguments changed after planning"
+        );
+      }
     }
     if (operation.transaction_id !== params.transaction_id) {
       failure("EG_OPERATION_NOT_FOUND", "effect operation does not exist");
     }
     if (operation.state === "awaiting_approval") {
+      this.#approvalReviews.set(params.operation_id, deepFreeze({
+        operation_id: params.operation_id,
+        intent_digest: intent.intent_digest,
+        expires_at: intent.expires_at,
+        exact_arguments: structuredClone(params.arguments)
+      }));
       return this.#record({
         schema_version: "1.0.0",
         status: "awaiting_approval",
@@ -661,6 +740,7 @@ export class SkillRpc {
     if (operation.state !== "admitted") {
       failure("EG_OPERATION_RETRY_DENIED", "effect operation is not dispatchable");
     }
+    this.forgetApprovalReview(params.operation_id);
     const dispatched = await dispatchPhaseEffectOperation({
       operationId: params.operation_id,
       journal,
@@ -683,7 +763,8 @@ export class SkillRpc {
         operationId: params.operation_id,
         descriptor: command.descriptor,
         idempotency: dispatched.idempotency,
-        invoke: command.verify
+        invoke: command.verify,
+        attemptLimit: 1
       }
     );
     let result;
