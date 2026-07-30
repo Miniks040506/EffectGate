@@ -517,7 +517,7 @@ test("Skill RPC runs only runtime-owned verified effect commands", async () => {
         }]
       },
       limits: {
-        max_attempts: 1,
+        max_attempts: 2,
         per_attempt_timeout_ms: 50,
         total_timeout_ms: 100,
         max_result_bytes: 4096,
@@ -892,13 +892,22 @@ test("Skill RPC runs only runtime-owned verified effect commands", async () => {
       effectCommands: [manualCommand],
       now: () => recoveredNow + 1000
     });
-    await assert.rejects(
-      blockedRpc.recoverEffects(),
-      (error) => error.code === "EG_OPERATION_RETRY_DENIED"
+    assert.equal(
+      journal.recover()[0].state,
+      "uncertain"
     );
+    const stillUncertain = await blockedRpc.reconcileEffect(
+      "rpc-command-ambiguous"
+    );
+    assert.equal(stillUncertain.state, "reconciling");
+    ambiguous.clear();
+    const provedAbsent = await blockedRpc.reconcileEffect(
+      "rpc-command-ambiguous"
+    );
+    assert.equal(provedAbsent.state, "verified_not_committed");
     assert.equal(
       journal.load("rpc-command-ambiguous").operation.state,
-      "manual_resolution"
+      "verified_not_committed"
     );
     assert.equal(writes, 3);
   } finally {

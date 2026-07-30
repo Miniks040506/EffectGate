@@ -312,6 +312,22 @@ test("irreducible ambiguity becomes manual resolution", async () => {
       "manual_resolution"
     );
 
+    const deferred = dispatchUncertain(
+      journal, files, "operation-deferred", "transaction-deferred"
+    );
+    const reconciling = await journal.reconcile({
+      operationId: deferred.operation_id,
+      descriptor: probe({ maxAttempts: 2 }),
+      invoke: async () => result({ status: "ambiguous" }),
+      attemptLimit: 1,
+      probeNow: () => 0
+    });
+    assert.equal(reconciling.state, "reconciling");
+    assert.equal(journal.requireManualResolution({
+      operationId: deferred.operation_id,
+      evidenceDigest: digest("7")
+    }).state, "manual_resolution");
+
     const unavailable = dispatchUncertain(
       journal, files, "operation-unverifiable", "transaction-unverifiable"
     );

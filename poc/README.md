@@ -57,9 +57,14 @@ node src/proxy/effectgate.mjs resolve --config /path/effectgate.json --operation
 Use `--apply` instead of `--dry-run` only after reviewing the generated paths.
 Init never overwrites an existing configuration. Doctor's backend handshake and
 all confirmation/status/receipt database access are non-mutating. The first
-effect call waits for approval. Use `approve ... --approver ID --yes` or
-`approve ... --deny`; approval bearer material never leaves the command. Repeat
-the identical MCP call after approval. For an independently investigated
+effect call waits for approval. While the runtime remains running, the plain
+`approve` command displays exact in-memory arguments and an intent digest over
+a user-only local socket/pipe. Confirm with
+`approve ... --approver ID --intent DIGEST --yes`, or deny with
+`approve ... --deny`; approval bearer material never leaves the runtime and raw
+arguments never enter its journal. Repeat the identical MCP call after
+approval. Use `resolve ... --reconcile` for one bounded verification-only
+attempt that cannot redispatch the effect. For an independently investigated
 uncertain outcome, use
 `resolve ... --manual --receipt ID --note TEXT --yes`; only the note digest is
 stored, and the receipt remains explicitly `manual_resolution`.
@@ -299,5 +304,5 @@ preview has no durable index,
 end-to-end streaming adapter, comprehensive secret/PII detection, regex/ranked
 search, JSONPath or richer predicates, full CommonMark structure, SQLite
 ledger/multi-writer recovery, real model/host benchmark adapter, externally
-qualified compact-mux comparison, full exact-argument approval UI, fuzz
+qualified compact-mux comparison, semantic argument-diff TUI, fuzz
 qualification, or production support claim.

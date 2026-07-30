@@ -352,8 +352,9 @@ node .\poc\src\proxy\effectgate.mjs resolve --config D:\path\to\effectgate.json 
 Add `--json` to any inspection command for stable machine-readable output.
 `doctor` opens existing databases read-only, performs an exact no-state stdio
 handshake, and verifies that operator-generated configurations use local CLI
-approval. `status`, `receipt`, and confirmation previews validate persisted
-chains and never expose raw effect arguments.
+approval. `status` and `receipt` validate persisted chains and never expose raw
+effect arguments. Approval inspection deliberately shows exact arguments only
+over the user-local operator channel while the MCP runtime is running.
 
 For manual configuration, calculate the skill's pinned digest:
 
@@ -410,29 +411,38 @@ verification probe. Only operation/receipt IDs, the declared patch arguments,
 the exact resource scope, and a disclosure digest remain caller inputs.
 On restart, never-dispatched operations are abandoned, interrupted dispatches
 are reconciled through their persisted idempotency identity, verified commits
-receive a deterministic recovery receipt, and ambiguous outcomes stop startup
-for manual resolution. A completed one-phase configuration publishes no tools.
+receive a deterministic recovery receipt, and ambiguous outcomes retain a
+bounded verification budget without redispatch. Exhausted ambiguity requires
+manual resolution. A completed one-phase configuration publishes no tools.
 
-An effect call first returns `awaiting_approval`. Review its content-free card,
-then explicitly approve or deny it:
+An effect call first returns `awaiting_approval`. Keep that MCP runtime running
+and inspect the request through the operator-only Unix socket or Windows named
+pipe. The command shows exact arguments and the bound intent digest:
 
 ```powershell
-node .\poc\src\proxy\effectgate.mjs approve --config D:\path\to\effectgate.json --operation OPERATION_ID --approver local-operator --yes
+node .\poc\src\proxy\effectgate.mjs approve --config D:\path\to\effectgate.json --operation OPERATION_ID
+node .\poc\src\proxy\effectgate.mjs approve --config D:\path\to\effectgate.json --operation OPERATION_ID --approver local-operator --intent sha256:REVIEWED_INTENT_DIGEST --yes
 node .\poc\src\proxy\effectgate.mjs approve --config D:\path\to\effectgate.json --operation OPERATION_ID --deny
 ```
 
-Approval consumes a single-use lease internally; the bearer token is never
-printed or persisted. After approval, repeat the identical MCP call with the
-same operation ID and arguments. Changed arguments fail admission.
+Exact arguments stay in runtime memory and are never added to the operation
+journal. The local channel uses a user-only socket/pipe, bounded frames, and no
+TCP listener. Approval consumes a single-use lease internally; its bearer token
+is never printed or persisted. After approval, repeat the identical MCP call
+with the same operation ID and arguments. Changed arguments fail admission.
 
 If reconciliation cannot prove whether an effect committed, review it with the
-plain `resolve` command shown above. Record an explicit manual outcome only
-after independent investigation:
+plain `resolve` command shown above. Request one more verification-only attempt
+without redispatching the effect:
 
 ```powershell
+node .\poc\src\proxy\effectgate.mjs resolve --config D:\path\to\effectgate.json --operation OPERATION_ID --reconcile
 node .\poc\src\proxy\effectgate.mjs resolve --config D:\path\to\effectgate.json --operation OPERATION_ID --manual --receipt RECEIPT_ID --note "operator evidence reference" --yes
 ```
 
+The reviewed fixture permits at most three verification attempts within five
+minutes. Each runtime or operator request spends at most one attempt.
+Record an explicit manual outcome only after independent investigation.
 EffectGate stores only a domain-separated digest of the note and issues a
 `manual_resolution` receipt. It does not claim the effect committed.
 
@@ -480,9 +490,10 @@ The dependency-free suite directly verifies:
   idempotent dispatch, lost-response reconciliation, verified Effect/Phase
   Receipts, startup recovery without duplicate dispatch, and stale-state
   denial;
-- content-free CLI approval review, explicit approval/denial, hidden single-use
-  lease consumption, argument-drift denial, and explicit manual-resolution
-  receipts that preserve uncertain certainty;
+- user-local exact-argument approval review with no raw argument persistence,
+  explicit approval/denial, hidden single-use lease consumption,
+  argument-drift denial, verification-only targeted reconciliation, and
+  explicit manual-resolution receipts that preserve uncertain certainty;
 - digest-pinned reviewed stdio effect initialization, exact tool-contract
   validation, concurrent duplicate suppression, intent-drift rejection,
   timeout/crash recovery, and backend restart persistence;

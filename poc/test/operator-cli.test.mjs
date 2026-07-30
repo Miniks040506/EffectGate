@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -38,6 +38,31 @@ function json(args, expectedStatus = 0) {
   const result = run([...args, "--json"]);
   assert.equal(result.status, expectedStatus, result.stderr);
   return JSON.parse(result.stdout);
+}
+
+function jsonLive(args, expectedStatus = 0) {
+  return new Promise((accept, reject) => {
+    const child = spawn(process.execPath, [PROGRAM, ...args, "--json"], {
+      windowsHide: true
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.once("error", reject);
+    child.once("exit", (status) => {
+      try {
+        assert.equal(status, expectedStatus, stderr);
+        accept(stdout.length > 0 ? JSON.parse(stdout) : null);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
 }
 
 test("operator CLI initializes, diagnoses, inspects, and fails closed",
@@ -147,7 +172,7 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
           deniedPending.result.structuredContent.status,
           "awaiting_approval"
         );
-        const deniedCard = json([
+        const deniedCard = await jsonLive([
           "approve", "--config", configFile,
           "--operation", "operator-denied"
         ]);
@@ -155,9 +180,9 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
         assert.equal(deniedCard.approval.effect_class, "mutate_reversible");
         assert.equal(
           JSON.stringify(deniedCard).includes("DENIED_CONTENT_MUST_NOT_RUN"),
-          false
+          true
         );
-        const denied = json([
+        const denied = await jsonLive([
           "approve", "--config", configFile,
           "--operation", "operator-denied", "--deny"
         ]);
@@ -192,21 +217,45 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
           ),
           false
         );
-        const card = json(approvedArguments);
+        const card = await jsonLive(approvedArguments);
         assert.equal(card.status, "confirmation_required");
-        const approved = json([
+        assert.deepEqual(card.approval.exact_arguments, {
+          path: "docs/guide.md",
+          content: "OPERATOR_RAW_CONTENT_MUST_NOT_ESCAPE"
+        });
+        assert.equal(
+          readdirSync(stateDirectory)
+            .filter((file) => file.endsWith(".db"))
+            .some((file) => readFileSync(
+              join(stateDirectory, file)
+            ).includes("OPERATOR_RAW_CONTENT_MUST_NOT_ESCAPE")),
+          false
+        );
+        await jsonLive([
           ...approvedArguments,
           "--approver", "operator-test",
+          "--intent", digest("f"),
+          "--yes"
+        ], 2);
+        const approved = await jsonLive([
+          ...approvedArguments,
+          "--approver", "operator-test",
+          "--intent", card.approval.intent_digest,
           "--yes"
         ]);
         assert.equal(approved.status, "approved");
         assert.equal(approved.state, "admitted");
         assert.equal(JSON.stringify(approved).includes("egl_"), false);
-        assert.equal(run([
+        await jsonLive([
           ...approvedArguments,
           "--approver", "operator-test",
+          "--intent", card.approval.intent_digest,
           "--yes"
-        ]).status, 2);
+        ], 2);
+        await jsonLive([
+          "resolve", "--config", configFile,
+          "--operation", "missing-operation", "--reconcile"
+        ], 2);
         assert.equal(
           (await call(
             "operator-operation",
@@ -397,6 +446,10 @@ test("operator CLI rejects ambiguous or incomplete commands", () => {
   ]).status, 2);
   assert.equal(run([
     "resolve", "--config", "x", "--operation", "op", "--manual", "--yes"
+  ]).status, 2);
+  assert.equal(run([
+    "resolve", "--config", "x", "--operation", "op",
+    "--reconcile", "--manual"
   ]).status, 2);
   assert.equal(run(["unknown"]).status, 2);
 });
