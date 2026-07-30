@@ -435,6 +435,7 @@ node .\poc\src\proxy\effectgate.mjs status --config D:\path\to\effectgate.json
 node .\poc\src\proxy\effectgate.mjs receipt --config D:\path\to\effectgate.json --id RECEIPT_ID
 node .\poc\src\proxy\effectgate.mjs approve --config D:\path\to\effectgate.json --operation OPERATION_ID
 node .\poc\src\proxy\effectgate.mjs resolve --config D:\path\to\effectgate.json --operation OPERATION_ID
+node .\poc\src\proxy\effectgate.mjs backup --config D:\path\to\effectgate.json --output D:\backups\effectgate-2026-07-31
 ```
 
 Add `--json` to any inspection command for stable machine-readable output.
@@ -443,6 +444,15 @@ handshake, and verifies that operator-generated configurations use local CLI
 approval. `status` and `receipt` validate persisted chains and never expose raw
 effect arguments. Approval inspection deliberately shows exact arguments only
 over the user-local operator channel while the MCP runtime is running.
+
+`backup` requires a new destination under an existing parent. It rejects
+overlapping destinations and unknown databases, holds one attached SQLite
+write barrier, copies every known database through SQLite's online-backup API,
+and runs integrity checks before publishing `manifest.json` and
+`manifest.sha256`. The artifact contains normalized configuration with secret
+references only and an explicit empty CAS manifest because the current
+configured effect runtime has no durable CAS. Existing backup paths are never
+overwritten; a directory without both final manifest files is incomplete.
 
 For manual configuration, calculate the skill's pinned digest:
 

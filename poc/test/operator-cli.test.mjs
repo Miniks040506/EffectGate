@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -19,6 +20,7 @@ import { MCP_VERSION } from "../src/proxy/mcp-contract.mjs";
 import { compileEffectIntent } from "../src/policy/effect-intent.mjs";
 import { EffectOperationJournal } from
   "../src/policy/operation-journal.mjs";
+import { databaseIntegrity } from "../src/operator/operator-state.mjs";
 import { createConfiguredSkillMcp } from
   "../src/skill/skill-runtime-config.mjs";
 
@@ -27,6 +29,8 @@ const PROGRAM = fileURLToPath(
 );
 const disclosureDigest = `sha256:${"a".repeat(64)}`;
 const digest = (character) => `sha256:${character.repeat(64)}`;
+const sha256 = (value) =>
+  `sha256:${createHash("sha256").update(value).digest("hex")}`;
 
 function run(args) {
   return spawnSync(process.execPath, [PROGRAM, ...args], {
@@ -448,6 +452,66 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
         "fail"
       );
 
+      const backupDirectory = join(root, "backup");
+      const backupArgs = [
+        "backup", "--config", configFile, "--output", backupDirectory
+      ];
+      const backup = json(backupArgs);
+      assert.equal(backup.status, "created");
+      assert.equal(backup.database_count, 3);
+      assert.equal(backup.cas_object_count, 0);
+      const manifestText = readFileSync(backup.manifest_file, "utf8");
+      const manifest = JSON.parse(manifestText);
+      assert.equal(manifest.kind, "effectgate_state_backup");
+      assert.equal(manifest.transaction_id, "operator-transaction");
+      assert.equal(
+        manifest.consistency.database_cut,
+        "sqlite_attached_begin_immediate"
+      );
+      assert.equal(manifest.consistency.cas_state, "not_configured");
+      assert.equal(backup.manifest_digest, sha256(manifestText));
+      assert.equal(manifest.files.length, 5);
+      for (const file of manifest.files) {
+        const backedUp = join(
+          backupDirectory,
+          ...file.path.split("/")
+        );
+        assert.equal(existsSync(backedUp), true);
+        assert.equal(file.kind === "sqlite"
+          ? databaseIntegrity(backedUp)
+          : "pass", "pass");
+      }
+      assert.deepEqual(
+        JSON.parse(readFileSync(
+          join(backupDirectory, "cas-manifest.json"),
+          "utf8"
+        )).objects,
+        []
+      );
+      assert.equal(
+        readFileSync(
+          join(backupDirectory, "manifest.sha256"),
+          "utf8"
+        ).trim().split(" ")[0],
+        backup.manifest_digest.slice("sha256:".length)
+      );
+      assert.equal(run(backupArgs).status, 2);
+      assert.equal(run([
+        "backup", "--config", configFile,
+        "--output", join(stateDirectory, "backup")
+      ]).status, 2);
+      assert.equal(run([
+        "backup", "--config", configFile,
+        "--output", join(skillRoot, "backup")
+      ]).status, 2);
+      const unknownDatabase = join(stateDirectory, "unknown.db");
+      writeFileSync(unknownDatabase, "not a reviewed database");
+      assert.equal(run([
+        "backup", "--config", configFile,
+        "--output", join(root, "unknown-backup")
+      ]).status, 2);
+      rmSync(unknownDatabase);
+
       const markerFile = join(stateDirectory, ".effectgate-state.json");
       const marker = readFileSync(markerFile, "utf8");
       rmSync(markerFile);
@@ -508,5 +572,6 @@ test("operator CLI rejects ambiguous or incomplete commands", () => {
   assert.equal(run([
     "purge", "--config", "x", "--confirm", digest("0")
   ]).status, 2);
+  assert.equal(run(["backup", "--config", "x"]).status, 2);
   assert.equal(run(["unknown"]).status, 2);
 });

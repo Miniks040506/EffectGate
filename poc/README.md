@@ -90,7 +90,14 @@ node src/proxy/effectgate.mjs status --config /path/effectgate.json --json
 node src/proxy/effectgate.mjs receipt --config /path/effectgate.json --id RECEIPT_ID --json
 node src/proxy/effectgate.mjs approve --config /path/effectgate.json --operation OPERATION_ID --json
 node src/proxy/effectgate.mjs resolve --config /path/effectgate.json --operation OPERATION_ID --json
+node src/proxy/effectgate.mjs backup --config /path/effectgate.json --output /path/new-backup --json
 ```
+
+Backup destinations must not exist and must be outside the state directory.
+EffectGate locks the known SQLite set at one cut, uses SQLite online backup,
+verifies every copy, then writes a normalized secret-reference-only
+configuration, an explicit empty durable-CAS manifest, and final manifest plus
+checksum files. A destination lacking both final manifest files is incomplete.
 
 Configuration files may name one parent with `"extends": "../base.json"`.
 EffectGate loads at most eight layers parent-first, reports their exact
