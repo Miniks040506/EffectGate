@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -104,6 +105,16 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
 
       const firstDoctor = json(["doctor", "--config", configFile]);
       assert.equal(firstDoctor.status, "pass");
+      assert.deepEqual(
+        firstDoctor.configuration_layers,
+        [realpathSync(configFile)]
+      );
+      assert.equal(
+        firstDoctor.checks.find(
+          (check) => check.name === "secret_references"
+        ).status,
+        "pass"
+      );
       assert.equal(
         firstDoctor.checks.find((check) => check.name === "backend").status,
         "pass"

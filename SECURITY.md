@@ -94,6 +94,13 @@ The current preview assumes:
 
 - The fixture child runs with the current user's operating-system permissions;
   EffectGate is not an OS sandbox.
+- Configuration inheritance is limited to eight canonicalized local JSON
+  layers, 64 KiB per file and 256 KiB in total. Parent layers load first,
+  child fields win deterministically, and cycles fail closed. Environment
+  secrets use explicit uppercase `env:NAME` references only. Their values are
+  resolved in memory, passed only to the reviewed child, and never persisted
+  or returned by doctor. Missing, empty, oversized, or base-environment
+  replacements fail before protected runtime state is created.
 - There is no application-layer operator authentication, encryption, tenant
   isolation, or semantic argument-diff TUI. Operator-generated stdio
   configurations expose exact approval arguments only from runtime memory over

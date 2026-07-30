@@ -393,10 +393,34 @@ Change `driver` to `effectgate.fixture.stdio-patch.v1` and add:
 "approval_mode": "cli"
 ```
 
+Configurations may be split into at most eight parent-first layers. A child
+inherits its parent's validated fields and overrides only the fields it names;
+relative `extends` paths are resolved from the child file. For example:
+
+```json
+{
+  "extends": "../effectgate.base.json",
+  "transaction_id": "reviewed-local-profile",
+  "secret_refs": {
+    "BACKEND_TOKEN": "env:EFFECTGATE_BACKEND_TOKEN"
+  }
+}
+```
+
+`secret_refs` maps an explicit backend environment name to an uppercase
+`env:NAME` reference. The referenced value must be supplied by the process
+environment that starts EffectGate. Values are resolved only in runtime memory,
+are never written back to configuration, and cannot replace `PATH`, temporary
+directory, or other base process variables. A missing reference fails before
+the protected runtime creates state or starts a backend. Use `doctor --json` to
+inspect the exact parent-to-child precedence in `configuration_layers` without
+printing secret values.
+
 This profile fixes the executable to the current Node binary, fixes argv to
 the bundled fixture, fixes the working directory to `skill_root`, inherits
-only the documented environment allowlist, validates the exact MCP server and
-tool contracts, and persists fixture idempotency records in
+only the documented base environment plus configured secret references,
+validates the exact MCP server and tool contracts, and persists fixture
+idempotency records in
 `stdio-effect-backend.db`.
 
 Connect an MCP client using:

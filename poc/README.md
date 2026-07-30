@@ -54,6 +54,15 @@ node src/proxy/effectgate.mjs approve --config /path/effectgate.json --operation
 node src/proxy/effectgate.mjs resolve --config /path/effectgate.json --operation OPERATION_ID --json
 ```
 
+Configuration files may name one parent with `"extends": "../base.json"`.
+EffectGate loads at most eight layers parent-first, reports their exact
+precedence through `doctor --json`, and lets child fields override parent
+fields. Reviewed stdio profiles may map backend variables to environment-only
+references such as
+`"secret_refs": {"BACKEND_TOKEN": "env:EFFECTGATE_BACKEND_TOKEN"}`.
+Missing references fail before runtime state is created; resolved values are
+never persisted or printed.
+
 Use `--apply` instead of `--dry-run` only after reviewing the generated paths.
 Init never overwrites an existing configuration. Doctor's backend handshake and
 all confirmation/status/receipt database access are non-mutating. The first
