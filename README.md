@@ -436,6 +436,7 @@ node .\poc\src\proxy\effectgate.mjs receipt --config D:\path\to\effectgate.json 
 node .\poc\src\proxy\effectgate.mjs approve --config D:\path\to\effectgate.json --operation OPERATION_ID
 node .\poc\src\proxy\effectgate.mjs resolve --config D:\path\to\effectgate.json --operation OPERATION_ID
 node .\poc\src\proxy\effectgate.mjs backup --config D:\path\to\effectgate.json --output D:\backups\effectgate-2026-07-31
+node .\poc\src\proxy\effectgate.mjs restore --backup D:\backups\effectgate-2026-07-31 --config D:\restored\effectgate.json --state D:\restored\state
 ```
 
 Add `--json` to any inspection command for stable machine-readable output.
@@ -448,11 +449,21 @@ over the user-local operator channel while the MCP runtime is running.
 `backup` requires a new destination under an existing parent. It rejects
 overlapping destinations and unknown databases, holds one attached SQLite
 write barrier, copies every known database through SQLite's online-backup API,
-and runs integrity checks before publishing `manifest.json` and
+normalizes each isolated copy to sidecar-free `DELETE` journaling, and runs
+integrity checks before publishing `manifest.json` and
 `manifest.sha256`. The artifact contains normalized configuration with secret
 references only and an explicit empty CAS manifest because the current
 configured effect runtime has no durable CAS. Existing backup paths are never
 overwritten; a directory without both final manifest files is incomplete.
+
+`restore` requires new configuration and state paths under existing parents.
+It accepts only an exact-version, canonical backup with a valid checksum,
+known files, matching streamed digests, and healthy SQLite copies. Before
+publishing the new ownership marker and configuration, it rechecks the copied
+databases, revokes unconsumed approval leases, abandons undispatched work, and
+makes any operation copied during dispatch `uncertain` for reconciliation.
+Retrieval cursors are process-local and therefore are not restored. Source
+configuration, state, skill files, and the backup remain unchanged.
 
 For manual configuration, calculate the skill's pinned digest:
 

@@ -91,13 +91,22 @@ node src/proxy/effectgate.mjs receipt --config /path/effectgate.json --id RECEIP
 node src/proxy/effectgate.mjs approve --config /path/effectgate.json --operation OPERATION_ID --json
 node src/proxy/effectgate.mjs resolve --config /path/effectgate.json --operation OPERATION_ID --json
 node src/proxy/effectgate.mjs backup --config /path/effectgate.json --output /path/new-backup --json
+node src/proxy/effectgate.mjs restore --backup /path/new-backup --config /path/restored.json --state /path/new-state --json
 ```
 
 Backup destinations must not exist and must be outside the state directory.
 EffectGate locks the known SQLite set at one cut, uses SQLite online backup,
-verifies every copy, then writes a normalized secret-reference-only
+normalizes isolated copies to sidecar-free `DELETE` journaling, verifies every
+copy, then writes a normalized secret-reference-only
 configuration, an explicit empty durable-CAS manifest, and final manifest plus
 checksum files. A destination lacking both final manifest files is incomplete.
+
+Restore destinations must also be new and outside the backup and skill roots.
+The exact-version manifest, checksum, canonical metadata, every streamed file
+digest, and every SQLite copy are verified before publication. Restore writes
+a new ownership marker and configuration, revokes copied approval leases, and
+runs startup recovery so undispatched work is abandoned and dispatched work
+requires reconciliation. Process-local retrieval cursors are never restored.
 
 Configuration files may name one parent with `"extends": "../base.json"`.
 EffectGate loads at most eight layers parent-first, reports their exact

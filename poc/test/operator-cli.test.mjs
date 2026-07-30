@@ -13,10 +13,14 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, parse as parsePath } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { MCP_VERSION } from "../src/proxy/mcp-contract.mjs";
+import {
+  ApprovalLeaseStore
+} from "../src/policy/approval-lease-store.mjs";
 import { compileEffectIntent } from "../src/policy/effect-intent.mjs";
 import { EffectOperationJournal } from
   "../src/policy/operation-journal.mjs";
@@ -347,7 +351,7 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
       const journal = new EffectOperationJournal({
         file: join(stateDirectory, "effect-operations.db")
       });
-      const manualIntent = compileEffectIntent({
+      const operatorIntent = (content) => compileEffectIntent({
         principalId: "local-operator",
         clientId: "local-mcp-client",
         sessionId: config.transaction_id,
@@ -369,7 +373,7 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
           matched_rule_ids: ["manual-fixture"],
           safe_reason_code: "policy_allow"
         },
-        arguments: { path: "docs/guide.md", content: "AMBIGUOUS_CONTENT" },
+        arguments: { path: "docs/guide.md", content },
         resourceScope: {
           kind: "exact",
           value: "repo:reviewed/path:docs/guide.md"
@@ -378,6 +382,7 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
         expiresAt: new Date(now + 300_000).toISOString(),
         now: () => now
       });
+      const manualIntent = operatorIntent("AMBIGUOUS_CONTENT");
       try {
         journal.plan({
           operationId: "operator-manual",
@@ -452,6 +457,50 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
         "fail"
       );
 
+      const restoreJournal = new EffectOperationJournal({
+        file: join(stateDirectory, "effect-operations.db")
+      });
+      const restoreApprovals = new ApprovalLeaseStore({
+        file: join(stateDirectory, "effect-operations.db")
+      });
+      try {
+        const awaitingIntent = operatorIntent("RESTORE_AWAITING_CONTENT");
+        restoreJournal.plan({
+          operationId: "restore-awaiting",
+          intent: awaitingIntent,
+          approvalRequired: true
+        });
+        restoreJournal.preflight("restore-awaiting");
+        const challenge = restoreApprovals.createChallenge({
+          intent: awaitingIntent
+        });
+        restoreJournal.awaitApproval({
+          operationId: "restore-awaiting",
+          challengeId: challenge.challenge_id
+        });
+        restoreApprovals.approveChallenge({
+          challengeId: challenge.challenge_id,
+          approverId: "restore-test",
+          channel: "cli"
+        });
+        const executingIntent = operatorIntent("RESTORE_EXECUTING_CONTENT");
+        restoreJournal.plan({
+          operationId: "restore-executing",
+          intent: executingIntent,
+          approvalRequired: false
+        });
+        restoreJournal.preflight("restore-executing");
+        restoreJournal.admit("restore-executing");
+        restoreJournal.beginDispatch({
+          operationId: "restore-executing",
+          dispatchDigest: digest("e"),
+          deadlineAt: new Date(Date.now() + 60_000).toISOString()
+        });
+      } finally {
+        restoreApprovals.close();
+        restoreJournal.close();
+      }
+
       const backupDirectory = join(root, "backup");
       const backupArgs = [
         "backup", "--config", configFile, "--output", backupDirectory
@@ -468,6 +517,7 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
         manifest.consistency.database_cut,
         "sqlite_attached_begin_immediate"
       );
+      assert.equal(manifest.consistency.database_journal_mode, "delete");
       assert.equal(manifest.consistency.cas_state, "not_configured");
       assert.equal(backup.manifest_digest, sha256(manifestText));
       assert.equal(manifest.files.length, 5);
@@ -511,6 +561,81 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
         "--output", join(root, "unknown-backup")
       ]).status, 2);
       rmSync(unknownDatabase);
+
+      writeFileSync(
+        join(skillRoot, "SKILL.md"),
+        "Preserve the original until verification.\n"
+      );
+      const restoredConfigFile = join(root, "restored-effectgate.json");
+      const restoredStateDirectory = join(root, "restored-state");
+      const restoreArgs = [
+        "restore", "--backup", backupDirectory,
+        "--config", restoredConfigFile,
+        "--state", restoredStateDirectory
+      ];
+      const restored = json(restoreArgs);
+      assert.equal(restored.status, "restored");
+      assert.equal(restored.database_count, 3);
+      assert.equal(restored.invalidated_approval_records, 1);
+      assert.equal(restored.invalidated_cursor_count, 0);
+      assert.equal(restored.cursor_state, "process_local_not_restored");
+      assert.equal(restored.recovered_operation_count, 2);
+      assert.equal(restored.reconciliation_required, 1);
+      assert.equal(
+        JSON.parse(readFileSync(restoredConfigFile, "utf8")).state_directory,
+        realpathSync(restoredStateDirectory)
+      );
+      assert.equal(
+        existsSync(join(
+          restoredStateDirectory,
+          ".effectgate-state.json"
+        )),
+        true
+      );
+      const restoredStatus = json([
+        "status", "--config", restoredConfigFile
+      ]);
+      assert.equal(
+        restoredStatus.operations.find(
+          ({ operation_id }) => operation_id === "restore-awaiting"
+        ).state,
+        "abandoned"
+      );
+      assert.equal(
+        restoredStatus.operations.find(
+          ({ operation_id }) => operation_id === "restore-executing"
+        ).state,
+        "uncertain"
+      );
+      assert.equal(json([
+        "receipt", "--config", restoredConfigFile,
+        "--id", "operator-receipt"
+      ]).receipt.final_state, "verified_committed");
+      const restoredDatabase = new DatabaseSync(
+        join(restoredStateDirectory, "effect-operations.db"),
+        { readOnly: true }
+      );
+      try {
+        assert.equal(restoredDatabase.prepare(`SELECT COUNT(*) AS count
+          FROM approval_leases WHERE consumed_at IS NULL
+          AND revoked_at IS NULL AND expired_at IS NULL`).get().count, 0);
+      } finally {
+        restoredDatabase.close();
+      }
+      assert.equal(run(restoreArgs).status, 2);
+
+      const checksumFile = join(backupDirectory, "manifest.sha256");
+      const checksum = readFileSync(checksumFile, "utf8");
+      writeFileSync(checksumFile, `${"0".repeat(64)}  manifest.json\n`);
+      const rejectedConfig = join(root, "rejected-effectgate.json");
+      const rejectedState = join(root, "rejected-state");
+      assert.equal(run([
+        "restore", "--backup", backupDirectory,
+        "--config", rejectedConfig, "--state", rejectedState
+      ]).status, 2);
+      assert.equal(existsSync(rejectedConfig), false);
+      assert.equal(existsSync(rejectedState), false);
+      writeFileSync(checksumFile, checksum);
 
       const markerFile = join(stateDirectory, ".effectgate-state.json");
       const marker = readFileSync(markerFile, "utf8");
@@ -573,5 +698,8 @@ test("operator CLI rejects ambiguous or incomplete commands", () => {
     "purge", "--config", "x", "--confirm", digest("0")
   ]).status, 2);
   assert.equal(run(["backup", "--config", "x"]).status, 2);
+  assert.equal(run([
+    "restore", "--backup", "x", "--config", "y"
+  ]).status, 2);
   assert.equal(run(["unknown"]).status, 2);
 });

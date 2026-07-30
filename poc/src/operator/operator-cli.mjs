@@ -43,7 +43,8 @@ import {
 } from "./operator-state.mjs";
 import {
   createStateBackup,
-  pathContains
+  pathContains,
+  restoreStateBackup
 } from "./state-backup.mjs";
 
 const USAGE = "Usage: effectgate.mjs init --config FILE --state DIRECTORY " +
@@ -55,7 +56,8 @@ const USAGE = "Usage: effectgate.mjs init --config FILE --state DIRECTORY " +
   "--manual --receipt ID --note TEXT --yes] [--json] | " +
   "uninstall --config FILE [--json] | purge --config FILE " +
   "[--confirm DIGEST --yes] [--json] | backup --config FILE " +
-  "--output DIRECTORY [--json]";
+  "--output DIRECTORY [--json] | restore --backup DIRECTORY " +
+  "--config FILE --state DIRECTORY [--json]";
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
 const STATE_MARKER = ".effectgate-state.json";
@@ -73,6 +75,7 @@ const VALUE_OPTIONS = Object.freeze({
   "--intent": "intentDigest",
   "--note": "note",
   "--confirm": "confirmDigest",
+  "--backup": "backupDirectory",
   "--output": "outputDirectory"
 });
 const FLAG_OPTIONS = Object.freeze({
@@ -102,7 +105,10 @@ const ALLOWED = Object.freeze({
   ]),
   uninstall: new Set(["configFile", "json"]),
   purge: new Set(["configFile", "confirmDigest", "yes", "json"]),
-  backup: new Set(["configFile", "outputDirectory", "json"])
+  backup: new Set(["configFile", "outputDirectory", "json"]),
+  restore: new Set([
+    "backupDirectory", "configFile", "stateDirectory", "json"
+  ])
 });
 
 function fail() {
@@ -162,6 +168,9 @@ function parse(args) {
       (Boolean(values.yes) !==
         DIGEST.test(values.confirmDigest ?? ""))) fail();
   if (command === "backup" && !bounded(values.outputDirectory)) fail();
+  if (command === "restore" &&
+      (!bounded(values.backupDirectory) ||
+        !bounded(values.stateDirectory))) fail();
   return values;
 }
 
@@ -546,6 +555,14 @@ async function backupState(options) {
   });
 }
 
+async function restoreState(options) {
+  return restoreStateBackup({
+    backupDirectory: options.backupDirectory,
+    configFile: options.configFile,
+    stateDirectory: options.stateDirectory
+  });
+}
+
 function human(result) {
   if (result.command === "doctor") {
     return [
@@ -603,6 +620,12 @@ function human(result) {
         result.database_count
       }; CAS objects: ${result.cas_object_count}`;
   }
+  if (result.command === "restore") {
+    return `EffectGate state restored: ${result.state_directory}\n` +
+      `Manifest: ${result.manifest_digest}; recovered operations: ${
+        result.recovered_operation_count
+      }; reconciliation required: ${result.reconciliation_required}`;
+  }
   return JSON.stringify(result.receipt, null, 2);
 }
 
@@ -616,6 +639,7 @@ export async function operatorCommand(args) {
   if (options.command === "uninstall") return uninstall(options);
   if (options.command === "purge") return purge(options);
   if (options.command === "backup") return backupState(options);
+  if (options.command === "restore") return restoreState(options);
   return resolveOperation(options);
 }
 
