@@ -7,6 +7,9 @@ import { fileURLToPath } from "node:url";
 import process from "node:process";
 
 import {
+  resolveEnvironmentSecretRefs
+} from "../config/layered-config.mjs";
+import {
   CONTEXT_PAGE_BYTES,
   CONTEXT_SEARCH_MAX_CONTEXT_LINES,
   CONTEXT_SEARCH_MAX_QUERY_LENGTH,
@@ -43,6 +46,7 @@ import {
   TokenLedgerWriteError
 } from "../budget/token-ledger.mjs";
 import { BYTE_PROXY_COUNTER } from "../budget/token-counter.mjs";
+import { canonicalJson } from "../skill/passport-compiler.mjs";
 import {
   COMPACT_CALL_TOOL,
   COMPACT_DESCRIBE_TOOL,
@@ -60,7 +64,9 @@ import {
 import {
   EFFECTGATE_VERSION,
   MAX_TOOL_RESULT_BYTES,
-  MCP_VERSION
+  MCP_VERSION,
+  isSafeReadTool,
+  isValidToolContract
 } from "./mcp-contract.mjs";
 import {
   FrameTooLargeError,
@@ -70,9 +76,14 @@ import {
   validateResponse,
   writeMessage
 } from "./jsonl-rpc.mjs";
+import {
+  loadReviewedBackendConfig,
+  verifyReviewedBackendFiles
+} from "./reviewed-backend-config.mjs";
 
 export const DEFAULT_MAX_SESSION_EMITTED_TOKENS = 256 * 1024;
 export { EFFECTGATE_VERSION, MAX_TOOL_RESULT_BYTES, MCP_VERSION };
+export { isSafeReadTool };
 export {
   MAX_FRAME_BYTES,
   backendEnvironment,
@@ -93,7 +104,7 @@ const TOKEN_LEDGER_PROFILES = new Set([
 const SERVE_USAGE =
   "Usage: effectgate.mjs init|doctor|status|receipt ... | fixture | " +
   "mcp skill serve --config FILE | " +
-  "mcp serve [--source NAME] " +
+  "mcp serve [--source NAME | --config FILE] " +
   "[--max-session-emitted-tokens COUNT] [--token-ledger FILE] " +
   "[--run-id ID] [--profile PROFILE] [--host-evidence FILE]";
 const SESSION_OUTPUT_LIMIT_MESSAGE =
@@ -104,6 +115,7 @@ const TOKEN_LEDGER_FAILURE_MESSAGE =
 const contextViewProvenance = new WeakMap();
 
 class ResultTooLargeError extends RangeError {}
+class ReviewedBackendDriftError extends Error {}
 
 function accountingFailure(error) {
   if (error instanceof SessionOutputLimitError) {
@@ -630,15 +642,6 @@ function validateRequest(message) {
   );
 }
 
-export function isSafeReadTool(tool) {
-  return (
-    tool?.annotations?.readOnlyHint === true &&
-    tool.annotations.destructiveHint === false &&
-    tool.annotations.idempotentHint === true &&
-    tool.annotations.openWorldHint === false
-  );
-}
-
 function fixtureResponse(request) {
   const id = request.id;
 
@@ -860,6 +863,8 @@ export function runConfiguredSkillMcp(runtime) {
 
 function parseServeArguments(args) {
   let source = "fixture";
+  let sourceExplicit = false;
+  let backendConfigFile;
   let maxSessionEmittedTokens = DEFAULT_MAX_SESSION_EMITTED_TOKENS;
   let tokenLedgerFile;
   let runId;
@@ -873,7 +878,17 @@ function parseServeArguments(args) {
       throw new Error(SERVE_USAGE);
     }
     if (option === "--source") {
+      if (sourceExplicit) throw new Error(SERVE_USAGE);
       source = value;
+      sourceExplicit = true;
+    } else if (
+      option === "--config" &&
+      backendConfigFile === undefined &&
+      value.length > 0 &&
+      Buffer.byteLength(value, "utf8") <= 1024 &&
+      !value.includes("\0")
+    ) {
+      backendConfigFile = value;
     } else if (
       option === "--max-session-emitted-tokens" &&
       /^[1-9]\d{0,6}$/u.test(value) &&
@@ -913,9 +928,13 @@ function parseServeArguments(args) {
   if (!/^[A-Za-z0-9_.-]{1,64}$/.test(source)) {
     throw new Error("Backend source must match [A-Za-z0-9_.-] and be <=64 chars.");
   }
+  if (sourceExplicit && backendConfigFile !== undefined) {
+    throw new Error(SERVE_USAGE);
+  }
 
   return {
     source,
+    backendConfigFile,
     maxSessionEmittedTokens,
     tokenLedgerFile,
     runId,
@@ -926,13 +945,21 @@ function parseServeArguments(args) {
 
 export function runProxy(args) {
   const {
-    source,
+    source: requestedSource,
+    backendConfigFile,
     maxSessionEmittedTokens,
     tokenLedgerFile,
     runId,
     profile,
     hostEvidenceFile
   } = parseServeArguments(args);
+  const reviewedBackend = backendConfigFile === undefined
+    ? undefined
+    : loadReviewedBackendConfig(backendConfigFile).config;
+  const source = reviewedBackend?.source ?? requestedSource;
+  const secretEnvironment = resolveEnvironmentSecretRefs(
+    reviewedBackend?.secret_refs
+  );
   const compactMux = profile === "compact_mux";
   const hostEvidence = hostEvidenceFile === undefined
     ? undefined
@@ -954,12 +981,20 @@ export function runProxy(args) {
         sessionId: contextStore.sessionId,
         profile
       });
-  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "fixture"], {
-    env: backendEnvironment(),
-    shell: false,
-    stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: true
-  });
+  const child = spawn(
+    reviewedBackend?.executable_path ?? process.execPath,
+    reviewedBackend?.argv ??
+      [fileURLToPath(import.meta.url), "fixture"],
+    {
+      ...(reviewedBackend === undefined
+        ? {}
+        : { cwd: reviewedBackend.working_directory }),
+      env: backendEnvironment(secretEnvironment),
+      shell: false,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true
+    }
+  );
   let lifecycle = "new";
   let sequence = 0;
   let backendAvailable = true;
@@ -1110,9 +1145,17 @@ export function runProxy(args) {
         typeof message.method === "string"
       ) {
         if (message.method === "notifications/tools/list_changed") {
-          toolNames = new Map();
-          catalogComplete = false;
-          reply(message);
+          if (reviewedBackend) {
+            failBackend(
+              -32004,
+              "The reviewed backend changed after admission."
+            );
+            child.kill();
+          } else {
+            toolNames = new Map();
+            catalogComplete = false;
+            reply(message);
+          }
         }
         return;
       }
@@ -1155,6 +1198,21 @@ export function runProxy(args) {
           result: waiting.transform(message.result)
         });
       } catch (error) {
+        if (error instanceof ReviewedBackendDriftError) {
+          failBackend(
+            -32004,
+            "The reviewed backend changed after admission."
+          );
+          child.kill();
+          reply(
+            errorMessage(
+              waiting.clientId,
+              -32004,
+              "The reviewed backend changed after admission."
+            )
+          );
+          return;
+        }
         const accounting = accountingFailure(error);
         if (accounting) {
           reply(
@@ -1314,12 +1372,20 @@ export function runProxy(args) {
             ) {
               throw new Error("unsupported backend protocol");
             }
+            if (reviewedBackend !== undefined &&
+                (canonicalJson(result.serverInfo) !== canonicalJson(
+                  reviewedBackend.server_identity
+                ) ||
+                  result.capabilities?.tools?.listChanged === true)) {
+              throw new ReviewedBackendDriftError();
+            }
             lifecycle = "awaiting_initialized";
             return {
               protocolVersion: MCP_VERSION,
               capabilities: {
                 tools: {
-                  listChanged: result.capabilities?.tools?.listChanged === true
+                  listChanged: reviewedBackend === undefined &&
+                    result.capabilities?.tools?.listChanged === true
                 }
               },
               serverInfo: {
@@ -1339,35 +1405,44 @@ export function runProxy(args) {
           break;
 
         case "tools/list":
+          if (reviewedBackend !== undefined &&
+              message.params !== undefined &&
+              (message.params === null ||
+                typeof message.params !== "object" ||
+                Array.isArray(message.params) ||
+                Object.keys(message.params).length !== 0)) {
+            reply(
+              errorMessage(
+                message.id,
+                -32602,
+                "Reviewed backend catalogs do not accept pagination."
+              )
+            );
+            break;
+          }
           if (message.params?.cursor === undefined) {
             toolNames = new Map();
             catalogComplete = false;
           }
           forward(message, "tools/list", message.params, (result) => {
+            if (reviewedBackend !== undefined) {
+              try {
+                verifyReviewedBackendFiles(reviewedBackend);
+              } catch {
+                throw new ReviewedBackendDriftError();
+              }
+              if (canonicalJson(result) !==
+                  canonicalJson(reviewedBackend.catalog)) {
+                throw new ReviewedBackendDriftError();
+              }
+            }
             if (!Array.isArray(result?.tools)) throw new Error("invalid tools");
             const nextNames =
               typeof message.params?.cursor === "string"
                 ? new Map(toolNames)
                 : new Map();
             const tools = result.tools.flatMap((tool) => {
-              if (
-                tool === null ||
-                typeof tool !== "object" ||
-                Array.isArray(tool) ||
-                typeof tool.name !== "string" ||
-                !/^[A-Za-z0-9_.-]{1,128}$/.test(tool.name) ||
-                (tool.title !== undefined &&
-                  typeof tool.title !== "string") ||
-                (tool.description !== undefined &&
-                  typeof tool.description !== "string") ||
-                tool.inputSchema === null ||
-                typeof tool.inputSchema !== "object" ||
-                Array.isArray(tool.inputSchema) ||
-                (tool.outputSchema !== undefined &&
-                  (tool.outputSchema === null ||
-                    typeof tool.outputSchema !== "object" ||
-                    Array.isArray(tool.outputSchema)))
-              ) {
+              if (!isValidToolContract(tool)) {
                 throw new Error("invalid tool contract");
               }
               if (!isSafeReadTool(tool)) return [];
@@ -1779,6 +1854,25 @@ export function runProxy(args) {
               )
             );
             return;
+          }
+          if (reviewedBackend !== undefined) {
+            try {
+              verifyReviewedBackendFiles(reviewedBackend, false);
+            } catch {
+              failBackend(
+                -32004,
+                "The reviewed backend changed after admission."
+              );
+              child.kill();
+              reply(
+                errorMessage(
+                  message.id,
+                  -32004,
+                  "The reviewed backend changed after admission."
+                )
+              );
+              return;
+            }
           }
           forward(message, "tools/call", {
             ...message.params,
