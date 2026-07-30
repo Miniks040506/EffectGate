@@ -9,7 +9,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -167,3 +167,112 @@ test("packed CLI lifecycle preserves external state", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+if (process.env.EFFECTGATE_PREVIOUS_PACKAGE) {
+  test("previous package upgrades and rolls back without state loss", () => {
+    const previousRoot = resolve(
+      process.env.EFFECTGATE_PREVIOUS_PACKAGE
+    );
+    const previousCommit = process.env.EFFECTGATE_PREVIOUS_COMMIT;
+    assert.match(previousCommit ?? "", /^[a-f0-9]{40}$/u);
+    assert.notEqual(previousRoot, PACKAGE_ROOT);
+    const previousVersion = JSON.parse(readFileSync(
+      join(previousRoot, "package.json"),
+      "utf8"
+    )).version;
+    const currentVersion = JSON.parse(readFileSync(
+      join(PACKAGE_ROOT, "package.json"),
+      "utf8"
+    )).version;
+    assert.equal(previousVersion, "0.16.0");
+    assert.equal(currentVersion, "0.17.0");
+
+    const root = mkdtempSync(join(tmpdir(), "effectgate-upgrade-"));
+    const previousPack = join(root, "previous-pack");
+    const currentPack = join(root, "current-pack");
+    const consumer = join(root, "consumer");
+    const cache = join(root, "npm-cache");
+    const stateFile = join(root, "external-state.json");
+    mkdirSync(previousPack);
+    mkdirSync(currentPack);
+    mkdirSync(consumer);
+    writeFileSync(
+      join(consumer, "package.json"),
+      JSON.stringify({ name: "effectgate-upgrade-smoke", private: true })
+    );
+    const state = JSON.stringify({ owner: "user", revision: 18 });
+    writeFileSync(stateFile, state);
+
+    try {
+      const pack = (packageRoot, destination) => {
+        const packed = JSON.parse(runNpm([
+          "pack", "--force", "--ignore-scripts", "--json",
+          "--pack-destination", destination
+        ], packageRoot, cache))[0];
+        return join(destination, packed.filename);
+      };
+      const previousTarball = pack(previousRoot, previousPack);
+      const currentTarball = pack(PACKAGE_ROOT, currentPack);
+      const install = (tarball) => runNpm([
+        "install", "--ignore-scripts", "--no-audit", "--no-fund",
+        "--package-lock=false", tarball
+      ], consumer, cache);
+      const installedRoot = join(
+        consumer, "node_modules", "effectgate-preview"
+      );
+      const installedVersion = () => JSON.parse(readFileSync(
+        join(installedRoot, "package.json"),
+        "utf8"
+      )).version;
+      const bin = join(
+        consumer,
+        "node_modules",
+        ".bin",
+        process.platform === "win32" ? "effectgate.cmd" : "effectgate"
+      );
+
+      install(previousTarball);
+      assert.equal(installedVersion(), previousVersion);
+      assert.equal(existsSync(bin), false);
+      assert.equal(readFileSync(stateFile, "utf8"), state);
+
+      install(currentTarball);
+      assert.equal(installedVersion(), currentVersion);
+      assert.equal(existsSync(bin), true);
+      assert.equal(readFileSync(stateFile, "utf8"), state);
+
+      install(previousTarball);
+      assert.equal(installedVersion(), previousVersion);
+      assert.equal(existsSync(bin), false);
+      assert.equal(readFileSync(stateFile, "utf8"), state);
+
+      install(currentTarball);
+      assert.equal(installedVersion(), currentVersion);
+      assert.equal(existsSync(bin), true);
+      assert.equal(readFileSync(stateFile, "utf8"), state);
+
+      const installedCli = join(
+        installedRoot, "src", "proxy", "effectgate.mjs"
+      );
+      const version = spawnSync(
+        process.execPath,
+        [installedCli, "--version"],
+        { encoding: "utf8" }
+      );
+      assert.equal(version.status, 0, version.stderr);
+      assert.equal(version.stdout.trim(), currentVersion);
+      process.stdout.write(`${JSON.stringify({
+        kind: "effectgate_tier1_package_evidence",
+        previous_commit: previousCommit,
+        previous_version: previousVersion,
+        current_version: currentVersion,
+        platform: process.platform,
+        architecture: process.arch,
+        node_version: process.version,
+        external_state_preserved: true
+      })}\n`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}

@@ -75,6 +75,13 @@ installed. Re-running the install command upgrades or reinstalls the CLI
 without touching configuration or state stored outside the package directory.
 The package defines no install or uninstall lifecycle scripts.
 
+The manual `Tier 1 package qualification` workflow pins Node `24.14.0` and
+runner labels `windows-2025`, `ubuntu-24.04`, and `macos-15-intel`. Each cell
+runs the full suite, then installs the pinned `0.16.0` package, upgrades to
+`0.17.0`, rolls back, and upgrades again while proving external state remains
+unchanged. The workflow uses `workflow_dispatch` only, so pushes do not start
+hosted runners automatically.
+
 Before uninstalling, print the exact package command, preserved paths, and
 optional purge arguments:
 

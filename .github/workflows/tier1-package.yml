@@ -1,0 +1,54 @@
+name: Tier 1 package qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  EFFECTGATE_PREVIOUS_COMMIT: 6e3f1ed1607bb9956d4b7c965aeb81bb42867c9f
+
+jobs:
+  package:
+    name: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - windows-2025
+          - ubuntu-24.04
+          - macos-15-intel
+    steps:
+      - name: Check out current package
+        uses: actions/checkout@v6
+        with:
+          path: current
+          persist-credentials: false
+
+      - name: Check out previous package
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.EFFECTGATE_PREVIOUS_COMMIT }}
+          path: previous
+          persist-credentials: false
+
+      - name: Use exact Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.14.0
+          package-manager-cache: false
+
+      - name: Record toolchain
+        working-directory: current/poc
+        run: |
+          node --version
+          npm --version
+
+      - name: Qualify current and previous packages
+        working-directory: current/poc
+        env:
+          EFFECTGATE_PREVIOUS_PACKAGE: ${{ github.workspace }}/previous/poc
+        run: npm test

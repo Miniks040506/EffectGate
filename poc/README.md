@@ -80,6 +80,12 @@ Serve the reviewed verified-effect fixture described in the root README:
 node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp skill serve --config /absolute/path/to/effectgate.json
 ```
 
+Package qualification is defined in
+`.github/workflows/tier1-package.yml`. It is manual-only and runs the full
+suite plus the pinned `0.16.0` → `0.17.0` → `0.16.0` → `0.17.0` package
+rehearsal on Windows 2025, Ubuntu 24.04, and macOS 15 Intel. Each cell emits a
+machine-readable evidence line and requires external state to remain unchanged.
+
 Create and inspect that configuration through the non-interactive operator
 commands:
 
