@@ -92,6 +92,7 @@ node src/proxy/effectgate.mjs approve --config /path/effectgate.json --operation
 node src/proxy/effectgate.mjs resolve --config /path/effectgate.json --operation OPERATION_ID --json
 node src/proxy/effectgate.mjs backup --config /path/effectgate.json --output /path/new-backup --json
 node src/proxy/effectgate.mjs restore --backup /path/new-backup --config /path/restored.json --state /path/new-state --json
+node src/proxy/effectgate.mjs rollback --backup /path/new-backup --config /path/rollback.json --state /path/rollback-state --json
 ```
 
 Backup destinations must not exist and must be outside the state directory.
@@ -107,6 +108,12 @@ digest, and every SQLite copy are verified before publication. Restore writes
 a new ownership marker and configuration, revokes copied approval leases, and
 runs startup recovery so undispatched work is abandoned and dispatched work
 requires reconciliation. Process-local retrieval cursors are never restored.
+
+Rollback is confirmation-bound and accepts only the exact qualified package
+version recorded by the backup. Its preview creates nothing. After confirmation
+it reuses verified fresh-path restore, preserves live state, and prints—but
+does not execute—the exact npm reinstall and `doctor` commands. Review those
+commands and complete operator sign-off before resuming protected effects.
 
 Configuration files may name one parent with `"extends": "../base.json"`.
 EffectGate loads at most eight layers parent-first, reports their exact

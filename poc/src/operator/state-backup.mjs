@@ -45,6 +45,7 @@ const DATABASE_NAMES = Object.freeze([
   "skill-events.db",
   "stdio-effect-backend.db"
 ]);
+const PACKAGE_NAME = "effectgate-preview";
 
 export function pathContains(parent, child) {
   const value = relative(parent, child);
@@ -263,11 +264,12 @@ async function inspectStateBackup(directory) {
     backupDirectory,
     configuration,
     databaseNames,
+    effectgateVersion: manifest.effectgate_version,
     manifestDigest
   };
 }
 
-export async function restoreStateBackup({
+async function prepareStateRestore({
   backupDirectory,
   configFile,
   stateDirectory
@@ -300,6 +302,21 @@ export async function restoreStateBackup({
     paths: SKILL_SOURCE_PATHS,
     expectedDigest: configuration.skill_source_digest
   });
+  return {
+    inspected,
+    restoredConfigFile,
+    restoredStateDirectory,
+    configuration
+  };
+}
+
+export async function restoreStateBackup(options = {}) {
+  const {
+    inspected,
+    restoredConfigFile,
+    restoredStateDirectory,
+    configuration
+  } = await prepareStateRestore(options);
 
   const configPart = `${restoredConfigFile}.restore.part`;
   if (existsSync(configPart)) {
@@ -384,6 +401,87 @@ export async function restoreStateBackup({
     reconciliation_required: recovered.filter(
       (operation) => operation.state === "uncertain"
     ).length
+  };
+}
+
+export async function planStateRollback(options = {}) {
+  const {
+    inspected,
+    restoredConfigFile,
+    restoredStateDirectory,
+    configuration
+  } = await prepareStateRestore(options);
+  const restoreCommand = {
+    executable: "effectgate",
+    arguments: [
+      "restore",
+      "--backup", inspected.backupDirectory,
+      "--config", restoredConfigFile,
+      "--state", restoredStateDirectory
+    ]
+  };
+  const packageCommand = {
+    executable: "npm",
+    arguments: [
+      "install", "--global", "--ignore-scripts",
+      `${PACKAGE_NAME}@${inspected.effectgateVersion}`
+    ]
+  };
+  const postcheckCommand = {
+    executable: "effectgate",
+    arguments: ["doctor", "--config", restoredConfigFile]
+  };
+  const confirmationDigest = digest(canonicalJson({
+    schema_version: "1.0.0",
+    kind: "effectgate_rollback_binding",
+    manifest_digest: inspected.manifestDigest,
+    package_version: inspected.effectgateVersion,
+    config_file: restoredConfigFile,
+    state_directory: restoredStateDirectory
+  }));
+  return {
+    schema_version: "1.0.0",
+    command: "rollback",
+    status: "confirmation_required",
+    backup_version: inspected.effectgateVersion,
+    runtime_version: EFFECTGATE_VERSION,
+    compatibility: "exact",
+    transaction_id: configuration.transaction_id,
+    confirmation_digest: confirmationDigest,
+    restore_command: restoreCommand,
+    package_command: packageCommand,
+    postcheck_command: postcheckCommand,
+    live_state_policy: "preserve",
+    operator_signoff_required: true
+  };
+}
+
+export async function rollbackStateBackup({
+  confirmDigest,
+  yes = false,
+  ...options
+} = {}) {
+  if (typeof yes !== "boolean" ||
+      Boolean(yes) !== /^sha256:[a-f0-9]{64}$/u.test(confirmDigest ?? "")) {
+    throw new TypeError("invalid rollback confirmation");
+  }
+  const plan = await planStateRollback(options);
+  if (!yes) return plan;
+  if (confirmDigest !== plan.confirmation_digest) {
+    throw new Error("rollback confirmation mismatch");
+  }
+  const restored = await restoreStateBackup(options);
+  return {
+    ...restored,
+    command: "rollback",
+    status: "restored",
+    backup_version: plan.backup_version,
+    runtime_version: plan.runtime_version,
+    compatibility: plan.compatibility,
+    package_command: plan.package_command,
+    postcheck_command: plan.postcheck_command,
+    live_state_policy: plan.live_state_policy,
+    operator_signoff_required: true
   };
 }
 

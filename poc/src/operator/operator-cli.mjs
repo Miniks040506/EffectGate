@@ -44,6 +44,7 @@ import {
 import {
   createStateBackup,
   pathContains,
+  rollbackStateBackup,
   restoreStateBackup
 } from "./state-backup.mjs";
 
@@ -57,7 +58,8 @@ const USAGE = "Usage: effectgate.mjs init --config FILE --state DIRECTORY " +
   "uninstall --config FILE [--json] | purge --config FILE " +
   "[--confirm DIGEST --yes] [--json] | backup --config FILE " +
   "--output DIRECTORY [--json] | restore --backup DIRECTORY " +
-  "--config FILE --state DIRECTORY [--json]";
+  "--config FILE --state DIRECTORY [--json] | rollback --backup DIRECTORY " +
+  "--config FILE --state DIRECTORY [--confirm DIGEST --yes] [--json]";
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
 const STATE_MARKER = ".effectgate-state.json";
@@ -108,6 +110,10 @@ const ALLOWED = Object.freeze({
   backup: new Set(["configFile", "outputDirectory", "json"]),
   restore: new Set([
     "backupDirectory", "configFile", "stateDirectory", "json"
+  ]),
+  rollback: new Set([
+    "backupDirectory", "configFile", "stateDirectory",
+    "confirmDigest", "yes", "json"
   ])
 });
 
@@ -164,11 +170,11 @@ function parse(args) {
         ![0, 4].includes(resolutionAction) ||
         (resolutionAction === 4 &&
           !IDENTIFIER.test(values.receiptId ?? "")))) fail();
-  if (command === "purge" &&
+  if (["purge", "rollback"].includes(command) &&
       (Boolean(values.yes) !==
         DIGEST.test(values.confirmDigest ?? ""))) fail();
   if (command === "backup" && !bounded(values.outputDirectory)) fail();
-  if (command === "restore" &&
+  if (["restore", "rollback"].includes(command) &&
       (!bounded(values.backupDirectory) ||
         !bounded(values.stateDirectory))) fail();
   return values;
@@ -563,6 +569,16 @@ async function restoreState(options) {
   });
 }
 
+async function rollbackState(options) {
+  return rollbackStateBackup({
+    backupDirectory: options.backupDirectory,
+    configFile: options.configFile,
+    stateDirectory: options.stateDirectory,
+    confirmDigest: options.confirmDigest,
+    yes: Boolean(options.yes)
+  });
+}
+
 function human(result) {
   if (result.command === "doctor") {
     return [
@@ -626,6 +642,19 @@ function human(result) {
         result.recovered_operation_count
       }; reconciliation required: ${result.reconciliation_required}`;
   }
+  if (result.command === "rollback") {
+    return result.status === "restored"
+      ? `EffectGate rollback state restored: ${result.state_directory}\n` +
+        `Install the paired package with npm arguments: ${
+          JSON.stringify(result.package_command.arguments)
+        }\nThen run effectgate with arguments: ${
+          JSON.stringify(result.postcheck_command.arguments)
+        }`
+      : `Rollback will preserve live state and restore a verified backup.\n` +
+        `To continue, rerun with --confirm ${
+          result.confirmation_digest
+        } --yes`;
+  }
   return JSON.stringify(result.receipt, null, 2);
 }
 
@@ -640,6 +669,7 @@ export async function operatorCommand(args) {
   if (options.command === "purge") return purge(options);
   if (options.command === "backup") return backupState(options);
   if (options.command === "restore") return restoreState(options);
+  if (options.command === "rollback") return rollbackState(options);
   return resolveOperation(options);
 }
 

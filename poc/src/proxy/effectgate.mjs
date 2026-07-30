@@ -103,7 +103,7 @@ const TOKEN_LEDGER_PROFILES = new Set([
 ]);
 const SERVE_USAGE =
   "Usage: effectgate [--version] | init|doctor|status|receipt|uninstall|" +
-  "purge|backup|restore ... | fixture | " +
+  "purge|backup|restore|rollback ... | fixture | " +
   "mcp skill serve --config FILE | " +
   "mcp serve [--source NAME | --config FILE] " +
   "[--max-session-emitted-tokens COUNT] [--token-ledger FILE] " +
@@ -1927,7 +1927,7 @@ export async function main(args = process.argv.slice(2)) {
 
   if ([
     "init", "doctor", "status", "receipt", "approve", "resolve",
-    "uninstall", "purge", "backup", "restore"
+    "uninstall", "purge", "backup", "restore", "rollback"
   ].includes(args[0])) {
     const { runOperatorCli } = await import(
       "../operator/operator-cli.mjs"

@@ -25,6 +25,7 @@ import { compileEffectIntent } from "../src/policy/effect-intent.mjs";
 import { EffectOperationJournal } from
   "../src/policy/operation-journal.mjs";
 import { databaseIntegrity } from "../src/operator/operator-state.mjs";
+import { canonicalJson } from "../src/skill/passport-compiler.mjs";
 import { createConfiguredSkillMcp } from
   "../src/skill/skill-runtime-config.mjs";
 
@@ -624,8 +625,88 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
       }
       assert.equal(run(restoreArgs).status, 2);
 
+      const rollbackConfigFile = join(root, "rollback-effectgate.json");
+      const rollbackStateDirectory = join(root, "rollback-state");
+      const rollbackArgs = [
+        "rollback", "--backup", backupDirectory,
+        "--config", rollbackConfigFile,
+        "--state", rollbackStateDirectory
+      ];
+      const rollbackPreview = json(rollbackArgs);
+      assert.equal(rollbackPreview.status, "confirmation_required");
+      assert.equal(rollbackPreview.compatibility, "exact");
+      assert.equal(rollbackPreview.live_state_policy, "preserve");
+      assert.equal(rollbackPreview.operator_signoff_required, true);
+      assert.match(
+        rollbackPreview.confirmation_digest,
+        /^sha256:[a-f0-9]{64}$/u
+      );
+      assert.deepEqual(rollbackPreview.package_command, {
+        executable: "npm",
+        arguments: [
+          "install", "--global", "--ignore-scripts",
+          `effectgate-preview@${manifest.effectgate_version}`
+        ]
+      });
+      assert.deepEqual(rollbackPreview.restore_command, {
+        executable: "effectgate",
+        arguments: [
+          "restore", "--backup", realpathSync(backupDirectory),
+          "--config", rollbackConfigFile,
+          "--state", rollbackStateDirectory
+        ]
+      });
+      assert.deepEqual(rollbackPreview.postcheck_command, {
+        executable: "effectgate",
+        arguments: ["doctor", "--config", rollbackConfigFile]
+      });
+      assert.equal(existsSync(rollbackConfigFile), false);
+      assert.equal(existsSync(rollbackStateDirectory), false);
+      assert.equal(run([
+        ...rollbackArgs, "--confirm", digest("0"), "--yes"
+      ]).status, 2);
+      const rolledBack = json([
+        ...rollbackArgs,
+        "--confirm", rollbackPreview.confirmation_digest,
+        "--yes"
+      ]);
+      assert.equal(rolledBack.status, "restored");
+      assert.equal(rolledBack.backup_version, manifest.effectgate_version);
+      assert.equal(rolledBack.operator_signoff_required, true);
+      assert.equal(existsSync(stateDirectory), true);
+      assert.equal(json([
+        "receipt", "--config", rollbackConfigFile,
+        "--id", "operator-receipt"
+      ]).receipt.final_state, "verified_committed");
+      assert.equal(run([
+        ...rollbackArgs,
+        "--confirm", rollbackPreview.confirmation_digest,
+        "--yes"
+      ]).status, 2);
+
+      const manifestFile = join(backupDirectory, "manifest.json");
       const checksumFile = join(backupDirectory, "manifest.sha256");
       const checksum = readFileSync(checksumFile, "utf8");
+      const incompatibleText = `${canonicalJson({
+        ...manifest,
+        effectgate_version: "0.16.0"
+      })}\n`;
+      writeFileSync(manifestFile, incompatibleText);
+      writeFileSync(
+        checksumFile,
+        `${sha256(incompatibleText).slice("sha256:".length)}  manifest.json\n`
+      );
+      const incompatibleConfig = join(root, "incompatible-effectgate.json");
+      const incompatibleState = join(root, "incompatible-state");
+      assert.equal(run([
+        "rollback", "--backup", backupDirectory,
+        "--config", incompatibleConfig, "--state", incompatibleState
+      ]).status, 2);
+      assert.equal(existsSync(incompatibleConfig), false);
+      assert.equal(existsSync(incompatibleState), false);
+      writeFileSync(manifestFile, manifestText);
+      writeFileSync(checksumFile, checksum);
+
       writeFileSync(checksumFile, `${"0".repeat(64)}  manifest.json\n`);
       const rejectedConfig = join(root, "rejected-effectgate.json");
       const rejectedState = join(root, "rejected-state");
@@ -700,6 +781,10 @@ test("operator CLI rejects ambiguous or incomplete commands", () => {
   assert.equal(run(["backup", "--config", "x"]).status, 2);
   assert.equal(run([
     "restore", "--backup", "x", "--config", "y"
+  ]).status, 2);
+  assert.equal(run([
+    "rollback", "--backup", "x", "--config", "y",
+    "--state", "z", "--yes"
   ]).status, 2);
   assert.equal(run(["unknown"]).status, 2);
 });

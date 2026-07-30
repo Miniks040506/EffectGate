@@ -437,6 +437,7 @@ node .\poc\src\proxy\effectgate.mjs approve --config D:\path\to\effectgate.json 
 node .\poc\src\proxy\effectgate.mjs resolve --config D:\path\to\effectgate.json --operation OPERATION_ID
 node .\poc\src\proxy\effectgate.mjs backup --config D:\path\to\effectgate.json --output D:\backups\effectgate-2026-07-31
 node .\poc\src\proxy\effectgate.mjs restore --backup D:\backups\effectgate-2026-07-31 --config D:\restored\effectgate.json --state D:\restored\state
+node .\poc\src\proxy\effectgate.mjs rollback --backup D:\backups\effectgate-2026-07-31 --config D:\rollback\effectgate.json --state D:\rollback\state
 ```
 
 Add `--json` to any inspection command for stable machine-readable output.
@@ -464,6 +465,14 @@ databases, revokes unconsumed approval leases, abandons undispatched work, and
 makes any operation copied during dispatch `uncertain` for reconciliation.
 Retrieval cursors are process-local and therefore are not restored. Source
 configuration, state, skill files, and the backup remain unchanged.
+
+`rollback` first prints a non-mutating plan bound to the verified manifest,
+fresh destinations, and exact EffectGate package version. Rerun it with the
+printed `--confirm DIGEST --yes` arguments to restore the paired state. It
+preserves live state and never runs npm automatically; instead, it returns the
+exact package reinstall and `doctor` postcheck commands. Operator sign-off is
+required before the restored configuration is used for protected effects.
+Backups from unqualified EffectGate versions fail closed.
 
 For manual configuration, calculate the skill's pinned digest:
 
