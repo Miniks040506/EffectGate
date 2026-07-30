@@ -94,13 +94,20 @@ The current preview assumes:
 
 - The fixture child runs with the current user's operating-system permissions;
   EffectGate is not an OS sandbox.
-- There is no authentication, encryption, tenant isolation, or operator
-  approval UI. The configured fixture has a persistent operation journal and
+- There is no authentication, encryption, tenant isolation, or full
+  exact-argument approval UI. Operator-generated stdio configurations use
+  explicit local CLI approval, but its content-free card exposes scope and
+  canonical argument/disclosure hashes rather than raw argument differences.
+  Approval leases are single-use and their bearer tokens are never printed or
+  persisted. The configured fixture has a persistent operation journal and
   startup reconciliation that never blindly repeats an interrupted dispatch,
   but the memory backend state does not survive a restart. The reviewed stdio
   fixture persists only its target, content digest, idempotency key, and commit
   time in a separate SQLite file. An ambiguous recovered outcome stops the
   configured server for manual resolution.
+- Manual resolution requires an explicit confirmation, stores only a
+  domain-separated note digest, preserves uncertain certainty, and issues a
+  `manual_resolution` receipt without claiming that the effect committed.
 - Operator `doctor`, `status`, and `receipt` inspection opens existing
   databases read-only. Doctor's reviewed-backend reachability check performs
   only initialization and tool-contract discovery through a no-state fixture

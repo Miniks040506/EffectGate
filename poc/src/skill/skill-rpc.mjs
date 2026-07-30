@@ -3,6 +3,9 @@ import {
   deriveIdempotencyBinding,
   verifyIdempotencyAdapter
 } from "../policy/idempotency-adapter.mjs";
+import {
+  ApprovalLeaseStore
+} from "../policy/approval-lease-store.mjs";
 import { EffectOperationJournal } from "../policy/operation-journal.mjs";
 import {
   completePhaseEffectOperation,
@@ -166,10 +169,13 @@ function effectTool(command) {
           status: {
             type: "string",
             enum: [
-              "completed", "verified_not_committed", "manual_resolution"
+              "awaiting_approval", "completed", "verified_not_committed",
+              "manual_resolution"
             ]
           },
           operation_id: identifier,
+          approval_required: { type: "boolean" },
+          challenge: { type: "object" },
           effect_receipt: { type: "object" },
           phase_receipt: { type: "object" },
           effectgate_code: {
@@ -237,6 +243,7 @@ function effectCommandRegistry(commands = []) {
 }
 
 export class SkillRpc {
+  #approvals;
   #effectCommands;
   #effectJournal;
   #eventStore;
@@ -250,6 +257,7 @@ export class SkillRpc {
     eventStore,
     effectJournal,
     effectCommands,
+    approvalStore,
     tokenLedger,
     now = Date.now
   } = {}) {
@@ -257,6 +265,8 @@ export class SkillRpc {
         !eventStore || typeof eventStore.load !== "function" ||
         (effectJournal !== undefined &&
           !(effectJournal instanceof EffectOperationJournal)) ||
+        (approvalStore !== undefined &&
+          !(approvalStore instanceof ApprovalLeaseStore)) ||
         (tokenLedger !== undefined &&
           typeof tokenLedger?.append !== "function") ||
         typeof now !== "function") {
@@ -274,6 +284,7 @@ export class SkillRpc {
       this.#skills.set(id, entry);
     }
     this.#effectJournal = effectJournal;
+    this.#approvals = approvalStore;
     this.#effectCommands = effectCommandRegistry(effectCommands);
     if (this.#effectCommands.size > 0 && !this.#effectJournal) {
       throw new TypeError("invalid Skill RPC configuration");
@@ -589,6 +600,11 @@ export class SkillRpc {
     if (!Number.isFinite(current)) {
       failure("EG_PHASE_TRANSITION_DENIED", "Skill RPC clock is invalid");
     }
+    const journal = this.#effects();
+    let operation = EffectOperationJournal.prototype.load.call(
+      journal,
+      params.operation_id
+    )?.operation;
     const effect = {
       transaction: active.transaction,
       capsule: active.capsule,
@@ -603,17 +619,51 @@ export class SkillRpc {
       arguments: params.arguments,
       resourceScope: params.resource_scope,
       disclosureDigest: params.disclosure_digest,
-      expiresAt: new Date(current + EFFECT_TTL_MS).toISOString(),
+      expiresAt: operation?.intent_expires_at ??
+        new Date(current + EFFECT_TTL_MS).toISOString(),
       now: this.#now
     };
-    planPhaseEffectOperation({
-      operationId: params.operation_id,
-      journal: this.#effects(),
-      effect
-    });
+    let challenge;
+    if (!operation) {
+      const planned = planPhaseEffectOperation({
+        operationId: params.operation_id,
+        journal,
+        approvals: this.#approvals,
+        effect
+      });
+      challenge = planned.challenge;
+      operation = EffectOperationJournal.prototype.load.call(
+        journal,
+        params.operation_id
+      ).operation;
+    }
+    if (operation.transaction_id !== params.transaction_id) {
+      failure("EG_OPERATION_NOT_FOUND", "effect operation does not exist");
+    }
+    if (operation.state === "awaiting_approval") {
+      return this.#record({
+        schema_version: "1.0.0",
+        status: "awaiting_approval",
+        operation_id: params.operation_id,
+        approval_required: true,
+        challenge: challenge ?? {
+          challenge_id: operation.challenge_id,
+          intent_digest: operation.intent_digest,
+          summary: {
+            capability_id: operation.capability_id,
+            effect_class: operation.effect_class,
+            resource_scope: operation.resource_scope
+          },
+          status: "pending"
+        }
+      }, "approval", "to_host", "approval_overhead_tokens");
+    }
+    if (operation.state !== "admitted") {
+      failure("EG_OPERATION_RETRY_DENIED", "effect operation is not dispatchable");
+    }
     const dispatched = await dispatchPhaseEffectOperation({
       operationId: params.operation_id,
-      journal: this.#effects(),
+      journal,
       effect,
       adapter: command.adapter,
       request: { arguments: params.arguments, headers: {} },
@@ -627,7 +677,7 @@ export class SkillRpc {
         reason: "post_dispatch_verification_required"
       });
     }
-    const operation = await EffectOperationJournal.prototype.reconcile.call(
+    const reconciled = await EffectOperationJournal.prototype.reconcile.call(
       this.#effects(),
       {
         operationId: params.operation_id,
@@ -637,7 +687,7 @@ export class SkillRpc {
       }
     );
     let result;
-    if (operation.state === "verified_committed") {
+    if (reconciled.state === "verified_committed") {
       result = completePhaseEffectOperation({
         operationId: params.operation_id,
         receiptId: params.receipt_id,
@@ -648,7 +698,7 @@ export class SkillRpc {
     } else {
       result = {
         schema_version: "1.0.0",
-        status: operation.state,
+        status: reconciled.state,
         operation_id: params.operation_id
       };
     }

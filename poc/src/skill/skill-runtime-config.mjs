@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { compileIdempotencyAdapter } from "../policy/idempotency-adapter.mjs";
+import { ApprovalLeaseStore } from "../policy/approval-lease-store.mjs";
 import { EffectOperationJournal } from "../policy/operation-journal.mjs";
 import { compilePolicy } from "../policy/policy-compiler.mjs";
 import { compileVerificationProbe } from "../policy/verification-probe.mjs";
@@ -46,15 +47,22 @@ function bounded(value, maximum) {
 }
 
 export function normalizeSkillMcpConfig(value) {
-  const keys = value?.driver === STDIO_EFFECT_DRIVER
-    ? [...CONFIG_KEYS, "backend_source_digest"]
+  const stdio = value?.driver === STDIO_EFFECT_DRIVER;
+  const keys = stdio
+    ? [
+        ...CONFIG_KEYS,
+        "backend_source_digest",
+        ...(value.approval_mode === undefined ? [] : ["approval_mode"])
+      ]
     : CONFIG_KEYS;
   const targetSegments = value?.target_path?.split("/");
   if (!exactData(value, keys) ||
       value.schema_version !== "1.0.0" ||
       ![MEMORY_DRIVER, STDIO_EFFECT_DRIVER].includes(value.driver) ||
-      (value.driver === STDIO_EFFECT_DRIVER &&
+      (stdio &&
         !DIGEST.test(value.backend_source_digest ?? "")) ||
+      (value.approval_mode !== undefined &&
+        (!stdio || value.approval_mode !== "cli")) ||
       !bounded(value.state_directory, 1024) ||
       !bounded(value.skill_root, 1024) ||
       !DIGEST.test(value.skill_source_digest ?? "") ||
@@ -152,10 +160,18 @@ export async function createConfiguredSkillMcp(configFile) {
   const journal = new EffectOperationJournal({
     file: join(config.state_directory, "effect-operations.db")
   });
+  const approvals = config.approval_mode === "cli"
+    ? new ApprovalLeaseStore({
+        file: join(config.state_directory, "effect-operations.db")
+      })
+    : undefined;
   let backend;
   try {
     const setup = new SkillRpc({
-      skills: [skill], eventStore: store, effectJournal: journal
+      skills: [skill],
+      eventStore: store,
+      effectJournal: journal,
+      approvalStore: approvals
     });
     if (!store.load(config.transaction_id)) {
       rpcCall(setup, 1, "skills/transaction/start", {
@@ -171,6 +187,7 @@ export async function createConfiguredSkillMcp(configFile) {
       return {
         mcp: new SkillMcp(setup),
         close() {
+          approvals?.close();
           journal.close();
           store.close();
         }
@@ -188,7 +205,7 @@ export async function createConfiguredSkillMcp(configFile) {
       policyId: "configured-reviewed-patch",
       rules: [{
         id: "allow-reviewed-patch",
-        decision: "allow",
+        decision: config.approval_mode === "cli" ? "ask" : "allow",
         match: {
           skill_id: "document-editor",
           skill_digest: source.source_digest,
@@ -339,6 +356,7 @@ export async function createConfiguredSkillMcp(configFile) {
       skills: [skill],
       eventStore: store,
       effectJournal: journal,
+      approvalStore: approvals,
       effectCommands: [command]
     });
     await SkillRpc.prototype.recoverEffects.call(rpc);
@@ -356,6 +374,7 @@ export async function createConfiguredSkillMcp(configFile) {
           skills: [skill],
           eventStore: store,
           effectJournal: journal,
+          approvalStore: approvals,
           effectCommands: [{
             ...command,
             policy: policyFor(capsule.capsule_digest)
@@ -373,19 +392,22 @@ export async function createConfiguredSkillMcp(configFile) {
       published = new SkillMcp(new SkillRpc({
         skills: [skill],
         eventStore: store,
-        effectJournal: journal
+        effectJournal: journal,
+        approvalStore: approvals
       }));
     }
     return {
       mcp: published,
       async close() {
         await backend?.close();
+        approvals?.close();
         journal.close();
         store.close();
       }
     };
   } catch (error) {
     await backend?.close();
+    approvals?.close();
     journal.close();
     store.close();
     throw error;
