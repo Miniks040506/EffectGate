@@ -22,11 +22,11 @@
 </div>
 
 > [!CAUTION]
-> **This is a fixture-only Phase 1 preview.** Its bounded Context View path is
-> real and tested, but its small heuristic ruleset is not comprehensive secret
-> protection. Its configured effect path writes only to an in-memory fixture;
-> it cannot launch arbitrary backends, execute production writes, or provide a
-> production security boundary.
+> **This is a Phase 1 preview.** Its bounded Context View path and reviewed
+> read-only stdio binding are real and tested, but its small heuristic ruleset
+> is not comprehensive secret protection. It cannot admit unreviewed
+> executables, expose third-party writes, or provide a production security
+> boundary.
 
 EffectGate is being built to sit between an AI host and its MCP tools. The
 product direction combines two controls that normally live far apart:
@@ -90,15 +90,15 @@ flowchart LR
     Output -->|"stdio"| Client
 ```
 
-There is no network listener. The preview always spawns the bundled fixture
-with a fixed Node.js command. `--source` changes only the validated public
-namespace; it does not select a backend.
+There is no network listener. Without `--config`, the preview spawns only the
+bundled fixture and `--source` changes only its public namespace. A reviewed
+configuration may instead bind one exact digest-pinned stdio process.
 
 ## Implemented invariants
 
 | Boundary | Current behavior |
 |---|---|
-| Backend selection | Fixed bundled fixture; arbitrary commands are rejected |
+| Backend selection | Bundled fixture or one exact reviewed stdio config; command-line backend injection is rejected |
 | Process launch | `shell: false` with an explicit environment allowlist |
 | Frame size | Incoming and outgoing JSON-RPC frames are limited to 1 MiB |
 | Request IDs | Safe integers or UTF-8 strings no longer than 128 bytes |
@@ -137,8 +137,9 @@ openWorldHint    = false
 
 For admitted tools, advertised contract fields are forwarded unchanged; only
 the name is replaced with a deterministic public namespace. Tool annotations
-are still untrusted metadata—not proof that an unknown backend is safe—which
-is why external backends remain disabled.
+are still untrusted metadata—not proof that an unknown backend is safe.
+Third-party exposure therefore also requires pinned executable/source bytes,
+server identity, and an exact reviewed catalog.
 
 ## Context View contract
 
@@ -290,7 +291,8 @@ The default `mcp serve` proxy is **not**:
 - a durable indexed CAS or end-to-end streaming backend adapter;
 - a durable audit journal;
 - an independent JSON Schema validator for tool-call arguments;
-- approved for external backends, protected effects, or production use.
+- approved for unreviewed or write-capable external backends, protected
+  effects, or production use.
 
 The separate configured fixture command exercises the existing approval,
 journal, idempotency, verification, and receipt kernel against an in-memory
@@ -327,6 +329,62 @@ For Claude Code:
 ```powershell
 claude mcp add --transport stdio effectgate -- node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp serve
 ```
+
+### Reviewed third-party read backend
+
+Calculate SHA-256 pins for the exact executable and every operator-reviewed
+source file:
+
+```powershell
+node --input-type=module -e "import { reviewedFileDigest as digest } from './poc/src/proxy/reviewed-backend-config.mjs'; console.log(digest(process.argv[1]))" "D:\path\to\backend.exe"
+```
+
+Create a layered configuration with the exact launch binding, server identity,
+and reviewed single-page `tools/list` result:
+
+```json
+{
+  "schema_version": "1.0.0",
+  "driver": "effectgate.reviewed.stdio-read.v1",
+  "source": "reviewed",
+  "executable_path": "D:\\path\\to\\backend.exe",
+  "executable_digest": "sha256:REPLACE_WITH_64_HEX_CHARACTERS",
+  "argv": [],
+  "working_directory": "D:\\path\\to\\backend-work",
+  "source_files": [],
+  "server_identity": {
+    "name": "reviewed-backend",
+    "version": "1.0.0"
+  },
+  "catalog": {
+    "tools": [{
+      "name": "lookup",
+      "inputSchema": {"type": "object"},
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    }]
+  }
+}
+```
+
+Capture and review the catalog out of band; EffectGate deliberately does not
+auto-seal whatever an untrusted process reports. Start the proxy with:
+
+```text
+node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp serve --config /absolute/path/to/reviewed-backend.json
+```
+
+The binding uses exact argv with no shell, a canonical working directory, the
+base environment allowlist plus optional `secret_refs`, and repeated source
+digest checks. Initialization must match the pinned MCP protocol and server
+identity. The catalog must match byte-for-byte after canonical JSON
+normalization, must be one immutable page, and may expose only tools carrying
+all four safe-read annotations. Writes, dynamic catalogs, direct backend names,
+invented names, source drift, and identity drift fail closed.
 
 ### Configured verified-effect fixture
 
@@ -572,14 +630,14 @@ The dependency-free suite directly verifies:
 
 | Available in this preview | Evidence-gated product direction |
 |---|---|
-| Fixture-only read proxy plus one digest-pinned reviewed stdio effect fixture | Reviewed third-party stdio MCP backend adapters |
-| Typed read-only admission | Signed/pinned backend capability passports |
+| Fixture proxy, reviewed read-only third-party stdio binding, and one digest-pinned reviewed stdio effect fixture | Streamable HTTP and broader reviewed backend adapters |
+| Exact executable/source, identity, catalog, and typed read-only admission pins | Signed backend capability passports and sealed generations |
 | Exact-build Claude Code 2.1.220 Tool Search evidence plus evidence-gated metadata | Automatic build-identity transport and multi-version RC evidence |
 | Quota-limited partitioned filesystem CAS with explicit invalidation | Durable metadata, shared-writer locking, crash-root recovery, and production GC |
 | Cited paging/search/projection plus fail-closed opaque-content withholding | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
 | HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |
 | Basis-aware counters, output guards, optional session ledger, compact mux, real P0–P3 fixture evidence, failure-preserving reports, and review-only exposure recommendations | SQLite-backed evidence and real-host comparison qualification |
-| Verified S3 lifecycle, runtime-owned effect RPC, bounded MCP publication, configured fixture stdio, interrupted-command startup reconciliation, and durable reviewed child-process effect fixture | Third-party backend review flows, broader crash qualification, and product flows |
+| Verified S3 lifecycle, runtime-owned effect RPC, bounded MCP publication, configured fixture stdio, interrupted-command startup reconciliation, and durable reviewed child-process effect fixture | Broader third-party effect review, crash qualification, and product flows |
 | Deterministic local tests | Compatibility, fuzz, latency, and crash qualification |
 | Sanitized public errors | Unified daemon error catalog and operator diagnostics |
 | Node.js PoC | Tested installer and supported-platform matrix |

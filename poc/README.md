@@ -11,9 +11,10 @@ retained artifact   -> fetch / literal search / JSON or JSONL projection
                     -> CSV or TSV projection / Markdown heading extraction
 ```
 
-It remains fixture-only. The configured `memory-patch` profile exercises a
-protected verified effect, but arbitrary backends, real secret-bearing data,
-and production use remain disabled.
+The default remains fixture-only. A reviewed configuration may launch one
+exact digest-pinned third-party stdio backend and expose only its immutable
+safe-read catalog. Unreviewed commands, third-party writes, real
+secret-bearing data, and production use remain disabled.
 
 The configured profiles reopen their SQLite journals on startup, reconcile an
 interrupted dispatch without invoking it again, and publish no effect tool
@@ -34,6 +35,14 @@ Point an MCP stdio client at:
 
 ```text
 node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp serve
+```
+
+For an independently reviewed read-only stdio backend, pin its executable,
+operator-reviewed source files, argv, working directory, server identity, and
+exact single-page catalog as documented in the root README, then run:
+
+```text
+node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp serve --config /absolute/path/to/reviewed-backend.json
 ```
 
 Serve the reviewed verified-effect fixture described in the root README:

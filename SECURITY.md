@@ -2,13 +2,14 @@
 
 ## Project status
 
-EffectGate is currently a fixture-only Phase 1 preview. It includes a bounded,
-filesystem-backed Context View path with deterministic high-signal credential
-redaction, conservative opaque-content withholding, and volatile session
-metadata. A separate configured profile exercises protected effects against a
-reviewed in-memory fixture with a persistent local journal. It is not
-production-ready and must not be used to protect real tool effects, secrets,
-or untrusted external backends.
+EffectGate is currently a Phase 1 preview. It includes a bounded,
+filesystem-backed Context View path, a reviewed read-only third-party stdio
+binding, deterministic high-signal credential redaction, conservative
+opaque-content withholding, and volatile session metadata. A separate
+configured profile exercises protected effects against a reviewed fixture with
+a persistent local journal. It is not production-ready and must not be used to
+protect real tool effects or admit untrusted or write-capable external
+backends.
 
 ## Supported versions
 
@@ -94,6 +95,14 @@ The current preview assumes:
 
 - The fixture child runs with the current user's operating-system permissions;
   EffectGate is not an OS sandbox.
+- A reviewed third-party stdio process also runs with the current user's
+  permissions. Admission pins the canonical executable, operator-listed source
+  files, fixed argv/working directory, server identity, and one immutable
+  catalog; it does not discover transitive package or dynamic-load
+  dependencies. Unix source files and working directories must not be
+  group/world writable. Digest checks occur before launch, catalog admission,
+  and calls, but they are not an OS-level immutable execution primitive.
+  Admit only code and source manifests you have independently reviewed.
 - Configuration inheritance is limited to eight canonicalized local JSON
   layers, 64 KiB per file and 256 KiB in total. Parent layers load first,
   child fields win deterministically, and cycles fail closed. Environment
