@@ -1,11 +1,22 @@
+import { createHash } from "node:crypto";
 import {
   constants,
   accessSync,
   existsSync,
+  lstatSync,
   mkdirSync,
+  readFileSync,
+  rmSync,
   writeFileSync
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep
+} from "node:path";
 import process from "node:process";
 
 import {
@@ -40,9 +51,13 @@ const USAGE = "Usage: effectgate.mjs init --config FILE --state DIRECTORY " +
   "receipt --config FILE --id ID [--json] | approve --config FILE " +
   "--operation ID [--approver ID --intent DIGEST --yes | --deny] [--json] " +
   "| resolve --config FILE --operation ID [--reconcile | " +
-  "--manual --receipt ID --note TEXT --yes] [--json]";
+  "--manual --receipt ID --note TEXT --yes] [--json] | " +
+  "uninstall --config FILE [--json] | purge --config FILE " +
+  "[--confirm DIGEST --yes] [--json]";
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
+const STATE_MARKER = ".effectgate-state.json";
+const PACKAGE_NAME = "effectgate-preview";
 const VALUE_OPTIONS = Object.freeze({
   "--config": "configFile",
   "--state": "stateDirectory",
@@ -54,7 +69,8 @@ const VALUE_OPTIONS = Object.freeze({
   "--receipt": "receiptId",
   "--approver": "approverId",
   "--intent": "intentDigest",
-  "--note": "note"
+  "--note": "note",
+  "--confirm": "confirmDigest"
 });
 const FLAG_OPTIONS = Object.freeze({
   "--dry-run": "dryRun",
@@ -80,7 +96,9 @@ const ALLOWED = Object.freeze({
   resolve: new Set([
     "configFile", "operationId", "receiptId", "manual", "reconcile",
     "note", "yes", "json"
-  ])
+  ]),
+  uninstall: new Set(["configFile", "json"]),
+  purge: new Set(["configFile", "confirmDigest", "yes", "json"])
 });
 
 function fail() {
@@ -136,6 +154,9 @@ function parse(args) {
         ![0, 4].includes(resolutionAction) ||
         (resolutionAction === 4 &&
           !IDENTIFIER.test(values.receiptId ?? "")))) fail();
+  if (command === "purge" &&
+      (Boolean(values.yes) !==
+        DIGEST.test(values.confirmDigest ?? ""))) fail();
   return values;
 }
 
@@ -147,6 +168,79 @@ function nearestExisting(path) {
     current = parent;
   }
   return current;
+}
+
+function contains(parent, child) {
+  const value = relative(parent, child);
+  return value === "" ||
+    (!isAbsolute(value) && value !== ".." &&
+      !value.startsWith(`..${sep}`));
+}
+
+function stateBoundary(configFile, config) {
+  const configPath = resolve(configFile);
+  const stateDirectory = resolve(config.state_directory);
+  if (dirname(stateDirectory) === stateDirectory ||
+      contains(stateDirectory, configPath) ||
+      contains(stateDirectory, resolve(config.skill_root))) {
+    throw new Error("unsafe EffectGate state directory");
+  }
+  return { configFile: configPath, stateDirectory };
+}
+
+function stateMarker(configFile, config) {
+  const boundary = stateBoundary(configFile, config);
+  return {
+    schema_version: "1.0.0",
+    kind: "effectgate_state_directory",
+    config_file: boundary.configFile,
+    state_directory: boundary.stateDirectory,
+    transaction_id: config.transaction_id
+  };
+}
+
+function lifecyclePlan(configFile) {
+  const config = loadSkillMcpConfig(configFile);
+  const marker = stateMarker(configFile, config);
+  let stored;
+  try {
+    const state = lstatSync(marker.state_directory);
+    if (!state.isDirectory() || state.isSymbolicLink()) throw new Error();
+    stored = JSON.parse(readFileSync(
+      join(marker.state_directory, STATE_MARKER),
+      "utf8"
+    ));
+  } catch {
+    throw new Error("state directory is not owned by this configuration");
+  }
+  if (!stored || typeof stored !== "object" || Array.isArray(stored) ||
+      Object.keys(stored).length !== Object.keys(marker).length ||
+      Object.entries(marker).some(([key, value]) => stored[key] !== value)) {
+    throw new Error("state directory is not owned by this configuration");
+  }
+  const confirmDigest = `sha256:${
+    createHash("sha256")
+      .update(marker.config_file)
+      .update("\0")
+      .update(marker.state_directory)
+      .digest("hex")
+  }`;
+  return {
+    config,
+    marker,
+    confirmDigest,
+    packageCommand: {
+      executable: "npm",
+      arguments: ["uninstall", "--global", PACKAGE_NAME]
+    },
+    purgeCommand: {
+      executable: "effectgate",
+      arguments: [
+        "purge", "--config", marker.config_file,
+        "--confirm", confirmDigest, "--yes"
+      ]
+    }
+  };
 }
 
 function init(options) {
@@ -176,6 +270,7 @@ function init(options) {
     config_parent: !existsSync(dirname(configFile)),
     state_directory: !existsSync(config.state_directory)
   };
+  const marker = stateMarker(configFile, config);
   if (options.apply) {
     mkdirSync(dirname(configFile), { recursive: true, mode: 0o700 });
     mkdirSync(config.state_directory, { recursive: true, mode: 0o700 });
@@ -183,6 +278,13 @@ function init(options) {
       flag: "wx",
       mode: 0o600
     });
+    if (created.state_directory) {
+      writeFileSync(
+        join(config.state_directory, STATE_MARKER),
+        `${JSON.stringify(marker)}\n`,
+        { flag: "wx", mode: 0o600 }
+      );
+    }
   }
   return {
     schema_version: "1.0.0",
@@ -395,6 +497,48 @@ async function resolveOperation(options) {
   };
 }
 
+function uninstall(options) {
+  const plan = lifecyclePlan(options.configFile);
+  return {
+    schema_version: "1.0.0",
+    command: "uninstall",
+    status: "ready",
+    package_command: plan.packageCommand,
+    preserved_paths: [
+      plan.marker.config_file,
+      plan.marker.state_directory,
+      plan.config.skill_root
+    ],
+    purge_command: plan.purgeCommand
+  };
+}
+
+function purge(options) {
+  const plan = lifecyclePlan(options.configFile);
+  if (!options.yes) {
+    return {
+      schema_version: "1.0.0",
+      command: "purge",
+      status: "confirmation_required",
+      state_directory: plan.marker.state_directory,
+      confirmation_digest: plan.confirmDigest,
+      purge_command: plan.purgeCommand
+    };
+  }
+  if (options.confirmDigest !== plan.confirmDigest) {
+    throw new Error("state directory confirmation mismatch");
+  }
+  lifecyclePlan(options.configFile);
+  rmSync(plan.marker.state_directory, { recursive: true });
+  return {
+    schema_version: "1.0.0",
+    command: "purge",
+    status: "purged",
+    state_directory: plan.marker.state_directory,
+    preserved_paths: [plan.marker.config_file, plan.config.skill_root]
+  };
+}
+
 function human(result) {
   if (result.command === "doctor") {
     return [
@@ -430,6 +574,22 @@ function human(result) {
         result.outcome.operation_id;
     return `Resolution ${result.status}: ${operationId}`;
   }
+  if (result.command === "uninstall") {
+    return "EffectGate uninstall preserves configuration and state.\n" +
+      `Run npm with arguments: ${
+        JSON.stringify(result.package_command.arguments)
+      }\nOptional exact purge before uninstall: run effectgate with arguments: ${
+        JSON.stringify(result.purge_command.arguments)
+      }`;
+  }
+  if (result.command === "purge") {
+    return result.status === "purged"
+      ? `EffectGate state purged: ${result.state_directory}`
+      : `Review the exact state path: ${result.state_directory}\n` +
+        `To purge it, run effectgate with arguments: ${
+          JSON.stringify(result.purge_command.arguments)
+        }`;
+  }
   return JSON.stringify(result.receipt, null, 2);
 }
 
@@ -440,6 +600,8 @@ export async function operatorCommand(args) {
   if (options.command === "status") return status(options);
   if (options.command === "receipt") return receipt(options);
   if (options.command === "approve") return approve(options);
+  if (options.command === "uninstall") return uninstall(options);
+  if (options.command === "purge") return purge(options);
   return resolveOperation(options);
 }
 

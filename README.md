@@ -75,6 +75,21 @@ installed. Re-running the install command upgrades or reinstalls the CLI
 without touching configuration or state stored outside the package directory.
 The package defines no install or uninstall lifecycle scripts.
 
+Before uninstalling, print the exact package command, preserved paths, and
+optional purge arguments:
+
+```powershell
+effectgate uninstall --config D:\path\to\effectgate.json
+```
+
+The default command is `npm uninstall --global effectgate-preview`; it removes
+the CLI while preserving configuration, state, and skill sources. Optional
+state deletion must happen before package removal: run `effectgate purge
+--config FILE` to review the exact owned state path and receive confirmation
+arguments, then rerun with the printed SHA-256 digest and `--yes`. Purge refuses
+filesystem roots, overlapping configuration/skill paths, missing ownership
+markers, and mismatched confirmations. It deletes state only.
+
 ## Architecture
 
 ```mermaid

@@ -41,7 +41,7 @@ function runNpm(args, cwd, cache) {
   return result.stdout;
 }
 
-test("packed CLI reports its version and preserves state on reinstall", () => {
+test("packed CLI lifecycle preserves external state", () => {
   const root = mkdtempSync(join(tmpdir(), "effectgate-install-"));
   const packDirectory = join(root, "pack");
   const installDirectory = join(root, "consumer");
@@ -151,6 +151,18 @@ test("packed CLI reports its version and preserves state on reinstall", () => {
     assert.equal(response.id, 1);
     assert.equal(response.result.serverInfo.name, "effectgate-fixture");
     assert.equal(response.result.serverInfo.version, packed.version);
+
+    runNpm([
+      "uninstall",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--package-lock=false",
+      "effectgate-preview"
+    ], installDirectory, cache);
+    assert.equal(existsSync(installedRoot), false);
+    assert.equal(existsSync(bin), false);
+    assert.equal(readFileSync(stateFile, "utf8"), state);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

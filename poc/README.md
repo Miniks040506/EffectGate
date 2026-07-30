@@ -47,6 +47,19 @@ initialize exchange through the installed CLI.
 Re-running the install command leaves external configuration and state
 untouched. The package has no install or uninstall lifecycle scripts.
 
+Print the non-destructive uninstall plan before removing the CLI:
+
+```powershell
+effectgate uninstall --config C:\path\to\effectgate.json
+npm uninstall --global effectgate-preview
+```
+
+The plan lists every preserved path and an optional exact purge command.
+`effectgate purge --config FILE` is non-mutating until rerun with its printed
+SHA-256 confirmation and `--yes`; it accepts only an init-created state
+ownership marker and never deletes configuration or skill sources. Run an
+optional purge before uninstalling the CLI.
+
 Point an MCP stdio client at:
 
 ```text

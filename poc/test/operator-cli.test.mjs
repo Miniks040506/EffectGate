@@ -11,7 +11,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse as parsePath } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -99,6 +99,10 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
       assert.equal(applied.status, "applied");
       assert.equal(existsSync(configFile), true);
       assert.equal(existsSync(stateDirectory), true);
+      assert.equal(
+        existsSync(join(stateDirectory, ".effectgate-state.json")),
+        true
+      );
       const originalConfig = readFileSync(configFile, "utf8");
       assert.equal(run([...initArgs, "--apply"]).status, 2);
       assert.equal(readFileSync(configFile, "utf8"), originalConfig);
@@ -443,6 +447,44 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
         ).status,
         "fail"
       );
+
+      const markerFile = join(stateDirectory, ".effectgate-state.json");
+      const marker = readFileSync(markerFile, "utf8");
+      rmSync(markerFile);
+      assert.equal(run(["uninstall", "--config", configFile]).status, 2);
+      writeFileSync(markerFile, marker);
+
+      const uninstall = json(["uninstall", "--config", configFile]);
+      assert.equal(uninstall.status, "ready");
+      assert.deepEqual(uninstall.package_command, {
+        executable: "npm",
+        arguments: ["uninstall", "--global", "effectgate-preview"]
+      });
+      assert.equal(uninstall.preserved_paths.includes(stateDirectory), true);
+
+      const preview = json(["purge", "--config", configFile]);
+      assert.equal(preview.status, "confirmation_required");
+      assert.equal(preview.state_directory, stateDirectory);
+      assert.match(preview.confirmation_digest, /^sha256:[a-f0-9]{64}$/u);
+      assert.deepEqual(preview.purge_command, uninstall.purge_command);
+      assert.equal(existsSync(stateDirectory), true);
+      assert.equal(run([
+        "purge", "--config", configFile,
+        "--confirm", digest("0"), "--yes"
+      ]).status, 2);
+
+      const rootConfig = join(root, "root-state.json");
+      writeFileSync(rootConfig, JSON.stringify({
+        ...JSON.parse(originalConfig),
+        state_directory: parsePath(root).root
+      }));
+      assert.equal(run(["purge", "--config", rootConfig]).status, 2);
+
+      const purged = json(preview.purge_command.arguments);
+      assert.equal(purged.status, "purged");
+      assert.equal(existsSync(stateDirectory), false);
+      assert.equal(existsSync(configFile), true);
+      assert.equal(existsSync(skillRoot), true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -461,6 +503,10 @@ test("operator CLI rejects ambiguous or incomplete commands", () => {
   assert.equal(run([
     "resolve", "--config", "x", "--operation", "op",
     "--reconcile", "--manual"
+  ]).status, 2);
+  assert.equal(run(["purge", "--config", "x", "--yes"]).status, 2);
+  assert.equal(run([
+    "purge", "--config", "x", "--confirm", digest("0")
   ]).status, 2);
   assert.equal(run(["unknown"]).status, 2);
 });
