@@ -7,9 +7,10 @@ filesystem-backed Context View path, a reviewed read-only third-party stdio
 binding, deterministic high-signal credential redaction, conservative
 opaque-content withholding, and volatile session metadata. A separate
 configured profile exercises protected effects against a reviewed fixture with
-a persistent local journal. It is not production-ready and must not be used to
-protect real tool effects or admit untrusted or write-capable external
-backends.
+a persistent local journal. Seeded JSONL/MCP boundary fuzzing checks parser
+recovery and strict contract admission. It is not production-ready and must not
+be used to protect real tool effects or admit untrusted or write-capable
+external backends.
 
 ## Supported versions
 

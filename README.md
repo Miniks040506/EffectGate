@@ -688,6 +688,7 @@ The dependency-free suite directly verifies:
   wrapped base64/hex data, final-tail data, and the 1 MiB artifact ceiling;
 - oversized catalog-page rejection before tool admission;
 - malformed and oversized frame rejection with parser recovery;
+- seeded JSONL/MCP boundary mutation evidence with an exact replay seed;
 - invalid request-ID sanitization without reflecting hidden values;
 - direct and invented backend-name rejection;
 - fixture admission plus read-only/open-world deny cases;
@@ -705,7 +706,7 @@ The dependency-free suite directly verifies:
 | HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |
 | Basis-aware counters, output guards, optional session ledger, compact mux, real P0–P3 fixture evidence, failure-preserving reports, and review-only exposure recommendations | SQLite-backed evidence and real-host comparison qualification |
 | Verified S3 lifecycle, runtime-owned effect RPC, bounded MCP publication, configured fixture stdio, interrupted-command startup reconciliation, and durable reviewed child-process effect fixture | Broader third-party effect review, crash qualification, and product flows |
-| Deterministic local tests | Compatibility, fuzz, latency, and crash qualification |
+| Deterministic local tests plus seeded JSONL/MCP boundary fuzz evidence | Broader fuzz, compatibility, latency, and crash qualification |
 | Sanitized public errors | Unified daemon error catalog and operator diagnostics |
 | Node.js PoC | Tested installer and supported-platform matrix |
 
