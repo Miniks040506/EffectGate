@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync
@@ -14,6 +15,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { MCP_VERSION } from "../src/proxy/mcp-contract.mjs";
+import { compileEffectIntent } from "../src/policy/effect-intent.mjs";
+import { EffectOperationJournal } from
+  "../src/policy/operation-journal.mjs";
 import { createConfiguredSkillMcp } from
   "../src/skill/skill-runtime-config.mjs";
 
@@ -21,6 +25,7 @@ const PROGRAM = fileURLToPath(
   new URL("../src/proxy/effectgate.mjs", import.meta.url)
 );
 const disclosureDigest = `sha256:${"a".repeat(64)}`;
+const digest = (character) => `sha256:${character.repeat(64)}`;
 
 function run(args) {
   return spawnSync(process.execPath, [PROGRAM, ...args], {
@@ -73,7 +78,7 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
       assert.equal(readFileSync(configFile, "utf8"), originalConfig);
 
       const firstDoctor = json(["doctor", "--config", configFile]);
-      assert.equal(firstDoctor.status, "warn");
+      assert.equal(firstDoctor.status, "pass");
       assert.equal(
         firstDoctor.checks.find((check) => check.name === "backend").status,
         "pass"
@@ -113,28 +118,116 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
         const listed = await runtime.mcp.dispatch({
           jsonrpc: "2.0", id: 2, method: "tools/list", params: {}
         });
-        const completed = await runtime.mcp.dispatch({
-          jsonrpc: "2.0",
-          id: 3,
-          method: "tools/call",
-          params: {
-            name: listed.result.tools[0].name,
-            arguments: {
-              operation_id: "operator-operation",
-              receipt_id: "operator-receipt",
+        const call = (operationId, receiptId, content, id) =>
+          runtime.mcp.dispatch({
+            jsonrpc: "2.0",
+            id,
+            method: "tools/call",
+            params: {
+              name: listed.result.tools[0].name,
               arguments: {
-                path: "docs/guide.md",
-                content: "OPERATOR_RAW_CONTENT_MUST_NOT_ESCAPE"
-              },
-              resource_scope: {
-                kind: "exact",
-                value: "repo:reviewed/path:docs/guide.md"
-              },
-              disclosure_digest: disclosureDigest
+                operation_id: operationId,
+                receipt_id: receiptId,
+                arguments: { path: "docs/guide.md", content },
+                resource_scope: {
+                  kind: "exact",
+                  value: "repo:reviewed/path:docs/guide.md"
+                },
+                disclosure_digest: disclosureDigest
+              }
             }
-          }
-        });
+          });
+        const deniedPending = await call(
+          "operator-denied",
+          "operator-denied-receipt",
+          "DENIED_CONTENT_MUST_NOT_RUN",
+          3
+        );
+        assert.equal(
+          deniedPending.result.structuredContent.status,
+          "awaiting_approval"
+        );
+        const deniedCard = json([
+          "approve", "--config", configFile,
+          "--operation", "operator-denied"
+        ]);
+        assert.equal(deniedCard.status, "confirmation_required");
+        assert.equal(deniedCard.approval.effect_class, "mutate_reversible");
+        assert.equal(
+          JSON.stringify(deniedCard).includes("DENIED_CONTENT_MUST_NOT_RUN"),
+          false
+        );
+        const denied = json([
+          "approve", "--config", configFile,
+          "--operation", "operator-denied", "--deny"
+        ]);
+        assert.equal(denied.status, "denied");
+        assert.equal(
+          (await call(
+            "operator-denied",
+            "operator-denied-receipt",
+            "DENIED_CONTENT_MUST_NOT_RUN",
+            4
+          )).result.isError,
+          true
+        );
+
+        const approvedArguments = [
+          "approve", "--config", configFile,
+          "--operation", "operator-operation"
+        ];
+        const pending = await call(
+          "operator-operation",
+          "operator-receipt",
+          "OPERATOR_RAW_CONTENT_MUST_NOT_ESCAPE",
+          5
+        );
+        assert.equal(
+          pending.result.structuredContent.status,
+          "awaiting_approval"
+        );
+        assert.equal(
+          JSON.stringify(pending).includes(
+            "OPERATOR_RAW_CONTENT_MUST_NOT_ESCAPE"
+          ),
+          false
+        );
+        const card = json(approvedArguments);
+        assert.equal(card.status, "confirmation_required");
+        const approved = json([
+          ...approvedArguments,
+          "--approver", "operator-test",
+          "--yes"
+        ]);
+        assert.equal(approved.status, "approved");
+        assert.equal(approved.state, "admitted");
+        assert.equal(JSON.stringify(approved).includes("egl_"), false);
+        assert.equal(run([
+          ...approvedArguments,
+          "--approver", "operator-test",
+          "--yes"
+        ]).status, 2);
+        assert.equal(
+          (await call(
+            "operator-operation",
+            "operator-receipt",
+            "CHANGED_AFTER_APPROVAL_MUST_NOT_RUN",
+            6
+          )).result.isError,
+          true
+        );
+
+        const completed = await call(
+          "operator-operation",
+          "operator-receipt",
+          "OPERATOR_RAW_CONTENT_MUST_NOT_ESCAPE",
+          7
+        );
         assert.equal(completed.result.isError, false);
+        assert.equal(
+          completed.result.structuredContent.status,
+          "completed"
+        );
       } finally {
         await runtime.close();
       }
@@ -147,11 +240,18 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
         id: operation.operation_id,
         state: operation.state,
         receipt: operation.receipt_id
-      })), [{
-        id: "operator-operation",
-        state: "verified_committed",
-        receipt: "operator-receipt"
-      }]);
+      })), [
+        {
+          id: "operator-denied",
+          state: "abandoned",
+          receipt: null
+        },
+        {
+          id: "operator-operation",
+          state: "verified_committed",
+          receipt: "operator-receipt"
+        }
+      ]);
       assert.equal(
         JSON.stringify(current).includes(
           "OPERATOR_RAW_CONTENT_MUST_NOT_ESCAPE"
@@ -174,12 +274,102 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
         "receipt", "--config", configFile, "--id", "missing-receipt"
       ]).status, 2);
 
+      const config = JSON.parse(readFileSync(configFile, "utf8"));
+      const now = Date.now();
+      const journal = new EffectOperationJournal({
+        file: join(stateDirectory, "effect-operations.db")
+      });
+      const manualIntent = compileEffectIntent({
+        principalId: "local-operator",
+        clientId: "local-mcp-client",
+        sessionId: config.transaction_id,
+        admission: {
+          schema_version: "1.0.0",
+          transaction_id: config.transaction_id,
+          skill_id: "document-editor",
+          skill_digest: config.skill_source_digest,
+          phase: "modify",
+          phase_revision: 1,
+          capsule_digest: digest("b"),
+          capability_id: "filesystem.apply_patch",
+          capability_revision: "patch-v1",
+          effect_class: "mutate_reversible"
+        },
+        policyDecision: {
+          decision: "allow",
+          policy_revision: digest("c"),
+          matched_rule_ids: ["manual-fixture"],
+          safe_reason_code: "policy_allow"
+        },
+        arguments: { path: "docs/guide.md", content: "AMBIGUOUS_CONTENT" },
+        resourceScope: {
+          kind: "exact",
+          value: "repo:reviewed/path:docs/guide.md"
+        },
+        disclosureDigest: digest("d"),
+        expiresAt: new Date(now + 300_000).toISOString(),
+        now: () => now
+      });
+      try {
+        journal.plan({
+          operationId: "operator-manual",
+          intent: manualIntent,
+          approvalRequired: false
+        });
+        journal.preflight("operator-manual");
+        journal.admit("operator-manual");
+        journal.beginDispatch({
+          operationId: "operator-manual",
+          dispatchDigest: digest("e"),
+          deadlineAt: new Date(now + 60_000).toISOString()
+        });
+        journal.markUncertain({
+          operationId: "operator-manual",
+          evidenceRef: digest("f"),
+          reason: "response_lost_after_dispatch"
+        });
+      } finally {
+        journal.close();
+      }
+      const resolution = json([
+        "resolve", "--config", configFile,
+        "--operation", "operator-manual"
+      ]);
+      assert.equal(resolution.status, "confirmation_required");
+      const note = "OPERATOR_PRIVATE_RESOLUTION_NOTE";
+      const resolved = json([
+        "resolve", "--config", configFile,
+        "--operation", "operator-manual",
+        "--manual", "--receipt", "operator-manual-receipt",
+        "--note", note, "--yes"
+      ]);
+      assert.equal(resolved.status, "manual_resolution");
+      assert.equal(resolved.receipt_id, "operator-manual-receipt");
+      assert.match(resolved.note_digest, /^sha256:[a-f0-9]{64}$/u);
+      assert.equal(JSON.stringify(resolved).includes(note), false);
+      assert.equal(
+        readdirSync(stateDirectory).some((file) =>
+          readFileSync(join(stateDirectory, file)).includes(note)),
+        false
+      );
+      assert.equal(json([
+        "receipt", "--config", configFile,
+        "--id", "operator-manual-receipt"
+      ]).receipt.final_state, "manual_resolution");
+
       const finalDoctor = json(["doctor", "--config", configFile]);
       assert.equal(
         finalDoctor.checks.find(
           (check) => check.name === "operation_database"
         ).status,
         "pass"
+      );
+      assert.equal(finalDoctor.status, "warn");
+      assert.equal(
+        finalDoctor.checks.find(
+          (check) => check.name === "recovery_backlog"
+        ).detail,
+        1
       );
       writeFileSync(
         join(skillRoot, "SKILL.md"),
@@ -202,5 +392,11 @@ test("operator CLI rejects ambiguous or incomplete commands", () => {
   assert.equal(run(["init", "--dry-run", "--apply"]).status, 2);
   assert.equal(run(["doctor", "--config", "x", "--config", "y"]).status, 2);
   assert.equal(run(["receipt", "--config", "x"]).status, 2);
+  assert.equal(run([
+    "approve", "--config", "x", "--operation", "op", "--yes"
+  ]).status, 2);
+  assert.equal(run([
+    "resolve", "--config", "x", "--operation", "op", "--manual", "--yes"
+  ]).status, 2);
   assert.equal(run(["unknown"]).status, 2);
 });

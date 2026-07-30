@@ -345,13 +345,15 @@ starting the MCP runtime or creating a backend database:
 node .\poc\src\proxy\effectgate.mjs doctor --config D:\path\to\effectgate.json
 node .\poc\src\proxy\effectgate.mjs status --config D:\path\to\effectgate.json
 node .\poc\src\proxy\effectgate.mjs receipt --config D:\path\to\effectgate.json --id RECEIPT_ID
+node .\poc\src\proxy\effectgate.mjs approve --config D:\path\to\effectgate.json --operation OPERATION_ID
+node .\poc\src\proxy\effectgate.mjs resolve --config D:\path\to\effectgate.json --operation OPERATION_ID
 ```
 
 Add `--json` to any inspection command for stable machine-readable output.
 `doctor` opens existing databases read-only, performs an exact no-state stdio
-handshake, and reports the missing preview approval channel as a warning.
-`status` and `receipt` validate persisted chains and never expose raw effect
-arguments.
+handshake, and verifies that operator-generated configurations use local CLI
+approval. `status`, `receipt`, and confirmation previews validate persisted
+chains and never expose raw effect arguments.
 
 For manual configuration, calculate the skill's pinned digest:
 
@@ -386,7 +388,8 @@ node --input-type=module -e "import { stdioEffectAdapterSourceDigest as digest }
 Change `driver` to `effectgate.fixture.stdio-patch.v1` and add:
 
 ```json
-"backend_source_digest": "sha256:REPLACE_WITH_THE_REPORTED_DIGEST"
+"backend_source_digest": "sha256:REPLACE_WITH_THE_REPORTED_DIGEST",
+"approval_mode": "cli"
 ```
 
 This profile fixes the executable to the current Node binary, fixes argv to
@@ -409,6 +412,29 @@ On restart, never-dispatched operations are abandoned, interrupted dispatches
 are reconciled through their persisted idempotency identity, verified commits
 receive a deterministic recovery receipt, and ambiguous outcomes stop startup
 for manual resolution. A completed one-phase configuration publishes no tools.
+
+An effect call first returns `awaiting_approval`. Review its content-free card,
+then explicitly approve or deny it:
+
+```powershell
+node .\poc\src\proxy\effectgate.mjs approve --config D:\path\to\effectgate.json --operation OPERATION_ID --approver local-operator --yes
+node .\poc\src\proxy\effectgate.mjs approve --config D:\path\to\effectgate.json --operation OPERATION_ID --deny
+```
+
+Approval consumes a single-use lease internally; the bearer token is never
+printed or persisted. After approval, repeat the identical MCP call with the
+same operation ID and arguments. Changed arguments fail admission.
+
+If reconciliation cannot prove whether an effect committed, review it with the
+plain `resolve` command shown above. Record an explicit manual outcome only
+after independent investigation:
+
+```powershell
+node .\poc\src\proxy\effectgate.mjs resolve --config D:\path\to\effectgate.json --operation OPERATION_ID --manual --receipt RECEIPT_ID --note "operator evidence reference" --yes
+```
+
+EffectGate stores only a domain-separated digest of the note and issues a
+`manual_resolution` receipt. It does not claim the effect committed.
 
 After discovery:
 
@@ -454,6 +480,9 @@ The dependency-free suite directly verifies:
   idempotent dispatch, lost-response reconciliation, verified Effect/Phase
   Receipts, startup recovery without duplicate dispatch, and stale-state
   denial;
+- content-free CLI approval review, explicit approval/denial, hidden single-use
+  lease consumption, argument-drift denial, and explicit manual-resolution
+  receipts that preserve uncertain certainty;
 - digest-pinned reviewed stdio effect initialization, exact tool-contract
   validation, concurrent duplicate suppression, intent-drift rejection,
   timeout/crash recovery, and backend restart persistence;

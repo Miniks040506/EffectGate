@@ -50,11 +50,19 @@ node src/proxy/effectgate.mjs init --config /path/effectgate.json --state /path/
 node src/proxy/effectgate.mjs doctor --config /path/effectgate.json --json
 node src/proxy/effectgate.mjs status --config /path/effectgate.json --json
 node src/proxy/effectgate.mjs receipt --config /path/effectgate.json --id RECEIPT_ID --json
+node src/proxy/effectgate.mjs approve --config /path/effectgate.json --operation OPERATION_ID --json
+node src/proxy/effectgate.mjs resolve --config /path/effectgate.json --operation OPERATION_ID --json
 ```
 
 Use `--apply` instead of `--dry-run` only after reviewing the generated paths.
 Init never overwrites an existing configuration. Doctor's backend handshake and
-all status/receipt database access are non-mutating.
+all confirmation/status/receipt database access are non-mutating. The first
+effect call waits for approval. Use `approve ... --approver ID --yes` or
+`approve ... --deny`; approval bearer material never leaves the command. Repeat
+the identical MCP call after approval. For an independently investigated
+uncertain outcome, use
+`resolve ... --manual --receipt ID --note TEXT --yes`; only the note digest is
+stored, and the receipt remains explicitly `manual_resolution`.
 
 Optionally lower the default 262,144-token local output ceiling:
 
@@ -291,5 +299,5 @@ preview has no durable index,
 end-to-end streaming adapter, comprehensive secret/PII detection, regex/ranked
 search, JSONPath or richer predicates, full CommonMark structure, SQLite
 ledger/multi-writer recovery, real model/host benchmark adapter, externally
-qualified compact-mux comparison, approval flow, fuzz qualification, or
-production support claim.
+qualified compact-mux comparison, full exact-argument approval UI, fuzz
+qualification, or production support claim.
