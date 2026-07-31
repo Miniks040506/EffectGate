@@ -92,7 +92,7 @@ export {
   validateResponse,
   writeMessage
 };
-const MAX_PENDING_REQUESTS = 64;
+export const MAX_PENDING_REQUESTS = 64;
 const MAX_ID_BYTES = 128;
 const CURSOR_INPUT_PATTERN = new RegExp(CURSOR_PATTERN, "u");
 const TOKEN_LEDGER_PROFILES = new Set([

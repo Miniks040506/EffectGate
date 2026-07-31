@@ -9,10 +9,12 @@ opaque-content withholding, and volatile session metadata. A separate
 configured profile exercises protected effects against a reviewed fixture with
 a persistent local journal. Seeded JSONL/MCP and protected-effect boundary
 fuzzing checks parser recovery, exact policy binding, and strict contract
-admission. The runtime has no third-party package imports, and CI Actions are
-pinned to reviewed GitHub-verified commits. It is not production-ready and must
-not be used to protect real tool effects or admit untrusted or write-capable
-external backends.
+admission. Real-process qualification checks oversized-frame recovery,
+pending-request saturation, and backend-crash cleanup without reflecting
+request data. The runtime has no third-party package imports, and CI Actions
+are pinned to reviewed GitHub-verified commits. It is not production-ready and
+must not be used to protect real tool effects or admit untrusted or
+write-capable external backends.
 
 ## Supported versions
 
