@@ -106,6 +106,7 @@ export async function runFixtureProfile(
     }
 
     const compactResults = [];
+    resultOf(await process.request("ping"));
     const taskStartedAt = clock();
     let callName = proxied ? "fixture__echo" : "echo";
     let callArguments = { text: SMALL_READ_PAYLOAD };
