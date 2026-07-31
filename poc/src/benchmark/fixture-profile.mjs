@@ -80,7 +80,6 @@ export async function runFixtureProfile(
         context.ledgerProfile
       ]
     : ["fixture"];
-  const startedAt = clock();
   const process = new RpcProcess(args);
   try {
     const initialized = resultOf(await process.request("initialize", {
@@ -107,6 +106,7 @@ export async function runFixtureProfile(
     }
 
     const compactResults = [];
+    const taskStartedAt = clock();
     let callName = proxied ? "fixture__echo" : "echo";
     let callArguments = { text: SMALL_READ_PAYLOAD };
     if (compact) {
@@ -140,7 +140,7 @@ export async function runFixtureProfile(
       task_success:
         called.isError === false &&
         called.structuredContent?.text === SMALL_READ_PAYLOAD,
-      latency_ms: clock() - startedAt,
+      latency_ms: clock() - taskStartedAt,
       fetch_count: 0,
       tool_call_count: compact ? 3 : 1,
       tool_schema_tokens: BYTE_PROXY_COUNTER.measure({

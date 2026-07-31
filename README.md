@@ -161,7 +161,7 @@ configuration may instead bind one exact digest-pinned stdio process.
 | Continuity | Artifacts with an unfetched cursor are pinned; recent retries use a bounded page cache; explicit invalidation revokes cached and live cursors |
 | Page bound | At most 4,096 source bytes, cut only at a valid UTF-8 boundary |
 | Redaction | Versioned assignment, bearer-token, and common token-prefix rules run before every emitted page; more than 4,096 detected spans fails closed |
-| Benchmark evidence | Seeded P0–P3 order, stable pair/run IDs, real execution of all four small-read fixture profiles, exclusive JSONL creation, retained failures, deterministic median/p95/bootstrap-CI reports, and review-only exposure recommendations |
+| Benchmark evidence | Seeded P0–P3 order, stable pair/run IDs, warm task timing, real execution of all four small-read fixture profiles, exclusive JSONL creation, retained failures, deterministic median/p95/bootstrap-CI reports, a fail-closed performance gate, and review-only exposure recommendations |
 | Errors | Backend errors and stderr content are not passed through verbatim |
 | Flow control | Client input and fixture output pause while downstream writables are backpressured |
 
@@ -635,6 +635,8 @@ The dependency-free suite directly verifies:
   Context View identity binding, corruption denial, and secret containment;
 - deterministic P0–P3 paired order and run identity, complete profile coverage,
   retained/sanitized runner failures, and evidence no-overwrite protection;
+- warm small-read task timing plus fail-closed repetition, success-delta, and
+  typed median-overhead qualification;
 - fail-closed exposure recommendations with measured quality gates, explicit
   review requirements, no policy mutation, and no direct-bypass suggestion;
 - phase/Capsule-bound protected-intent preparation, exact approval admission,
