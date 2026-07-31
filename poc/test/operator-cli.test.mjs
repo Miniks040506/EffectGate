@@ -77,7 +77,9 @@ function jsonLive(args, expectedStatus = 0) {
 
 test("operator CLI initializes, diagnoses, inspects, and fails closed",
   async () => {
-    const root = mkdtempSync(join(tmpdir(), "effectgate-operator-"));
+    const root = realpathSync(
+      mkdtempSync(join(tmpdir(), "effectgate-operator-"))
+    );
     const skillRoot = join(root, "skill");
     const configFile = join(root, "config", "effectgate.json");
     const stateDirectory = join(root, "state");

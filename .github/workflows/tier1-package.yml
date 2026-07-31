@@ -11,16 +11,21 @@ env:
 
 jobs:
   package:
-    name: ${{ matrix.runner }}
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        runner:
-          - windows-2025
-          - ubuntu-24.04
-          - macos-15-intel
+        include:
+          - name: Linux x64
+            runner: ubuntu-24.04
+          - name: Linux arm64
+            runner: ubuntu-24.04-arm
+          - name: Windows x64
+            runner: windows-2025
+          - name: macOS x64
+            runner: macos-15-intel
     steps:
       - name: Check out current package
         uses: actions/checkout@v6

@@ -76,11 +76,13 @@ without touching configuration or state stored outside the package directory.
 The package defines no install or uninstall lifecycle scripts.
 
 The manual `Tier 1 package qualification` workflow pins Node `24.14.0` and
-runner labels `windows-2025`, `ubuntu-24.04`, and `macos-15-intel`. Each cell
-runs the full suite, then installs the pinned `0.16.0` package, upgrades to
-`0.17.0`, rolls back, and upgrades again while proving external state remains
-unchanged. The workflow uses `workflow_dispatch` only, so pushes do not start
-hosted runners automatically.
+qualifies Linux x64, Linux arm64, Windows x64, and macOS x64. GitHub's concrete
+Linux runner images are Ubuntu 24.04 for x64 and arm64; this is runner evidence,
+not an Ubuntu-only runtime restriction. Each cell runs the full suite, then
+installs the pinned `0.16.0` package, upgrades to `0.17.0`, rolls back, and
+upgrades again while proving external state remains unchanged. The workflow
+uses `workflow_dispatch` only, so pushes do not start hosted runners
+automatically.
 
 Before uninstalling, print the exact package command, preserved paths, and
 optional purge arguments:

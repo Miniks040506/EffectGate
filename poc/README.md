@@ -83,8 +83,10 @@ node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp skill serve -
 Package qualification is defined in
 `.github/workflows/tier1-package.yml`. It is manual-only and runs the full
 suite plus the pinned `0.16.0` → `0.17.0` → `0.16.0` → `0.17.0` package
-rehearsal on Windows 2025, Ubuntu 24.04, and macOS 15 Intel. Each cell emits a
-machine-readable evidence line and requires external state to remain unchanged.
+rehearsal on Linux x64, Linux arm64, Windows x64, and macOS x64. The concrete
+Linux runner images use Ubuntu 24.04, but the Node package has no Ubuntu-only
+runtime dependency. Each cell emits a machine-readable evidence line and
+requires external state to remain unchanged.
 
 Create and inspect that configuration through the non-interactive operator
 commands:
