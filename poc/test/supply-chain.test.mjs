@@ -130,6 +130,10 @@ test("Tier-1 performance workflow is manual and evidence-first", () => {
   }
   assert.match(source, /--repetitions 100\b/u);
   assert.match(source, /--samples 100\b/u);
+  assert.match(
+    source,
+    /performance-gate\.mjs --input \S+ --latency-profile \S+/u
+  );
   assert.match(source, /continue-on-error: true/u);
   const upload = source.indexOf("name: Upload complete evidence");
   const enforce = source.indexOf("name: Enforce performance target");

@@ -61,7 +61,7 @@ jobs:
         id: qualification
         continue-on-error: true
         working-directory: poc
-        run: node src/benchmark/performance-gate.mjs --input performance-evidence/paired.jsonl > performance-evidence/qualification.json
+        run: node src/benchmark/performance-gate.mjs --input performance-evidence/paired.jsonl --latency-profile performance-evidence/latency-profile.json > performance-evidence/qualification.json
 
       - name: Print qualification summaries
         working-directory: poc
