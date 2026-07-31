@@ -637,6 +637,8 @@ The dependency-free suite directly verifies:
   retained/sanitized runner failures, and evidence no-overwrite protection;
 - warm small-read task timing plus fail-closed repetition, success-delta, and
   typed median-overhead qualification;
+- a manual, exact-Node Tier-1 performance matrix that retains complete paired,
+  statistical, profiler, and failed-gate evidence before enforcing the verdict;
 - fail-closed exposure recommendations with measured quality gates, explicit
   review requirements, no policy mutation, and no direct-bypass suggestion;
 - phase/Capsule-bound protected-intent preparation, exact approval admission,

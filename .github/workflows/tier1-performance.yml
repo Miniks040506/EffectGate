@@ -1,0 +1,80 @@
+name: Tier 1 performance qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  performance:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x64
+            name: Linux x64
+            runner: ubuntu-24.04
+          - id: linux-arm64
+            name: Linux arm64
+            runner: ubuntu-24.04-arm
+          - id: windows-x64
+            name: Windows x64
+            runner: windows-2025
+          - id: macos-arm64
+            name: macOS arm64
+            runner: macos-15
+    steps:
+      - name: Check out qualification source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Use exact Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.14.0
+          package-manager-cache: false
+
+      - name: Record toolchain
+        working-directory: poc
+        run: |
+          node --version
+          npm --version
+
+      - name: Run 100 paired repetitions
+        working-directory: poc
+        run: node src/benchmark/fixture-runner.mjs --output performance-evidence/paired.jsonl --ledger-directory performance-evidence/ledgers --repetitions 100 --seed eg-047b-${{ matrix.id }}
+
+      - name: Generate statistical report
+        working-directory: poc
+        run: node src/benchmark/statistical-report.mjs --input performance-evidence/paired.jsonl --output performance-evidence/report.json
+
+      - name: Profile long-lived request paths
+        working-directory: poc
+        run: node src/benchmark/latency-profile.mjs --samples 100 > performance-evidence/latency-profile.json
+
+      - name: Evaluate performance target
+        id: qualification
+        continue-on-error: true
+        working-directory: poc
+        run: node src/benchmark/performance-gate.mjs --input performance-evidence/paired.jsonl > performance-evidence/qualification.json
+
+      - name: Print qualification summaries
+        working-directory: poc
+        run: node -e "const fs=require('node:fs'); for (const file of ['performance-evidence/latency-profile.json','performance-evidence/qualification.json']) process.stdout.write(fs.readFileSync(file));"
+
+      - name: Upload complete evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: effectgate-performance-${{ matrix.id }}-${{ github.sha }}
+          path: poc/performance-evidence
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce performance target
+        if: ${{ steps.qualification.outcome == 'failure' }}
+        run: node -e "process.stderr.write('EffectGate small-read performance qualification failed.\n'); process.exit(1)"

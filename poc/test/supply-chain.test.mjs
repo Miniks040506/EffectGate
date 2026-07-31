@@ -24,6 +24,10 @@ const REVIEWED_ACTIONS = new Map([
   [
     "actions/setup-node",
     "249970729cb0ef3589644e2896645e5dc5ba9c38"
+  ],
+  [
+    "actions/upload-artifact",
+    "ea165f8d65b6e75b540449e92b4886f43607fa02"
   ]
 ]);
 
@@ -86,7 +90,11 @@ test("runtime supply chain is dependency-free and action-pinned", () => {
   }
   assert.deepEqual(
     Object.fromEntries(actionCounts),
-    { "actions/checkout": 2, "actions/setup-node": 1 }
+    {
+      "actions/checkout": 3,
+      "actions/setup-node": 2,
+      "actions/upload-artifact": 1
+    }
   );
 
   process.stdout.write(`${JSON.stringify({
@@ -94,8 +102,36 @@ test("runtime supply chain is dependency-free and action-pinned", () => {
     runtime_files: runtimeFiles.length,
     runtime_imports: importCount,
     declared_dependencies: 0,
-    pinned_action_references: 3,
+    pinned_action_references: 6,
     mutable_action_references: 0,
     dependency_high_findings: 0
   })}\n`);
+});
+
+test("Tier-1 performance workflow is manual and evidence-first", () => {
+  const source = readFileSync(
+    join(
+      REPOSITORY_ROOT,
+      ".github",
+      "workflows",
+      "tier1-performance.yml"
+    ),
+    "utf8"
+  );
+  assert.match(source, /^on:\r?\n  workflow_dispatch:\s*$/mu);
+  assert.doesNotMatch(source, /^\s+(?:push|pull_request):/mu);
+  for (const runner of [
+    "ubuntu-24.04",
+    "ubuntu-24.04-arm",
+    "windows-2025",
+    "macos-15"
+  ]) {
+    assert.match(source, new RegExp(`runner: ${runner}$`, "mu"));
+  }
+  assert.match(source, /--repetitions 100\b/u);
+  assert.match(source, /--samples 100\b/u);
+  assert.match(source, /continue-on-error: true/u);
+  const upload = source.indexOf("name: Upload complete evidence");
+  const enforce = source.indexOf("name: Enforce performance target");
+  assert.ok(upload > 0 && enforce > upload);
 });
