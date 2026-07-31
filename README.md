@@ -692,6 +692,7 @@ The dependency-free suite directly verifies:
 - malformed and oversized frame rejection with parser recovery;
 - seeded JSONL/MCP boundary mutation evidence with an exact replay seed;
 - seeded protected-effect binding, policy, and argument mutation evidence;
+- zero third-party runtime dependencies and exact reviewed Action commits;
 - invalid request-ID sanitization without reflecting hidden values;
 - direct and invented backend-name rejection;
 - fixture admission plus read-only/open-world deny cases;
