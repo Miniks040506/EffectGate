@@ -96,6 +96,12 @@ CycloneDX SBOM, `provenance.json`, and `SHA256SUMS`. Independent builds on the
 same source and Node/npm toolchain must produce byte-identical tarballs, SBOMs,
 and provenance.
 
+The manual `Tier 1 release reproducibility` workflow builds that bundle on
+Linux x64, Linux arm64, Windows x64, and macOS arm64, re-hashes every output,
+checks its source-bound provenance and checksum manifest, and retains a single
+qualification report only when all four bundles are byte-identical. Like the
+other Tier-1 workflows, it runs only after an explicit manual dispatch.
+
 Before uninstalling, print the exact package command, preserved paths, and
 optional purge arguments:
 

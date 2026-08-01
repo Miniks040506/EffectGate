@@ -28,6 +28,10 @@ const REVIEWED_ACTIONS = new Map([
   [
     "actions/upload-artifact",
     "b7c566a772e6b6bfb58ed0dc250532a479d7789f"
+  ],
+  [
+    "actions/download-artifact",
+    "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
   ]
 ]);
 
@@ -91,9 +95,10 @@ test("runtime supply chain is dependency-free and action-pinned", () => {
   assert.deepEqual(
     Object.fromEntries(actionCounts),
     {
-      "actions/checkout": 3,
-      "actions/setup-node": 2,
-      "actions/upload-artifact": 1
+      "actions/checkout": 5,
+      "actions/setup-node": 4,
+      "actions/upload-artifact": 3,
+      "actions/download-artifact": 1
     }
   );
 
@@ -102,7 +107,7 @@ test("runtime supply chain is dependency-free and action-pinned", () => {
     runtime_files: runtimeFiles.length,
     runtime_imports: importCount,
     declared_dependencies: 0,
-    pinned_action_references: 6,
+    pinned_action_references: 13,
     mutable_action_references: 0,
     dependency_high_findings: 0
   })}\n`);
@@ -138,4 +143,30 @@ test("Tier-1 performance workflow is manual and evidence-first", () => {
   const upload = source.indexOf("name: Upload complete evidence");
   const enforce = source.indexOf("name: Enforce performance target");
   assert.ok(upload > 0 && enforce > upload);
+});
+
+test("Tier-1 release workflow compares four source-bound bundles", () => {
+  const source = readFileSync(
+    join(
+      REPOSITORY_ROOT,
+      ".github",
+      "workflows",
+      "tier1-release.yml"
+    ),
+    "utf8"
+  );
+  assert.match(source, /^on:\r?\n  workflow_dispatch:\s*$/mu);
+  assert.doesNotMatch(source, /^\s+(?:push|pull_request):/mu);
+  for (const runner of [
+    "ubuntu-24.04",
+    "ubuntu-24.04-arm",
+    "windows-2025",
+    "macos-15"
+  ]) {
+    assert.match(source, new RegExp(`runner: ${runner}$`, "mu"));
+  }
+  assert.match(source, /release:bundle -- --output \S+ --source-commit/u);
+  assert.match(source, /release-compare\.mjs --input \S+ --source-commit/u);
+  assert.match(source, /needs: build/u);
+  assert.match(source, /name: Upload release qualification/u);
 });

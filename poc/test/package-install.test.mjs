@@ -16,6 +16,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { createReleaseBundle } from "../src/release/release-bundle.mjs";
+import { compareReleaseBundles } from "../src/release/release-compare.mjs";
 
 const PACKAGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -249,6 +250,17 @@ test("release bundle is deterministic and source-bound", () => {
         `${first.provenance_digest.slice("sha256:".length)}` +
         "  provenance.json\n"
     );
+    const qualification = compareReleaseBundles({
+      input: root,
+      sourceCommit: commit,
+      expectedBundles: 2
+    });
+    assert.equal(qualification.verdict, "pass");
+    assert.equal(qualification.bundle_count, 2);
+    assert.equal(
+      qualification.digests.tarball_sha256,
+      first.provenance.subject.sha256
+    );
     assert.throws(
       () => createReleaseBundle({ output: first.output, sourceCommit: commit }),
       /destination already exists/u
@@ -259,6 +271,15 @@ test("release bundle is deterministic and source-bound", () => {
         sourceCommit: "not-a-commit"
       }),
       TypeError
+    );
+    writeFileSync(join(second.output, "SHA256SUMS"), "tampered\n");
+    assert.throws(
+      () => compareReleaseBundles({
+        input: root,
+        sourceCommit: commit,
+        expectedBundles: 2
+      }),
+      /digest verification failed/u
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
