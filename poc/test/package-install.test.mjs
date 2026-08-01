@@ -188,8 +188,12 @@ test("release bundle is deterministic and source-bound", () => {
       output: join(root, "second"),
       sourceCommit: commit
     });
-    const files = ["SHA256SUMS", first.provenance.subject.filename,
-      "provenance.json"];
+    const files = [
+      "SHA256SUMS",
+      first.provenance.subject.filename,
+      "provenance.json",
+      "sbom.cdx.json"
+    ];
     assert.deepEqual(readdirSync(first.output).sort(), files.sort());
     const firstTarball = join(
       first.output,
@@ -204,11 +208,44 @@ test("release bundle is deterministic and source-bound", () => {
       readFileSync(join(first.output, "provenance.json"), "utf8"),
       readFileSync(join(second.output, "provenance.json"), "utf8")
     );
+    assert.equal(
+      readFileSync(join(first.output, "sbom.cdx.json"), "utf8"),
+      readFileSync(join(second.output, "sbom.cdx.json"), "utf8")
+    );
     assert.equal(first.provenance.source.commit_sha, commit);
-    assert.equal(first.provenance.subject.sha256, `sha256:${sha256(firstTarball)}`);
+    assert.equal(
+      first.provenance.subject.sha256,
+      `sha256:${sha256(firstTarball)}`
+    );
+    const sbomFile = join(first.output, "sbom.cdx.json");
+    const sbom = JSON.parse(readFileSync(sbomFile, "utf8"));
+    assert.equal(sbom.bomFormat, "CycloneDX");
+    assert.equal(sbom.specVersion, "1.5");
+    assert.equal(Object.hasOwn(sbom, "serialNumber"), false);
+    assert.equal(Object.hasOwn(sbom.metadata, "timestamp"), false);
+    assert.equal(sbom.metadata.component.name, "effectgate-preview");
+    assert.deepEqual(sbom.components, []);
+    assert.deepEqual(sbom.dependencies, [{
+      ref: `effectgate-preview@${first.provenance.subject.version}`,
+      dependsOn: []
+    }]);
+    assert.deepEqual(sbom.metadata.component.hashes, [{
+      alg: "SHA-256",
+      content: sha256(firstTarball)
+    }]);
+    assert.deepEqual(sbom.metadata.component.properties.slice(-2), [
+      { name: "dev.effectgate/source-commit", value: commit },
+      {
+        name: "dev.effectgate/package-file",
+        value: first.provenance.subject.filename
+      }
+    ]);
+    assert.equal(first.sbom_digest, `sha256:${sha256(sbomFile)}`);
+    assert.equal(first.provenance.sbom.sha256, first.sbom_digest);
     assert.equal(
       readFileSync(join(first.output, "SHA256SUMS"), "utf8"),
       `${sha256(firstTarball)}  ${first.provenance.subject.filename}\n` +
+        `${sha256(sbomFile)}  sbom.cdx.json\n` +
         `${first.provenance_digest.slice("sha256:".length)}` +
         "  provenance.json\n"
     );

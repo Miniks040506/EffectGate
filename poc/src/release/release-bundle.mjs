@@ -37,7 +37,7 @@ function runNpm(args, cwd, npmExecPath) {
     }
   });
   if (result.error !== undefined || result.status !== 0) {
-    throw new Error(result.stderr.trim() || "npm pack failed");
+    throw new Error(result.stderr.trim() || "npm command failed");
   }
   return result.stdout.trim();
 }
@@ -91,6 +91,38 @@ export function createReleaseBundle({
     }
     const tarball = join(destination, packed[0].filename);
     const tarballDigest = sha256(tarball);
+    const sbom = JSON.parse(runNpm([
+      "sbom",
+      "--sbom-format=cyclonedx"
+    ], packageRoot, npmExecPath));
+    if (
+      sbom.bomFormat !== "CycloneDX" ||
+      sbom.specVersion !== "1.5" ||
+      typeof sbom.metadata?.component !== "object" ||
+      sbom.metadata.component.version !== manifest.version ||
+      !Array.isArray(sbom.metadata.component.properties) ||
+      !Array.isArray(sbom.components) ||
+      sbom.components.length !== 0 ||
+      !Array.isArray(sbom.dependencies) ||
+      sbom.dependencies.length !== 1 ||
+      !Array.isArray(sbom.dependencies[0].dependsOn) ||
+      sbom.dependencies[0].dependsOn.length !== 0
+    ) {
+      throw new Error("invalid dependency-free npm SBOM");
+    }
+    delete sbom.serialNumber;
+    delete sbom.metadata.timestamp;
+    sbom.metadata.component.name = manifest.name;
+    sbom.metadata.component.hashes = [
+      { alg: "SHA-256", content: tarballDigest }
+    ];
+    sbom.metadata.component.properties.push(
+      { name: "dev.effectgate/source-commit", value: sourceCommit },
+      { name: "dev.effectgate/package-file", value: packed[0].filename }
+    );
+    const sbomFile = join(destination, "sbom.cdx.json");
+    writeFileSync(sbomFile, `${canonicalJson(sbom)}\n`, { flag: "wx" });
+    const sbomDigest = sha256(sbomFile);
     const provenance = {
       kind: "effectgate_release_provenance",
       schema_version: "1.0.0",
@@ -105,6 +137,12 @@ export function createReleaseBundle({
         size_bytes: statSync(tarball).size,
         sha256: `sha256:${tarballDigest}`,
         npm_integrity: packed[0].integrity
+      },
+      sbom: {
+        filename: "sbom.cdx.json",
+        format: sbom.bomFormat,
+        spec_version: sbom.specVersion,
+        sha256: `sha256:${sbomDigest}`
       },
       builder: {
         node_version: process.version,
@@ -126,12 +164,14 @@ export function createReleaseBundle({
     writeFileSync(
       join(destination, "SHA256SUMS"),
       `${tarballDigest}  ${packed[0].filename}\n` +
+        `${sbomDigest}  sbom.cdx.json\n` +
         `${provenanceDigest}  provenance.json\n`,
       { flag: "wx" }
     );
     return deepFreeze({
       output: destination,
       provenance,
+      sbom_digest: `sha256:${sbomDigest}`,
       provenance_digest: `sha256:${provenanceDigest}`
     });
   } catch (error) {

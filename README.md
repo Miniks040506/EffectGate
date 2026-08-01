@@ -91,9 +91,10 @@ that does not already exist:
 npm --prefix .\poc run release:bundle -- --output .\release-candidate --source-commit FULL_40_CHARACTER_GIT_SHA
 ```
 
-The offline command writes the exact npm tarball, `provenance.json`, and
-`SHA256SUMS`. Independent builds on the same source and Node/npm toolchain must
-produce byte-identical tarballs and provenance.
+The offline command writes the exact npm tarball, a normalized dependency-free
+CycloneDX SBOM, `provenance.json`, and `SHA256SUMS`. Independent builds on the
+same source and Node/npm toolchain must produce byte-identical tarballs, SBOMs,
+and provenance.
 
 Before uninstalling, print the exact package command, preserved paths, and
 optional purge arguments:
