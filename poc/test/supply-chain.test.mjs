@@ -27,7 +27,7 @@ const REVIEWED_ACTIONS = new Map([
   ],
   [
     "actions/upload-artifact",
-    "ea165f8d65b6e75b540449e92b4886f43607fa02"
+    "b7c566a772e6b6bfb58ed0dc250532a479d7789f"
   ]
 ]);
 
