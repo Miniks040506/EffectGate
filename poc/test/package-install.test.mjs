@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync
@@ -12,6 +14,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+
+import { createReleaseBundle } from "../src/release/release-bundle.mjs";
 
 const PACKAGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -39,6 +43,10 @@ function runNpm(args, cwd, cache) {
   assert.equal(result.error, undefined);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return result.stdout;
+}
+
+function sha256(file) {
+  return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
 test("packed CLI lifecycle preserves external state", () => {
@@ -163,6 +171,58 @@ test("packed CLI lifecycle preserves external state", () => {
     assert.equal(existsSync(installedRoot), false);
     assert.equal(existsSync(bin), false);
     assert.equal(readFileSync(stateFile, "utf8"), state);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("release bundle is deterministic and source-bound", () => {
+  const root = mkdtempSync(join(tmpdir(), "effectgate-release-"));
+  const commit = "a".repeat(40);
+  try {
+    const first = createReleaseBundle({
+      output: join(root, "first"),
+      sourceCommit: commit
+    });
+    const second = createReleaseBundle({
+      output: join(root, "second"),
+      sourceCommit: commit
+    });
+    const files = ["SHA256SUMS", first.provenance.subject.filename,
+      "provenance.json"];
+    assert.deepEqual(readdirSync(first.output).sort(), files.sort());
+    const firstTarball = join(
+      first.output,
+      first.provenance.subject.filename
+    );
+    const secondTarball = join(
+      second.output,
+      second.provenance.subject.filename
+    );
+    assert.equal(sha256(firstTarball), sha256(secondTarball));
+    assert.equal(
+      readFileSync(join(first.output, "provenance.json"), "utf8"),
+      readFileSync(join(second.output, "provenance.json"), "utf8")
+    );
+    assert.equal(first.provenance.source.commit_sha, commit);
+    assert.equal(first.provenance.subject.sha256, `sha256:${sha256(firstTarball)}`);
+    assert.equal(
+      readFileSync(join(first.output, "SHA256SUMS"), "utf8"),
+      `${sha256(firstTarball)}  ${first.provenance.subject.filename}\n` +
+        `${first.provenance_digest.slice("sha256:".length)}` +
+        "  provenance.json\n"
+    );
+    assert.throws(
+      () => createReleaseBundle({ output: first.output, sourceCommit: commit }),
+      /destination already exists/u
+    );
+    assert.throws(
+      () => createReleaseBundle({
+        output: join(root, "invalid"),
+        sourceCommit: "not-a-commit"
+      }),
+      TypeError
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

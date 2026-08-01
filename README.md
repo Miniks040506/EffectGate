@@ -84,6 +84,17 @@ upgrades again while proving external state remains unchanged. The workflow
 uses `workflow_dispatch` only, so pushes do not start hosted runners
 automatically.
 
+Create a source-bound release bundle from a clean checkout with an output path
+that does not already exist:
+
+```powershell
+npm --prefix .\poc run release:bundle -- --output .\release-candidate --source-commit FULL_40_CHARACTER_GIT_SHA
+```
+
+The offline command writes the exact npm tarball, `provenance.json`, and
+`SHA256SUMS`. Independent builds on the same source and Node/npm toolchain must
+produce byte-identical tarballs and provenance.
+
 Before uninstalling, print the exact package command, preserved paths, and
 optional purge arguments:
 
