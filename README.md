@@ -165,6 +165,10 @@ configuration may instead bind one exact digest-pinned stdio process.
 | Errors | Backend errors and stderr content are not passed through verbatim |
 | Flow control | Client input and fixture output pause while downstream writables are backpressured |
 
+The commit-bound [EG-047 Tier-1 performance evidence](poc/evidence/tier1-performance-6c898e2.json)
+records four passing platform verdicts, qualification digests, and hosted
+artifact digests for the qualified `6c898e2` source revision.
+
 An admitted tool must declare all four metadata conditions:
 
 ```text

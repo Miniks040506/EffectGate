@@ -1,0 +1,104 @@
+{
+  "kind": "effectgate_tier1_performance_qualification",
+  "schema_version": "1.0.0",
+  "task_id": "EG-047",
+  "evidence_state": "pass",
+  "source": {
+    "repository": "Miniks040506/EffectGate",
+    "qualified_commit_sha": "6c898e2da60944423b5fe7878e51fad192398ab8",
+    "workflow": ".github/workflows/tier1-performance.yml",
+    "workflow_run_id": 30704911679,
+    "workflow_run_attempt": 1,
+    "workflow_url": "https://github.com/Miniks040506/EffectGate/actions/runs/30704911679",
+    "node_version": "v24.14.0",
+    "started_at": "2026-08-01T14:58:46Z",
+    "completed_at": "2026-08-01T15:00:12Z"
+  },
+  "thresholds": {
+    "minimum_repetitions": 30,
+    "minimum_latency_profile_samples": 30,
+    "maximum_task_success_delta_points": 2,
+    "maximum_proxy_added_median_latency_ms": 1,
+    "maximum_proxy_added_p95_latency_ms": 2
+  },
+  "platforms": [
+    {
+      "id": "linux-x64",
+      "runner": "ubuntu-24.04",
+      "machine_class": "linux-x64",
+      "verdict": "pass",
+      "repetitions": 100,
+      "latency_profile_samples": 100,
+      "task_success_rate": 1,
+      "proxy_added_median_latency_ms": 0.392003,
+      "proxy_added_p95_latency_ms": 0.515014,
+      "qualification_evidence_digest": "sha256:a05c622efb787bf60ccc55673e0a4926870f1c77e48539a9af9c8c413a4183c9",
+      "artifact": {
+        "id": 8820015418,
+        "name": "effectgate-performance-linux-x64-6c898e2da60944423b5fe7878e51fad192398ab8",
+        "digest": "sha256:20db216f86f5671f58001788057e89400e7fa6110932d86fab18d8b26f84875e",
+        "expires_at": "2026-08-31T14:59:32Z"
+      }
+    },
+    {
+      "id": "linux-arm64",
+      "runner": "ubuntu-24.04-arm",
+      "machine_class": "linux-arm64",
+      "verdict": "pass",
+      "repetitions": 100,
+      "latency_profile_samples": 100,
+      "task_success_rate": 1,
+      "proxy_added_median_latency_ms": 0.283308,
+      "proxy_added_p95_latency_ms": 0.513707,
+      "qualification_evidence_digest": "sha256:840b1c1a6159051e1edbe5fc52b451294e1fcf4bf436f6de1cee3f74d2946a0d",
+      "artifact": {
+        "id": 8820014877,
+        "name": "effectgate-performance-linux-arm64-6c898e2da60944423b5fe7878e51fad192398ab8",
+        "digest": "sha256:5bfae36ee7b1fe9b70a2b50b7ea2ce3cb41e781d2a1035dce2d3ab7a7003b339",
+        "expires_at": "2026-08-31T14:59:29Z"
+      }
+    },
+    {
+      "id": "windows-x64",
+      "runner": "windows-2025",
+      "machine_class": "win32-x64",
+      "verdict": "pass",
+      "repetitions": 100,
+      "latency_profile_samples": 100,
+      "task_success_rate": 1,
+      "proxy_added_median_latency_ms": 0.31765,
+      "proxy_added_p95_latency_ms": 0.18223,
+      "qualification_evidence_digest": "sha256:3acb304a98c5339b80a569b376efdc808e3c0ff7b56bc78b873f611b5a9dd7b2",
+      "artifact": {
+        "id": 8820021423,
+        "name": "effectgate-performance-windows-x64-6c898e2da60944423b5fe7878e51fad192398ab8",
+        "digest": "sha256:4adf8e723e6aa69c0aa877d563d391e9a54cac03c1fabb3766d44dc61f56e7b9",
+        "expires_at": "2026-08-31T15:00:07Z"
+      }
+    },
+    {
+      "id": "macos-arm64",
+      "runner": "macos-15",
+      "machine_class": "darwin-arm64",
+      "verdict": "pass",
+      "repetitions": 100,
+      "latency_profile_samples": 100,
+      "task_success_rate": 1,
+      "proxy_added_median_latency_ms": 0.245229,
+      "proxy_added_p95_latency_ms": 0.502135,
+      "qualification_evidence_digest": "sha256:89aa812157a7b1e6e81374e7f29a3cf26c794147ad5c0044f36f015bb342a4a0",
+      "artifact": {
+        "id": 8820016672,
+        "name": "effectgate-performance-macos-arm64-6c898e2da60944423b5fe7878e51fad192398ab8",
+        "digest": "sha256:86ba31eda2fea881cfa642db946b59a3503a65980b85839c6052bb440cf08f32",
+        "expires_at": "2026-08-31T14:59:38Z"
+      }
+    }
+  ],
+  "sign_off": {
+    "decision": "pass",
+    "basis": "all_tier1_cells_passed",
+    "automated": true,
+    "human_release_approval_required": true
+  }
+}
