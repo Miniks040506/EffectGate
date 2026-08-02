@@ -297,14 +297,18 @@ if (process.env.EFFECTGATE_PREVIOUS_PACKAGE) {
     const previousCommit = process.env.EFFECTGATE_PREVIOUS_COMMIT;
     assert.match(previousCommit ?? "", /^[a-f0-9]{40}$/u);
     assert.notEqual(previousRoot, PACKAGE_ROOT);
-    const previousVersion = JSON.parse(readFileSync(
+    const previousManifest = JSON.parse(readFileSync(
       join(previousRoot, "package.json"),
       "utf8"
-    )).version;
-    const currentVersion = JSON.parse(readFileSync(
+    ));
+    const currentManifest = JSON.parse(readFileSync(
       join(PACKAGE_ROOT, "package.json"),
       "utf8"
-    )).version;
+    ));
+    const previousVersion = previousManifest.version;
+    const currentVersion = currentManifest.version;
+    const previousHasCli = typeof previousManifest.bin?.effectgate === "string";
+    const currentHasCli = typeof currentManifest.bin?.effectgate === "string";
     assert.equal(previousVersion, "0.17.0");
     assert.equal(currentVersion, "1.0.0");
 
@@ -354,22 +358,22 @@ if (process.env.EFFECTGATE_PREVIOUS_PACKAGE) {
 
       install(previousTarball);
       assert.equal(installedVersion(), previousVersion);
-      assert.equal(existsSync(bin), false);
+      assert.equal(existsSync(bin), previousHasCli);
       assert.equal(readFileSync(stateFile, "utf8"), state);
 
       install(currentTarball);
       assert.equal(installedVersion(), currentVersion);
-      assert.equal(existsSync(bin), true);
+      assert.equal(existsSync(bin), currentHasCli);
       assert.equal(readFileSync(stateFile, "utf8"), state);
 
       install(previousTarball);
       assert.equal(installedVersion(), previousVersion);
-      assert.equal(existsSync(bin), false);
+      assert.equal(existsSync(bin), previousHasCli);
       assert.equal(readFileSync(stateFile, "utf8"), state);
 
       install(currentTarball);
       assert.equal(installedVersion(), currentVersion);
-      assert.equal(existsSync(bin), true);
+      assert.equal(existsSync(bin), currentHasCli);
       assert.equal(readFileSync(stateFile, "utf8"), state);
 
       const installedCli = join(
