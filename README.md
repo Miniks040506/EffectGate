@@ -102,6 +102,13 @@ checks its source-bound provenance and checksum manifest, and retains a single
 qualification report only when all four bundles are byte-identical. Like the
 other Tier-1 workflows, it runs only after an explicit manual dispatch.
 
+After all ten stable gates produce source-bound `pass` evidence, compile the
+canonical RC manifest with `npm --prefix .\poc run release:candidate -- --input
+.\release-input.json > release-candidate.json`. The manifest binds the exact
+package, SBOM, provenance and evidence digests. Stable sign-off requires valid
+Ed25519 approvals for Product, Technical, Security, QA and Release roles over
+that single candidate digest.
+
 Before uninstalling, print the exact package command, preserved paths, and
 optional purge arguments:
 

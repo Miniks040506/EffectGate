@@ -257,6 +257,9 @@ test("release bundle is deterministic and source-bound", () => {
     });
     assert.equal(qualification.verdict, "pass");
     assert.equal(qualification.bundle_count, 2);
+    assert.equal(qualification.package_name, "effectgate-preview");
+    assert.equal(qualification.package_version, "0.17.0");
+    assert.equal(qualification.package_license, "Apache-2.0");
     assert.equal(
       qualification.digests.tarball_sha256,
       first.provenance.subject.sha256
