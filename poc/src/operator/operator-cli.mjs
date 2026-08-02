@@ -406,7 +406,7 @@ async function doctor(options) {
     config.approval_mode === "cli" ? "pass" : "warn",
     config.approval_mode === "cli"
       ? "single-use local CLI approval"
-      : "not configured in preview"
+      : "local CLI approval not configured"
   );
   add("token_counter", "pass", "built-in byte proxy");
   const status = checks.some((check) => check.status === "fail")

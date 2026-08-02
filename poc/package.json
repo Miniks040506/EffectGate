@@ -1,7 +1,7 @@
 {
   "name": "effectgate-preview",
-  "version": "0.17.0",
-  "description": "Evidence-gated MCP context and effect control preview",
+  "version": "1.0.0",
+  "description": "Evidence-gated MCP context and effect control runtime",
   "license": "Apache-2.0",
   "type": "module",
   "bin": {

@@ -2,7 +2,7 @@
 
 ## Project status
 
-EffectGate is currently a Phase 1 preview. It includes a bounded,
+EffectGate 1.0 includes a bounded,
 filesystem-backed Context View path, a reviewed read-only third-party stdio
 binding, deterministic high-signal credential redaction, conservative
 opaque-content withholding, and volatile session metadata. A separate
@@ -12,17 +12,18 @@ fuzzing checks parser recovery, exact policy binding, and strict contract
 admission. Real-process qualification checks oversized-frame recovery,
 pending-request saturation, and backend-crash cleanup without reflecting
 request data. The runtime has no third-party package imports, and CI Actions
-are pinned to reviewed GitHub-verified commits. It is not production-ready and
-must not be used to protect real tool effects or admit untrusted or
-write-capable external backends.
+are pinned to reviewed GitHub-verified commits. EffectGate is not an OS sandbox
+or general-purpose secret-protection boundary. Treat an exact build as stable
+only when its source-bound release evidence and five-role sign-off verify;
+unreviewed or undeclared external backends remain outside the trust boundary.
 
 ## Supported versions
 
 | Version | Security support |
 |---|---|
+| Exact signed 1.0.x releases | Security fixes through the latest 1.0.x patch |
 | Latest commit on `main` | Confirmed issues addressed on a best-effort basis |
-| Older commits, forks, and modified builds | Not supported |
-| Stable releases | None published |
+| Older releases, unsigned builds, forks, and modified builds | Not supported |
 
 ## Report a vulnerability privately
 
@@ -84,7 +85,7 @@ out of scope until those features exist.
 
 ## Current trust boundary
 
-The current preview assumes:
+The current runtime assumes:
 
 - the operating-system user, local Node.js runtime, and checkout are trusted;
 - only bundled deterministic fixtures, the exact built-in memory-patch
@@ -96,7 +97,7 @@ The current preview assumes:
 - tool annotations are admission inputs, not proof that an unknown backend is
   safe.
 
-## Known preview limitations
+## Known limitations
 
 - The fixture child runs with the current user's operating-system permissions;
   EffectGate is not an OS sandbox.
@@ -138,11 +139,11 @@ The current preview assumes:
   databases read-only. Doctor's reviewed-backend reachability check performs
   only initialization and tool-contract discovery through a no-state fixture
   mode; it cannot invoke the effect tool or create the backend database.
-- Redaction is a versioned preview heuristic limited to assignment values,
+- Redaction is a versioned heuristic limited to assignment values,
   bearer tokens, and selected token prefixes. It is not comprehensive
   secret/PII detection or protection. More than 4,096 detected spans fails
   closed.
-- Opacity screening is a deterministic, integer-only preview heuristic over a
+- Opacity screening is a deterministic, integer-only heuristic over a
   maximum 1 MiB artifact. It may withhold generated, minified, or encoded text
   that is not secret. It does not identify encryption, replace redaction, or
   prove that unflagged content is safe. It checks selected private-key markers,
@@ -161,7 +162,7 @@ The current preview assumes:
   of the configured privacy partition; the raw partition label is not used as
   a path. The default Context Store partition is session-specific. Explicitly
   sharing a partition between processes remains a trusted single-writer
-  preview configuration without reference-counted deletion.
+  configuration without reference-counted deletion.
 - File data is synced before same-volume rename, but directory durability,
   shared-writer locking, durable metadata, and crash qualification are not yet
   production claims. Network filesystems are unsupported.
@@ -174,7 +175,7 @@ The current preview assumes:
   common-input digests rather than prompt, backend, or rubric content. Runner
   failure messages are discarded. The caller and its `runProfile` callback are
   trusted; the harness is not a sandbox for external model or host adapters.
-  The bundled adapter launches only the fixture and preview proxy and measures
+  The bundled adapter launches only the fixture and EffectGate proxy and measures
   tool schema/result byte proxies—not host total session usage.
 - Compact mode admits only tools carrying all four safe-read annotations and
   denies direct typed-name calls. Its generic call envelope does not validate
@@ -184,15 +185,15 @@ The current preview assumes:
 - Native-deferral metadata requires a local evidence file no larger than 16 KiB,
   an unexpired `pass` state, observed-enabled Tool Search, and exact client
   name/version/build digest supplied at initialization. The file path and raw
-  configuration are not model-visible. This preview assertion is not
+  configuration are not model-visible. This assertion is not
   authenticated client identity. EG-014B separately qualifies Tool Search
   behavior for the exact Claude Code 2.1.220 binary recorded in
   `poc/evidence/`; it does not extend trust to other builds.
-- Artifact identifiers expose a SHA-256 content digest. Do not use this preview
+- Artifact identifiers expose a SHA-256 content digest. Do not use EffectGate
   with secret-bearing or attacker-controlled real-world results.
 - Cursor envelopes use HMAC-SHA256 and bind artifact, source view, next
   position, operation digest, budget, binding digests, expiry, and nonce to
-  process-local replay state. The preview uses a local-user label, random
+  process-local replay state. EffectGate uses a local-user label, random
   process/client and session identifiers, and a fixed read-only policy version;
   it does not authenticate an OS principal or host client and has no durable
   policy-generation binding.

@@ -33,9 +33,9 @@ test("release candidate binds complete evidence and all role approvals", () => {
     bundle_count: 4,
     bundle_names: ["linux-x64", "linux-arm64", "windows-x64", "macos-arm64"],
     package_name: "effectgate-preview",
-    package_version: "1.0.0-rc.1",
+    package_version: "1.0.0",
     package_license: "Apache-2.0",
-    package_filename: "effectgate-preview-1.0.0-rc.1.tgz",
+    package_filename: "effectgate-preview-1.0.0.tgz",
     digests: {
       tarball_sha256: sha256("package"),
       sbom_sha256: sha256("sbom"),

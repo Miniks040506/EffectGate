@@ -141,7 +141,7 @@ export class SkillMcp {
         return error(
           id,
           -32602,
-          `This preview supports MCP ${MCP_VERSION} only.`
+          `This EffectGate build supports MCP ${MCP_VERSION} only.`
         );
       }
       this.#lifecycle = "awaiting_initialized";

@@ -6,8 +6,8 @@
 
 **Design goal:** Spend tokens on reasoning, not tool noise.
 
-[![Phase](https://img.shields.io/badge/status-Phase%201%20preview-7c3aed?style=flat-square)](#current-boundary)
-[![Version](https://img.shields.io/badge/version-0.17.0-0f766e?style=flat-square)](poc/package.json)
+[![Status](https://img.shields.io/badge/status-evidence--gated-7c3aed?style=flat-square)](#current-boundary)
+[![Version](https://img.shields.io/badge/version-1.0.0-0f766e?style=flat-square)](poc/package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25-111827?style=flat-square)](#protocol-surface)
 [![License](https://img.shields.io/badge/license-Apache--2.0-D22128?style=flat-square)](LICENSE)
@@ -17,27 +17,28 @@
 [Architecture](#architecture) ·
 [Protocol](#protocol-surface) ·
 [Security](#security-model) ·
+[Changelog](CHANGELOG.md) ·
 [MCP setup](#connect-an-mcp-client)
 
 </div>
 
 > [!CAUTION]
-> **This is a Phase 1 preview.** Its bounded Context View path and reviewed
-> read-only stdio binding are real and tested, but its small heuristic ruleset
-> is not comprehensive secret protection. It cannot admit unreviewed
-> executables, expose third-party writes, or provide a production security
-> boundary.
+> **Release status is evidence-bound.** Version 1.0.0 is stable only when its
+> exact source commit has the required Tier-1 evidence and five-role Ed25519
+> sign-off. An unqualified checkout is a release candidate, not a production
+> security boundary. Redaction remains heuristic, and unreviewed executables or
+> undeclared third-party writes are denied.
 
-EffectGate is being built to sit between an AI host and its MCP tools. The
-product direction combines two controls that normally live far apart:
+EffectGate sits between an AI host and its MCP tools. It combines two controls
+that normally live far apart:
 
 1. **Context control** — retain raw tool evidence locally and emit only bounded,
    cited views to the model.
 2. **Effect control** — bind approval to an exact intent, then verify or
    reconcile the outcome instead of retrying blindly.
 
-The preview proves the narrow transport and admission spine, then exercises the
-first context-control paths end to end: large deterministic text becomes
+The runtime implements the transport and admission spine, then exercises the
+context-control paths end to end: large deterministic text becomes
 bounded, deterministically redacted, cited pages, literal search windows, or
 JSON/JSONL, CSV/TSV, and Markdown projections retrieved through opaque cursors.
 Oversized untyped result envelopes are retained as serialized JSON, while
@@ -60,7 +61,7 @@ npm --prefix poc start
 bundled deterministic fixture. No package installation or network listener is
 involved.
 
-To install the same preview as an `effectgate` command from a checked-out
+To install the same runtime as an `effectgate` command from a checked-out
 repository:
 
 ```powershell
@@ -79,7 +80,7 @@ The manual `Tier 1 package qualification` workflow pins Node `24.14.0` and
 qualifies Linux x64, Linux arm64, Windows x64, and macOS x64. GitHub's concrete
 Linux runner images are Ubuntu 24.04 for x64 and arm64; this is runner evidence,
 not an Ubuntu-only runtime restriction. Each cell runs the full suite, then
-installs the pinned `0.16.0` package, upgrades to `0.17.0`, rolls back, and
+installs the pinned `0.17.0` package, upgrades to `1.0.0`, rolls back, and
 upgrades again while proving external state remains unchanged. The workflow
 uses `workflow_dispatch` only, so pushes do not start hosted runners
 automatically.
@@ -153,7 +154,7 @@ markers, and mismatched confirmations. It deletes state only.
 flowchart LR
     Client["MCP client"]
 
-    subgraph Gate["EffectGate preview"]
+    subgraph Gate["EffectGate"]
         Input["UTF-8 line parser<br/>1 MiB frame guard"]
         Router["JSON-RPC / MCP router"]
         Catalog["Read-only admission map<br/>public name → fixture name"]
@@ -177,7 +178,7 @@ flowchart LR
     Output -->|"stdio"| Client
 ```
 
-There is no network listener. Without `--config`, the preview spawns only the
+There is no network listener. Without `--config`, EffectGate spawns only the
 bundled fixture and `--source` changes only its public namespace. A reviewed
 configuration may instead bind one exact digest-pinned stdio process.
 
@@ -329,7 +330,7 @@ Unknown media types and content matched by the bounded
 and EffectGate never labels the withheld bytes as encrypted or generates a
 summary. The screen covers private-key headers, long tokens, wrapped base64-like
 blocks, wrapped hexadecimal blocks, and bounded byte-distribution windows. It
-can produce false positives; it is a fail-closed preview rule, not a secrecy
+can produce false positives; it is a fail-closed heuristic, not a secrecy
 classifier.
 
 > [!NOTE]
@@ -342,13 +343,13 @@ classifier.
 
 ## Protocol surface
 
-The preview uses one UTF-8 JSON-RPC object per stdio line and supports MCP
+EffectGate uses one UTF-8 JSON-RPC object per stdio line and supports MCP
 `2025-11-25` only. This is a deliberately narrow MCP subset, not a protocol
 conformance claim.
 
 | Message | Direction | Behavior |
 |---|---|---|
-| `initialize` | Client → EffectGate | Requires the preview MCP version, pins the exposure/host-evidence decision, and starts a fresh cursor session |
+| `initialize` | Client → EffectGate | Requires the supported MCP version, pins the exposure/host-evidence decision, and starts a fresh cursor session |
 | `notifications/initialized` | Client → EffectGate | Completes the lifecycle gate and is forwarded to the fixture |
 | `ping` | Client → EffectGate | Forwarded under shared timeout and pending-work limits |
 | `tools/list` | Client → EffectGate | Validates and namespaces tools, enforces contract/result ceilings, preserves pagination, and publishes either typed tools or the four compact contracts pinned at startup |
@@ -370,7 +371,7 @@ and Markdown evidence plus an opt-in set of synthetic secret sentinels.
 
 ## Security model
 
-The preview treats MCP input as adversarial but trusts the local
+EffectGate treats MCP input as adversarial but trusts the local
 operating-system user, the Node.js runtime, and the checked-out repository
 files.
 
@@ -398,7 +399,7 @@ the current threat boundary, and known limitations.
 
 ## Connect an MCP client
 
-Point an MCP client at the preview stdio process using an absolute path:
+Point an MCP client at the EffectGate stdio process using an absolute path:
 
 ```json
 {
@@ -758,7 +759,7 @@ The dependency-free suite directly verifies:
 
 ## Current boundary
 
-| Available in this preview | Evidence-gated product direction |
+| Available in 1.0 | Post-1.0 product direction |
 |---|---|
 | Fixture proxy, reviewed read-only third-party stdio binding, and one digest-pinned reviewed stdio effect fixture | Streamable HTTP and broader reviewed backend adapters |
 | Exact executable/source, identity, catalog, and typed read-only admission pins | Signed backend capability passports and sealed generations |
@@ -770,7 +771,7 @@ The dependency-free suite directly verifies:
 | Verified S3 lifecycle, runtime-owned effect RPC, bounded MCP publication, configured fixture stdio, interrupted-command startup reconciliation, and durable reviewed child-process effect fixture | Broader third-party effect review, crash qualification, and product flows |
 | Deterministic tests plus seeded JSONL/MCP and protected-effect fuzz evidence | Broader fuzz, compatibility, latency, and crash qualification |
 | Sanitized public errors | Unified daemon error catalog and operator diagnostics |
-| Node.js PoC | Tested installer and supported-platform matrix |
+| Dependency-free Node.js 24 runtime and checked-out npm installation | Registry distribution and platform-native installers |
 
 No date or production claim is attached to a future capability until its
 acceptance evidence exists.
@@ -794,7 +795,7 @@ acceptance evidence exists.
     │   └── storage/         # filesystem content-addressed storage
     ├── test/                # protocol, paging, isolation, and failure checks
     ├── package.json         # Node version, license, and scripts
-    └── README.md            # focused preview operating notes
+    └── README.md            # focused runtime operating notes
 ```
 
 ## License

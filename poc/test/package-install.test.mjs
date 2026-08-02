@@ -258,7 +258,7 @@ test("release bundle is deterministic and source-bound", () => {
     assert.equal(qualification.verdict, "pass");
     assert.equal(qualification.bundle_count, 2);
     assert.equal(qualification.package_name, "effectgate-preview");
-    assert.equal(qualification.package_version, "0.17.0");
+    assert.equal(qualification.package_version, "1.0.0");
     assert.equal(qualification.package_license, "Apache-2.0");
     assert.equal(
       qualification.digests.tarball_sha256,
@@ -305,8 +305,8 @@ if (process.env.EFFECTGATE_PREVIOUS_PACKAGE) {
       join(PACKAGE_ROOT, "package.json"),
       "utf8"
     )).version;
-    assert.equal(previousVersion, "0.16.0");
-    assert.equal(currentVersion, "0.17.0");
+    assert.equal(previousVersion, "0.17.0");
+    assert.equal(currentVersion, "1.0.0");
 
     const root = mkdtempSync(join(tmpdir(), "effectgate-upgrade-"));
     const previousPack = join(root, "previous-pack");

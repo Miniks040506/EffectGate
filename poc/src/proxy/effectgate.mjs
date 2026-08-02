@@ -1340,7 +1340,7 @@ export function runProxy(args) {
               errorMessage(
                 message.id,
                 -32602,
-                `This preview supports MCP ${MCP_VERSION} only.`
+                `This EffectGate build supports MCP ${MCP_VERSION} only.`
               )
             );
             break;

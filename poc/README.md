@@ -1,6 +1,6 @@
-# EffectGate preview
+# EffectGate 1.0
 
-This dependency-free Node.js preview proves two narrow paths:
+This dependency-free Node.js runtime provides two controlled paths:
 
 ```text
 small typed result  -> unchanged MCP result
@@ -31,7 +31,7 @@ npm test
 npm start
 ```
 
-Install the checked-out preview as a global `effectgate` command:
+Install the checked-out runtime as a global `effectgate` command:
 
 ```powershell
 npm install --global .
@@ -82,7 +82,7 @@ node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp skill serve -
 
 Package qualification is defined in
 `.github/workflows/tier1-package.yml`. It is manual-only and runs the full
-suite plus the pinned `0.16.0` → `0.17.0` → `0.16.0` → `0.17.0` package
+suite plus the pinned `0.17.0` → `1.0.0` → `0.17.0` → `1.0.0` package
 rehearsal on Linux x64, Linux arm64, Windows x64, and macOS x64. The concrete
 Linux runner images use Ubuntu 24.04, but the Node package has no Ubuntu-only
 runtime dependency. Each cell emits a machine-readable evidence line and
@@ -118,7 +118,7 @@ runs startup recovery so undispatched work is abandoned and dispatched work
 requires reconciliation. Process-local retrieval cursors are never restored.
 
 Rollback is confirmation-bound and accepts only the exact qualified package
-version recorded by the backup. Its preview creates nothing. After confirmation
+version recorded by the backup. Its preview step creates nothing. After confirmation
 it reuses verified fresh-path restore, preserves live state, and prints—but
 does not execute—the exact npm reinstall and `doctor` commands. Review those
 commands and complete operator sign-off before resuming protected effects.
@@ -293,7 +293,7 @@ than breaking their advertised `outputSchema`.
 All token measurements use the shared counter interface. Context Views retain
 their deterministic byte-proxy behavior, while exact tokenizer callbacks,
 calibrated estimates, and host-reported values remain explicitly separated by
-basis. The preview does not bundle a tokenizer or infer total host context.
+basis. EffectGate does not bundle a tokenizer or infer total host context.
 Text, search, projection, and unavailable results share one hard budget
 controller. First views and fetched pages have separate byte/token ceilings;
 requested search or projection limits can lower, but never raise, them.
@@ -378,7 +378,7 @@ page read. Identical content reuses storage only within the same hashed privacy
 partition. `ContextStore.invalidate()` removes that partition's object and
 revokes cached and live cursors. Session metadata remains volatile and
 process-local, and backend results still arrive as complete strings. The
-preview has no durable index,
+runtime has no durable index,
 end-to-end streaming adapter, comprehensive secret/PII detection, regex/ranked
 search, JSONPath or richer predicates, full CommonMark structure, SQLite
 ledger/multi-writer recovery, real model/host benchmark adapter, externally
