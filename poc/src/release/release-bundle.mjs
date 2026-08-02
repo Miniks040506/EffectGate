@@ -84,6 +84,7 @@ export function createReleaseBundle({
       packed.length !== 1 ||
       packed[0].name !== manifest.name ||
       packed[0].version !== manifest.version ||
+      manifest.license !== "Apache-2.0" ||
       typeof packed[0].filename !== "string" ||
       !/^sha512-[A-Za-z0-9+/=]+$/u.test(packed[0].integrity ?? "")
     ) {
@@ -133,6 +134,7 @@ export function createReleaseBundle({
       subject: {
         name: packed[0].name,
         version: packed[0].version,
+        license: manifest.license,
         filename: packed[0].filename,
         size_bytes: statSync(tarball).size,
         sha256: `sha256:${tarballDigest}`,

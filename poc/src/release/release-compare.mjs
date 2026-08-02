@@ -10,6 +10,8 @@ import { canonicalJson, deepFreeze } from "../skill/passport-compiler.mjs";
 
 const COMMIT = /^[a-f0-9]{40}$/u;
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
+const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u;
+const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 const USAGE =
   "Usage: release-compare.mjs --input DIRECTORY --source-commit SHA";
 
@@ -30,6 +32,9 @@ function inspectBundle(directory, sourceCommit) {
     provenance.kind !== "effectgate_release_provenance" ||
     provenance.schema_version !== "1.0.0" ||
     provenance.source?.commit_sha !== sourceCommit ||
+    !NAME.test(provenance.subject?.name ?? "") ||
+    !VERSION.test(provenance.subject?.version ?? "") ||
+    provenance.subject?.license !== "Apache-2.0" ||
     typeof filename !== "string" ||
     basename(filename) !== filename ||
     !/^[A-Za-z0-9._-]+\.tgz$/u.test(filename) ||
@@ -71,7 +76,14 @@ function inspectBundle(directory, sourceCommit) {
   ) {
     throw new Error("release bundle digest verification failed");
   }
-  return { name: basename(directory), filename, digests };
+  return {
+    bundle_name: basename(directory),
+    package_name: provenance.subject.name,
+    package_version: provenance.subject.version,
+    package_license: provenance.subject.license,
+    filename,
+    digests
+  };
 }
 
 export function compareReleaseBundles({
@@ -100,8 +112,8 @@ export function compareReleaseBundles({
     join(resolve(input), name),
     sourceCommit
   ));
-  if (new Set(bundles.map(({ filename, digests }) =>
-    canonicalJson({ filename, digests })
+  if (new Set(bundles.map(({ bundle_name: ignored, ...bundle }) =>
+    canonicalJson(bundle)
   )).size !== 1) {
     throw new Error("release bundles are not byte-identical");
   }
@@ -110,7 +122,10 @@ export function compareReleaseBundles({
     schema_version: "1.0.0",
     source_commit: sourceCommit,
     bundle_count: bundles.length,
-    bundle_names: bundles.map(({ name }) => name),
+    bundle_names: bundles.map(({ bundle_name: name }) => name),
+    package_name: bundles[0].package_name,
+    package_version: bundles[0].package_version,
+    package_license: bundles[0].package_license,
     package_filename: bundles[0].filename,
     digests: bundles[0].digests,
     checks: {
