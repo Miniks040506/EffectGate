@@ -103,11 +103,15 @@ qualification report only when all four bundles are byte-identical. Like the
 other Tier-1 workflows, it runs only after an explicit manual dispatch.
 
 After all ten stable gates produce source-bound `pass` evidence, compile the
-canonical RC manifest with `npm --prefix .\poc run release:candidate -- --input
-.\release-input.json > release-candidate.json`. The manifest binds the exact
-package, SBOM, provenance and evidence digests. Stable sign-off requires valid
-Ed25519 approvals for Product, Technical, Security, QA and Release roles over
-that single candidate digest.
+canonical RC manifest:
+
+```powershell
+npm --prefix .\poc run --silent release:candidate -- --input .\release-input.json > release-candidate.json
+```
+
+The manifest binds the exact package, SBOM, provenance and evidence digests.
+Stable sign-off requires valid Ed25519 approvals for Product, Technical,
+Security, QA and Release roles over that single candidate digest.
 
 `release-input.json` contains `release_qualification`, a path to the canonical
 four-platform qualification JSON, and `evidence`, one `{ "gate", "path" }`
@@ -115,6 +119,18 @@ entry for every stable gate. Paths are relative to the input file. Evidence
 must be bounded canonical JSON from the same source commit with a `pass`
 verdict; symlinks, duplicate files, unsafe names and claimed digests are not
 accepted. EffectGate hashes the admitted file bytes itself.
+
+Each release role creates its canonical approval, then the verifier emits the
+final sign-off evidence:
+
+```powershell
+npm --prefix .\poc run --silent release:approve -- --candidate release-candidate.json --role product --signer-key-id product-key-1 --private-key product.pem --issued-at 2026-08-02T00:00:00.000Z > product.approval.json
+npm --prefix .\poc run --silent release:signoff -- --candidate release-candidate.json --sign-off release-signoff-input.json > release-signoff.json
+```
+
+The sign-off input binds the candidate digest and exactly five entries with
+`role`, `signer_key_id`, `public_key`, and `approval` paths. The CLI never
+generates, copies or stores private keys; it writes approval data only.
 
 Before uninstalling, print the exact package command, preserved paths, and
 optional purge arguments:

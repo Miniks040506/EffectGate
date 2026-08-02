@@ -31,7 +31,7 @@ function exactObject(value, keys) {
     keys.every((key) => Object.hasOwn(value, key));
 }
 
-function readJson(file, canonical = false) {
+export function readReleaseJson(file, canonical = false) {
   const absolute = resolve(file);
   const stat = lstatSync(absolute);
   if (!stat.isFile() || stat.size < 2 || stat.size > MAX_EVIDENCE_BYTES) {
@@ -64,7 +64,7 @@ export function compileReleaseCandidateFromFiles({ input } = {}) {
   if (typeof input !== "string" || input.length < 1 || input.includes("\0")) {
     throw new TypeError("invalid release evidence input");
   }
-  const manifestFile = readJson(input);
+  const manifestFile = readReleaseJson(input);
   const manifest = manifestFile.value;
   if (!exactObject(manifest, ["release_qualification", "evidence"]) ||
       typeof manifest.release_qualification !== "string" ||
@@ -79,7 +79,7 @@ export function compileReleaseCandidateFromFiles({ input } = {}) {
     throw new TypeError("invalid release evidence manifest");
   }
   const root = dirname(manifestFile.path);
-  const qualificationFile = readJson(
+  const qualificationFile = readReleaseJson(
     resolve(root, manifest.release_qualification),
     true
   );
@@ -88,7 +88,7 @@ export function compileReleaseCandidateFromFiles({ input } = {}) {
     throw new Error("release qualification is not source-bound");
   }
   const admitted = manifest.evidence.map(({ gate, path }) => {
-    const file = readJson(resolve(root, path), true);
+    const file = readReleaseJson(resolve(root, path), true);
     if (gate === "release_reproducibility"
       ? file.path !== qualificationFile.path ||
         file.value.kind !== "effectgate_release_qualification"

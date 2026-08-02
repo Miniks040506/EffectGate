@@ -231,6 +231,15 @@ The current preview assumes:
 Reports that only restate these limitations without additional impact may be
 closed as expected behavior.
 
+## Release signing keys
+
+The release CLI accepts operator-provided Ed25519 PEM files only. It never
+generates, copies, logs, or persists private keys or passphrases. Key paths must
+resolve to bounded regular files; symlinks are refused, and private keys with
+group or world permission bits are refused on non-Windows hosts. Windows
+operators remain responsible for restricting the file ACL. Hardware-backed and
+encrypted-key integrations are outside the V1 release tool.
+
 ## Coordinated disclosure
 
 Please allow time to validate and remediate a confirmed issue before public

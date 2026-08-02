@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -15,6 +15,10 @@ import {
 import {
   compileReleaseCandidateFromFiles
 } from "../src/release/release-evidence.mjs";
+import {
+  approveReleaseCandidateFromFiles,
+  verifyReleaseSignOffFromFiles
+} from "../src/release/release-approval.mjs";
 import { canonicalJson } from "../src/skill/passport-compiler.mjs";
 
 const sha256 = (value) => `sha256:${createHash("sha256")
@@ -126,6 +130,65 @@ test("release candidate binds complete evidence and all role approvals", () => {
       RELEASE_EVIDENCE_GATES);
     assert.deepEqual(admitted,
       compileReleaseCandidateFromFiles({ input }));
+
+    const candidatePath = writeCanonical("release-candidate.json", admitted);
+    const fileApprovals = [];
+    const fileSigners = RELEASE_APPROVAL_ROLES.map((role) => {
+      const keys = generateKeyPairSync("ed25519");
+      const signerKeyId = `${role}-file-key-1`;
+      const privateKey = `${role}.private.pem`;
+      const publicKey = `${role}.public.pem`;
+      const approval = `${role}.approval.json`;
+      writeFileSync(join(directory, privateKey), keys.privateKey.export({
+        type: "pkcs8",
+        format: "pem"
+      }));
+      chmodSync(join(directory, privateKey), 0o600);
+      writeFileSync(join(directory, publicKey), keys.publicKey.export({
+        type: "spki",
+        format: "pem"
+      }));
+      const value = approveReleaseCandidateFromFiles({
+        candidateFile: join(directory, candidatePath),
+        role,
+        signerKeyId,
+        privateKeyFile: join(directory, privateKey),
+        issuedAt: "2026-08-02T00:00:00.000Z"
+      });
+      fileApprovals.push(value);
+      writeCanonical(approval, value);
+      return {
+        role,
+        signer_key_id: signerKeyId,
+        public_key: publicKey,
+        approval
+      };
+    });
+    const signOffInput = join(directory, "release-signoff-input.json");
+    writeFileSync(signOffInput, JSON.stringify({
+      kind: "effectgate_release_signoff_input",
+      schema_version: "1.0.0",
+      candidate_digest: admitted.candidate_digest,
+      signers: fileSigners.reverse()
+    }, null, 2));
+    const signOff = verifyReleaseSignOffFromFiles({
+      candidateFile: join(directory, candidatePath),
+      signOffFile: signOffInput
+    });
+    assert.equal(signOff.verdict, "pass");
+    assert.deepEqual(signOff.approvals.map(({ role }) => role),
+      RELEASE_APPROVAL_ROLES);
+    assert.equal(signOff.approvals.every(({ public_key_sha256 }) =>
+      /^sha256:[a-f0-9]{64}$/u.test(public_key_sha256)), true);
+    writeCanonical("product.approval.json", {
+      ...fileApprovals[0],
+      signature: (fileApprovals[0].signature.startsWith("A") ? "B" : "A") +
+        fileApprovals[0].signature.slice(1)
+    });
+    assert.throws(() => verifyReleaseSignOffFromFiles({
+      candidateFile: join(directory, candidatePath),
+      signOffFile: signOffInput
+    }), /verification failed/u);
 
     writeCanonical("security.json", {
       kind: "effectgate_release_gate_evidence",
