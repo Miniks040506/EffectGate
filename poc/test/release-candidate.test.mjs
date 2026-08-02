@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -9,6 +12,10 @@ import {
   createReleaseApproval,
   verifyReleaseSignOff
 } from "../src/release/release-candidate.mjs";
+import {
+  compileReleaseCandidateFromFiles
+} from "../src/release/release-evidence.mjs";
+import { canonicalJson } from "../src/skill/passport-compiler.mjs";
 
 const sha256 = (value) => `sha256:${createHash("sha256")
   .update(value).digest("hex")}`;
@@ -81,4 +88,57 @@ test("release candidate binds complete evidence and all role approvals", () => {
     releaseQualification,
     evidence: evidence.slice(1)
   }), /incomplete/u);
+
+  const directory = mkdtempSync(join(tmpdir(), "effectgate-rc-evidence-"));
+  const writeCanonical = (name, value) => {
+    writeFileSync(join(directory, name), `${canonicalJson(value)}\n`);
+    return name;
+  };
+  try {
+    const qualificationPath = writeCanonical(
+      "release-qualification.json",
+      releaseQualification
+    );
+    const evidencePaths = RELEASE_EVIDENCE_GATES.map((gate) => ({
+      gate,
+      path: gate === "release_reproducibility"
+        ? qualificationPath
+        : writeCanonical(`${gate}.json`, {
+          kind: "effectgate_release_gate_evidence",
+          schema_version: "1.0.0",
+          gate,
+          source_commit: sourceCommit,
+          verdict: "pass",
+          artifact: {
+            name: `${gate}.artifact`,
+            digest: sha256(gate)
+          }
+        })
+    }));
+    const input = join(directory, "release-input.json");
+    writeFileSync(input, JSON.stringify({
+      release_qualification: qualificationPath,
+      evidence: evidencePaths.reverse()
+    }, null, 2));
+    const admitted = compileReleaseCandidateFromFiles({ input });
+    assert.deepEqual(admitted.package, candidate.package);
+    assert.deepEqual(admitted.evidence.map(({ gate }) => gate),
+      RELEASE_EVIDENCE_GATES);
+    assert.deepEqual(admitted,
+      compileReleaseCandidateFromFiles({ input }));
+
+    writeCanonical("security.json", {
+      kind: "effectgate_release_gate_evidence",
+      schema_version: "1.0.0",
+      gate: "security",
+      source_commit: sourceCommit,
+      verdict: "fail"
+    });
+    assert.throws(
+      () => compileReleaseCandidateFromFiles({ input }),
+      /source-bound pass/u
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

@@ -109,6 +109,13 @@ package, SBOM, provenance and evidence digests. Stable sign-off requires valid
 Ed25519 approvals for Product, Technical, Security, QA and Release roles over
 that single candidate digest.
 
+`release-input.json` contains `release_qualification`, a path to the canonical
+four-platform qualification JSON, and `evidence`, one `{ "gate", "path" }`
+entry for every stable gate. Paths are relative to the input file. Evidence
+must be bounded canonical JSON from the same source commit with a `pass`
+verdict; symlinks, duplicate files, unsafe names and claimed digests are not
+accepted. EffectGate hashes the admitted file bytes itself.
+
 Before uninstalling, print the exact package command, preserved paths, and
 optional purge arguments:
 

@@ -1,13 +1,8 @@
-#!/usr/bin/env node
-
 import {
   createHash,
   sign as signBytes,
   verify as verifyBytes
 } from "node:crypto";
-import { readFileSync } from "node:fs";
-import process from "node:process";
-import { fileURLToPath } from "node:url";
 
 import { canonicalJson, deepFreeze } from "../skill/passport-compiler.mjs";
 
@@ -31,7 +26,6 @@ const COMMIT = /^[a-f0-9]{40}$/u;
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u;
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
-const USAGE = "Usage: release-candidate.mjs --input FILE";
 
 function exactObject(value, keys) {
   return value && typeof value === "object" && !Array.isArray(value) &&
@@ -218,22 +212,4 @@ export function verifyReleaseSignOff(candidate, approvals, trustedSigners) {
         role
       });
     });
-}
-
-export function main(args = process.argv.slice(2)) {
-  if (args.length !== 2 || args[0] !== "--input") throw new Error(USAGE);
-  const input = JSON.parse(readFileSync(args[1], "utf8"));
-  const candidate = compileReleaseCandidate({
-    releaseQualification: input.release_qualification,
-    evidence: input.evidence
-  });
-  process.stdout.write(`${canonicalJson(candidate)}\n`);
-  return candidate;
-}
-
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  try { main(); } catch (error) {
-    process.stderr.write(`[effectgate-release-candidate] ${error.message}\n`);
-    process.exitCode = 1;
-  }
 }
