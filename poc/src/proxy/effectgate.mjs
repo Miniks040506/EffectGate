@@ -11,6 +11,7 @@ import {
   resolveEnvironmentSecretRefs
 } from "../config/layered-config.mjs";
 import {
+  CONTEXT_MAX_ARTIFACT_BYTES,
   CONTEXT_PAGE_BYTES,
   CONTEXT_SEARCH_MAX_CONTEXT_LINES,
   CONTEXT_SEARCH_MAX_QUERY_LENGTH,
@@ -78,6 +79,11 @@ import {
   writeMessage
 } from "./jsonl-rpc.mjs";
 import {
+  CHUNKED_RESULT_METHOD,
+  ChunkedResultReceiver,
+  boundedResponseMessages
+} from "./chunked-result.mjs";
+import {
   loadReviewedBackendConfig,
   verifyReviewedBackendFiles
 } from "./reviewed-backend-config.mjs";
@@ -93,6 +99,7 @@ export {
   writeMessage
 };
 export const MAX_PENDING_REQUESTS = 64;
+export const FIXTURE_MAX_LINES = 100_000;
 const MAX_ID_BYTES = 128;
 const CURSOR_INPUT_PATTERN = new RegExp(CURSOR_PATTERN, "u");
 const TOKEN_LEDGER_PROFILES = new Set([
@@ -172,7 +179,7 @@ export const FIXTURE_LARGE_LOG_TOOL = Object.freeze({
     additionalProperties: false,
     required: ["lines"],
     properties: {
-      lines: { type: "integer", minimum: 1, maximum: 6000 },
+      lines: { type: "integer", minimum: 1, maximum: FIXTURE_MAX_LINES },
       format: {
         type: "string",
         enum: ["log", "jsonl", "csv", "markdown"],
@@ -339,8 +346,10 @@ export const CONTEXT_PROJECT_TOOL = Object.freeze({
 });
 
 function validateFixtureArguments(lines, includeSecrets) {
-  if (!Number.isSafeInteger(lines) || lines < 1 || lines > 6000) {
-    throw new RangeError("lines must be an integer from 1 through 6000");
+  if (!Number.isSafeInteger(lines) || lines < 1 || lines > FIXTURE_MAX_LINES) {
+    throw new RangeError(
+      `lines must be an integer from 1 through ${FIXTURE_MAX_LINES}`
+    );
   }
   if (typeof includeSecrets !== "boolean") {
     throw new TypeError("includeSecrets must be a boolean");
@@ -705,7 +714,7 @@ function fixtureResponse(request) {
           Array.isArray(args) ||
           !Number.isSafeInteger(args.lines) ||
           args.lines < 1 ||
-          args.lines > 6000 ||
+          args.lines > FIXTURE_MAX_LINES ||
           (args.format !== undefined &&
             args.format !== "log" &&
             args.format !== "jsonl" &&
@@ -779,16 +788,47 @@ function fixtureResponse(request) {
 
 export function runFixture() {
   let outputBlocked = false;
+  const outputQueue = [];
+
+  function flush() {
+    if (outputBlocked) return;
+    while (outputQueue.length > 0) {
+      const next = outputQueue[0].next();
+      if (next.done) {
+        outputQueue.shift();
+        continue;
+      }
+      if (writeMessage(process.stdout, next.value)) continue;
+      outputBlocked = true;
+      process.stdin.pause();
+      process.stdout.once("drain", () => {
+        outputBlocked = false;
+        process.stdin.resume();
+        flush();
+      });
+      return;
+    }
+  }
 
   function reply(message) {
-    const writable = writeMessage(process.stdout, message);
-    if (writable || outputBlocked) return;
-    outputBlocked = true;
-    process.stdin.pause();
-    process.stdout.once("drain", () => {
-      outputBlocked = false;
-      process.stdin.resume();
-    });
+    let messages;
+    try {
+      messages = boundedResponseMessages(
+        message,
+        CONTEXT_MAX_ARTIFACT_BYTES
+      );
+    } catch (error) {
+      if (!(error instanceof FrameTooLargeError)) throw error;
+      messages = [
+        errorMessage(
+          message?.id,
+          -32005,
+          "The response exceeds the configured transport limit."
+        )
+      ];
+    }
+    outputQueue.push(messages[Symbol.iterator]());
+    flush();
   }
 
   readBoundedJsonLines(process.stdin, {
@@ -1118,7 +1158,15 @@ export function runProxy(args) {
       clientId: clientRequest.id,
       timeout,
       transform,
-      method
+      method,
+      ...(method === "tools/call"
+        ? {
+            chunkedResult: new ChunkedResultReceiver(
+              backendId,
+              CONTEXT_MAX_ARTIFACT_BYTES
+            )
+          }
+        : {})
     });
     if (!sendBackend({
       jsonrpc: "2.0",
@@ -1146,6 +1194,17 @@ export function runProxy(args) {
         message.id === undefined &&
         typeof message.method === "string"
       ) {
+        if (message.method === CHUNKED_RESULT_METHOD) {
+          const waiting = pending.get(message.params?.request_id);
+          if (!waiting?.chunkedResult) return;
+          try {
+            waiting.chunkedResult.accept(message);
+          } catch {
+            failBackend(-32004, "The backend response is invalid.");
+            child.kill();
+          }
+          return;
+        }
         if (message.method === "notifications/tools/list_changed") {
           if (reviewedBackend) {
             failBackend(
@@ -1174,6 +1233,18 @@ export function runProxy(args) {
       pending.delete(message.id);
 
       if (message.error) {
+        if (waiting.chunkedResult?.started) {
+          failBackend(-32004, "The backend response is invalid.");
+          child.kill();
+          reply(
+            errorMessage(
+              waiting.clientId,
+              -32004,
+              "The backend response is invalid."
+            )
+          );
+          return;
+        }
         reply(
           errorMessage(
             waiting.clientId,
@@ -1185,8 +1256,11 @@ export function runProxy(args) {
       }
 
       try {
+        const result = waiting.chunkedResult === undefined
+          ? message.result
+          : waiting.chunkedResult.finish(message.result);
         if (tokenLedger && waiting.method === "tools/call") {
-          const raw = serialize(message.result);
+          const raw = serialize(result);
           tokenLedger.append({
             stage: "backend_raw_result",
             direction: "from_host",
@@ -1197,7 +1271,7 @@ export function runProxy(args) {
         reply({
           jsonrpc: "2.0",
           id: waiting.clientId,
-          result: waiting.transform(message.result)
+          result: waiting.transform(result)
         });
       } catch (error) {
         if (error instanceof ReviewedBackendDriftError) {
