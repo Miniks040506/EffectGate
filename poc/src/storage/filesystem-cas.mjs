@@ -153,8 +153,8 @@ export class FilesystemCas {
     let file = fs.openSync(temporaryPath, "wx", 0o600);
 
     try {
-      // ponytail: synchronous 64 KiB writes fit the 1 MiB preview ceiling;
-      // move this writer off-loop when real backend streaming lands.
+      // ponytail: synchronous 64 KiB writes keep the implementation simple;
+      // move this writer off-loop only if corpus latency misses its budget.
       for (const value of chunks) {
         if (!(Buffer.isBuffer(value) || value instanceof Uint8Array)) {
           throw new TypeError("CAS chunks must be byte arrays");
@@ -219,8 +219,8 @@ export class FilesystemCas {
   readRange(digest, start, end, expectedBytes) {
     this.ensureOpen();
     validateDigest(digest);
-    // ponytail: rehashing the <=1 MiB preview object on each read is the
-    // integrity check; cache verified handles only after durable locking lands.
+    // ponytail: rehash every configured object for integrity; cache verified
+    // handles only after corpus profiling proves this is the bottleneck.
     if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
         start < 0 || end < start) {
       throw new RangeError("invalid CAS byte range");

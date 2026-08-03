@@ -1498,7 +1498,10 @@ test("opaque content is retained but withheld across every model-visible path", 
   assert.equal(JSON.stringify(boundedImage).includes(tinyImage), false);
   store.close();
 
-  const boundaryStore = new ContextStore();
+  const boundaryStore = new ContextStore({
+    maxArtifactBytes: 1024 * 1024,
+    maxStoreBytes: 1024 * 1024
+  });
   assert.equal(
     boundaryStore.requiresView("A".repeat(1024 * 1024), "text/plain"),
     false

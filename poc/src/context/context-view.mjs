@@ -22,8 +22,8 @@ import {
 } from "../projection/json-project.mjs";
 
 export const CONTEXT_PAGE_BYTES = 4096;
-export const CONTEXT_MAX_ARTIFACT_BYTES = 1024 * 1024;
-export const CONTEXT_STORE_BYTES = 4 * 1024 * 1024;
+export const CONTEXT_MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
+export const CONTEXT_STORE_BYTES = 64 * 1024 * 1024;
 export const CONTEXT_CURSOR_TTL_MS = 10 * 60 * 1000;
 export const CONTEXT_SEARCH_MAX_QUERY_LENGTH = 64;
 export const CONTEXT_SEARCH_MAX_CONTEXT_LINES = 5;
@@ -185,7 +185,9 @@ function* utf8Chunks(text, maxBytes = 64 * 1024) {
   const encoder = new TextEncoder();
   const buffer = Buffer.allocUnsafe(maxBytes);
   for (let start = 0; start < text.length;) {
-    const { read, written } = encoder.encodeInto(text.slice(start), buffer);
+    const { read, written } = encoder.encodeInto(
+      text.slice(start, start + maxBytes), buffer
+    );
     if (read === 0) throw new Error("UTF-8 encoding made no progress");
     yield buffer.subarray(0, written);
     start += read;
@@ -211,27 +213,32 @@ function utf8ByteOffsets(text) {
 }
 
 function scanRedactions(text) {
-  const offsets = utf8ByteOffsets(text);
-  const spans = [];
+  const matches = [];
 
   for (const rule of REDACTION_RULES) {
     for (const match of text.matchAll(rule.pattern)) {
       const indices = match.indices?.[rule.group];
       if (!indices || indices[0] === indices[1]) continue;
-      spans.push({
-        byteStart: offsets[indices[0]],
-        byteEnd: offsets[indices[1]],
+      matches.push({
+        stringStart: indices[0],
+        stringEnd: indices[1],
         class: rule.class,
         ruleId: rule.ruleId
       });
-      if (spans.length > MAX_REDACTION_SPANS) {
+      if (matches.length > MAX_REDACTION_SPANS) {
         throw new UnsafeArtifactError(
           "artifact exceeds the redaction span limit"
         );
       }
     }
   }
-  return spans.sort(
+  if (matches.length === 0) return [];
+  const offsets = utf8ByteOffsets(text);
+  return matches.map(({ stringStart, stringEnd, ...match }) => ({
+    ...match,
+    byteStart: offsets[stringStart],
+    byteEnd: offsets[stringEnd]
+  })).sort(
     (left, right) =>
       left.byteStart - right.byteStart || right.byteEnd - left.byteEnd
   );
@@ -366,8 +373,8 @@ function hasOpaqueByteDistribution(bytes) {
   }
   if (opaqueArmor()) return true;
 
-  // ponytail: artifacts are capped at 1 MiB; revisit only if corpus evidence
-  // shows this conservative integer screen needs a streaming implementation.
+  // ponytail: this linear screen is enough at 32 MiB; stream it only if the
+  // artifact ceiling grows again or corpus profiling shows a memory issue.
   const counts = new Uint32Array(256);
   for (
     let start = 0;
@@ -945,8 +952,8 @@ export class ContextStore {
           : DOCUMENT_PROJECTION_VERSION
       );
     }
-    // ponytail: artifacts are capped at 1 MiB; add a streaming index if that
-    // ceiling changes or projection latency becomes measurable.
+    // ponytail: exact V1 corpora fit in memory; add a streaming index only if
+    // corpus profiling exceeds the release memory or latency budget.
     const raw = this.cas.readRange(
       artifact.sourceDigest,
       0,
