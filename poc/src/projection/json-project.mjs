@@ -96,6 +96,7 @@ function selectRecord(source, visible, fields, filter) {
 
 export function buildJsonProjectionEntries({
   artifact,
+  raw,
   text,
   format,
   fields,
@@ -161,25 +162,24 @@ export function buildJsonProjectionEntries({
     };
   }
 
-  for (let line = 0; line < starts.length; line += 1) {
-    const stringStart = starts[line];
-    if (stringStart === text.length) continue;
-    const afterLine =
-      line + 1 < starts.length ? starts[line + 1] : text.length;
-    let contentEnd = afterLine;
-    if (text.charCodeAt(contentEnd - 1) === 0x0a) contentEnd -= 1;
-    if (text.charCodeAt(contentEnd - 1) === 0x0d) contentEnd -= 1;
+  if (!Buffer.isBuffer(raw)) throw new InvalidJsonProjectionError();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  for (let line = 0, byteStart = 0; byteStart < raw.length; line += 1) {
+    const newline = raw.indexOf(0x0a, byteStart);
+    const afterLine = newline === -1 ? raw.length : newline + 1;
+    let contentEnd = newline === -1 ? raw.length : newline;
+    if (raw[contentEnd - 1] === 0x0d) contentEnd -= 1;
     const citation = {
       artifact_id: artifact.artifactId,
       source_digest: artifact.sourceDigest,
-      byte_start: offsets[stringStart],
-      byte_end: offsets[afterLine]
+      byte_start: byteStart,
+      byte_end: afterLine
     };
-    const rendered = render(offsets[stringStart], offsets[contentEnd]);
+    const rendered = render(byteStart, contentEnd);
     let source;
     let visible;
     try {
-      source = JSON.parse(text.slice(stringStart, contentEnd));
+      source = JSON.parse(decoder.decode(raw.subarray(byteStart, contentEnd)));
       visible =
         rendered.redactions.length === 0
           ? source
@@ -193,12 +193,14 @@ export function buildJsonProjectionEntries({
         citation,
         redactions: rendered.redactions
       });
+      byteStart = afterLine;
       continue;
     }
     const value = selectRecord(source, visible, fields, filter);
     if (value !== undefined) {
       entries.push({ value, citation, redactions: rendered.redactions });
     }
+    byteStart = afterLine;
   }
   return {
     entries,

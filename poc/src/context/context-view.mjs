@@ -952,26 +952,27 @@ export class ContextStore {
           : DOCUMENT_PROJECTION_VERSION
       );
     }
-    // ponytail: exact V1 corpora fit in memory; add a streaming index only if
-    // corpus profiling exceeds the release memory or latency budget.
     const raw = this.cas.readRange(
       artifact.sourceDigest,
       0,
       artifact.byteLength,
       artifact.byteLength
     );
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(raw);
+    const text = format === "jsonl"
+      ? undefined
+      : new TextDecoder("utf-8", { fatal: true }).decode(raw);
     let projection;
     try {
       const options = {
         artifact,
+        raw,
         text,
         format,
         fields,
         columns,
         filter,
         heading,
-        ...(format !== "json"
+        ...(format !== "json" && format !== "jsonl"
           ? {
               starts: lineStarts(text),
               offsets: utf8ByteOffsets(text)
