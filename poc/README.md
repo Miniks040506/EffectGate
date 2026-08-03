@@ -252,9 +252,17 @@ Captured real-host observations can be normalized and qualified entirely
 offline:
 
 ```powershell
+npm run benchmark:corpus -- --source-commit FULL_40_CHARACTER_GIT_SHA
 npm run benchmark:observe -- --input .\BENCH-READ-001.observations.json --output .\BENCH-READ-001.jsonl
 npm run benchmark:target -- --input .\target-corpus-manifest.json > .\target-corpus-qualification.json
 ```
+
+`benchmark:corpus` builds the frozen `LOG_80K`, `JSON_50K`, `JSONL_25MB`, and
+`CSV_100K` datasets, verifies their pinned SHA-256 digests, retains each in the
+32 MiB ContextStore, and executes cited search/projection oracles with a 4 KiB
+first-view ceiling. This is context-plane qualification only: the output sets
+`release_gate_eligible` and `exact_corpus_mcp_stdio_qualified` to `false`
+because stdio JSON-RPC frames remain independently capped at 1 MiB.
 
 The canonical observation file contains the source commit, common environment
 and prompt/rubric digests, plus exactly one P0/P1/P2/P3 metrics record for each
@@ -306,7 +314,7 @@ that documented synthetic sentinels are removed from every emitted page.
 
 Eligible untyped results with multiple content items or structured data are
 serialized once as JSON when they exceed the 64 KiB result ceiling.
-If retention cannot fit the 1 MiB artifact limit, EffectGate returns a bounded
+If retention cannot fit the 32 MiB artifact limit, EffectGate returns a bounded
 `EG-CAS-001` error without reflecting source content.
 
 Unsupported media and deterministic opacity matches are retained but withheld.
@@ -389,8 +397,8 @@ test/           # dependency-free integration and boundary checks
 | Projection page | 100 logical items / 64–1,024 byte-proxy tokens |
 | Tabular record shape | 256 columns / 64 KiB field / 256 KiB record |
 | CAS write chunk | 64 KiB |
-| Stored artifact | 1 MiB |
-| Logical artifact store | 4 MiB / 16 artifacts |
+| Stored artifact | 32 MiB |
+| Logical artifact store | 64 MiB / 16 artifacts |
 | Privacy partition key | 128 characters / 512 UTF-8 bytes; stored as SHA-256 path |
 | Detected redaction spans | 4,096 per artifact; excess fails closed |
 | Opacity screening | Private-key markers, integer-only encoded blocks, 1,024-byte windows, and 128-byte token runs over the capped artifact |

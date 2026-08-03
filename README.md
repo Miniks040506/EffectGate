@@ -159,7 +159,7 @@ flowchart LR
         Router["JSON-RPC / MCP router"]
         Catalog["Read-only admission map<br/>public name → fixture name"]
         Views["Context View service<br/>paging · search · structured projection"]
-        Store["Temporary filesystem CAS<br/>SHA-256 · 4 MiB logical quota"]
+        Store["Temporary filesystem CAS<br/>SHA-256 · 64 MiB logical quota"]
         Output["Error sanitizer<br/>output guard + backpressure"]
 
         Input --> Router
@@ -199,7 +199,7 @@ configuration may instead bind one exact digest-pinned stdio process.
 | Name isolation | Backend names cannot be called directly or invented |
 | Eligible results | Exact text above 4 KiB and oversized untyped envelopes are retained; small text with a redaction or opacity match is bounded too |
 | Typed safety | A typed result that needs redaction or opaque handling fails closed instead of violating its `outputSchema` or exposing source bytes |
-| Artifact storage | 64 KiB chunk writer into a privacy-partitioned SHA-256 filesystem CAS: 1 MiB per artifact, 4 MiB logical total, 16 artifacts |
+| Artifact storage | 64 KiB chunk writer into a privacy-partitioned SHA-256 filesystem CAS: 32 MiB per artifact, 64 MiB logical total, 16 artifacts |
 | Finalization | File `fsync`, same-volume atomic rename, startup `.part` cleanup, same-partition deduplication, and full-hash read verification |
 | Corruption | A missing, truncated, or hash-mismatched object fails closed; corrupt objects are moved to quarantine |
 | Tool-result output | Every serialized tool-result value is capped at 64 KiB |
@@ -210,7 +210,7 @@ configuration may instead bind one exact digest-pinned stdio process.
 | Continuity | Artifacts with an unfetched cursor are pinned; recent retries use a bounded page cache; explicit invalidation revokes cached and live cursors |
 | Page bound | At most 4,096 source bytes, cut only at a valid UTF-8 boundary |
 | Redaction | Versioned assignment, bearer-token, and common token-prefix rules run before every emitted page; more than 4,096 detected spans fails closed |
-| Benchmark evidence | Seeded P0–P3 order, stable pair/run IDs, warm task timing, alternating long-lived native/proxy latency profiles, real execution of all four small-read fixture profiles, exclusive JSONL creation, retained failures, deterministic median/p95/bootstrap-CI reports, an absolute long-lived latency gate with relative diagnostics, canonical real-host observation import, four-task target-corpus qualification, and review-only exposure recommendations |
+| Benchmark evidence | Seeded P0–P3 order, stable pair/run IDs, warm task timing, alternating long-lived native/proxy latency profiles, real execution of all four small-read fixture profiles, exact frozen LOG/JSON/25 MiB JSONL/CSV context-plane corpora, exclusive JSONL creation, retained failures, deterministic median/p95/bootstrap-CI reports, canonical real-host observation import, four-task target-corpus qualification, and review-only exposure recommendations |
 | Errors | Backend errors and stderr content are not passed through verbatim |
 | Flow control | Client input and fixture output pause while downstream writables are backpressured |
 
@@ -746,7 +746,7 @@ The dependency-free suite directly verifies:
   failure without source-data reflection;
 - deterministic opaque-content withholding across initial, search, and
   projection paths, including exact detector boundaries, private-key armor,
-  wrapped base64/hex data, final-tail data, and the 1 MiB artifact ceiling;
+  wrapped base64/hex data, final-tail data, and configured artifact ceilings;
 - oversized catalog-page rejection before tool admission;
 - malformed and oversized frame rejection with parser recovery;
 - seeded JSONL/MCP boundary mutation evidence with an exact replay seed;
