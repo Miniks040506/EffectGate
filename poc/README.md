@@ -383,6 +383,7 @@ test/           # dependency-free integration and boundary checks
 | Resource | Limit |
 |---|---:|
 | JSON-RPC frame | 1 MiB |
+| Chunked backend tool result | 512 KiB raw chunks / 32 MiB cumulative / ordered and SHA-256 verified |
 | Serialized tool-result value | 64 KiB |
 | Local model-visible tool output | 262,144 byte-proxy tokens per process session |
 | Optional token ledger | 1,000,000 entries / 64 MiB / one process writer |
@@ -406,6 +407,15 @@ test/           # dependency-free integration and boundary checks
 | Cursor states | 64; live continuations are pinned |
 | Cursor lifetime | 10 minutes; recent same-session retries are cached |
 | Forwarded backend requests | 64 pending / 10 seconds each |
+
+Backends that support EffectGate's optional large-result extension emit ordered
+`notifications/effectgate/result_chunk` notifications whose `data` field is
+canonical base64, then finish the original request with a
+`dev.effectgate/chunked-result` byte-count and SHA-256 manifest. EffectGate
+reconstructs only the backend tool-result JSON, retains its content locally,
+and sends the client the ordinary bounded Context View result. Missing,
+reordered, oversized, non-canonical, or digest-mismatched chunks fail closed.
+Backends without this extension retain the normal 1 MiB response-frame limit.
 
 The filesystem objects are atomically finalized and verified before every
 page read. Identical content reuses storage only within the same hashed privacy

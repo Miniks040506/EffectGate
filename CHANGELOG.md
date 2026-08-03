@@ -12,6 +12,8 @@ evidence and five-role Ed25519 sign-off.
 ### Context control
 
 - Retains large and opaque tool results in a local content-addressed store.
+- Accepts digest-verified large backend results through bounded JSON-RPC chunks
+  while preserving the 1 MiB per-frame limit.
 - Emits bounded, cited text pages, literal search windows, and structured
   JSON/JSONL, CSV/TSV, and Markdown projections through signed opaque cursors.
 - Applies deterministic high-signal credential redaction, conservative opacity

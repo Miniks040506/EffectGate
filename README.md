@@ -189,6 +189,7 @@ configuration may instead bind one exact digest-pinned stdio process.
 | Backend selection | Bundled fixture or one exact reviewed stdio config; command-line backend injection is rejected |
 | Process launch | `shell: false` with an explicit environment allowlist |
 | Frame size | Incoming and outgoing JSON-RPC frames are limited to 1 MiB |
+| Large backend results | The optional EffectGate chunk extension carries one tool result as ordered 512 KiB base64 chunks, with a 32 MiB cumulative cap and final SHA-256 manifest; the client still receives one bounded response |
 | Request IDs | Safe integers or UTF-8 strings no longer than 128 bytes |
 | Work bound | At most 64 pending backend requests |
 | Timeout | Each forwarded request expires after 10 seconds |
@@ -210,7 +211,7 @@ configuration may instead bind one exact digest-pinned stdio process.
 | Continuity | Artifacts with an unfetched cursor are pinned; recent retries use a bounded page cache; explicit invalidation revokes cached and live cursors |
 | Page bound | At most 4,096 source bytes, cut only at a valid UTF-8 boundary |
 | Redaction | Versioned assignment, bearer-token, and common token-prefix rules run before every emitted page; more than 4,096 detected spans fails closed |
-| Benchmark evidence | Seeded P0–P3 order, stable pair/run IDs, warm task timing, alternating long-lived native/proxy latency profiles, real execution of all four small-read fixture profiles, exact frozen LOG/JSON/25 MiB JSONL/CSV context-plane corpora, exclusive JSONL creation, retained failures, deterministic median/p95/bootstrap-CI reports, canonical real-host observation import, four-task target-corpus qualification, and review-only exposure recommendations |
+| Benchmark evidence | Seeded P0–P3 order, stable pair/run IDs, warm task timing, alternating long-lived native/proxy latency profiles, real execution of all four small-read fixture profiles, exact frozen LOG/JSON/25 MiB JSONL/CSV context-plane corpora, bounded multi-frame tool-result transport, exclusive JSONL creation, retained failures, deterministic median/p95/bootstrap-CI reports, canonical real-host observation import, four-task target-corpus qualification, and review-only exposure recommendations |
 | Errors | Backend errors and stderr content are not passed through verbatim |
 | Flow control | Client input and fixture output pause while downstream writables are backpressured |
 

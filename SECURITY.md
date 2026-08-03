@@ -144,7 +144,7 @@ The current runtime assumes:
   secret/PII detection or protection. More than 4,096 detected spans fails
   closed.
 - Opacity screening is a deterministic, integer-only heuristic over a
-  maximum 1 MiB artifact. It may withhold generated, minified, or encoded text
+  maximum 32 MiB artifact. It may withhold generated, minified, or encoded text
   that is not secret. It does not identify encryption, replace redaction, or
   prove that unflagged content is safe. It checks selected private-key markers,
   long token runs, wrapped base64-like/hexadecimal blocks, and bounded
@@ -197,16 +197,17 @@ The current runtime assumes:
   process/client and session identifiers, and a fixed read-only policy version;
   it does not authenticate an OS principal or host client and has no durable
   policy-generation binding.
-- Search is a bounded, case-sensitive literal scan over at most a 1 MiB
+- Search is a bounded, case-sensitive literal scan over at most a 32 MiB
   artifact. It has no regex, semantic ranking, persistent index, or untrusted
   query logging, and it decodes the complete artifact for each search page.
-- JSON/JSONL projection reparses at most a 1 MiB artifact per page using the
-  built-in JSON parser. It supports JSON Pointer fields and scalar equality
+- JSON projection reparses at most a 32 MiB artifact per page using the
+  built-in JSON parser. JSONL projection scans one byte-bounded line at a time.
+  Both support JSON Pointer fields and scalar equality
   only—no JSONPath, expressions, code execution, comparison, or membership.
 - Malformed JSON falls back to bounded redacted text without repair. Malformed
   JSONL lines and records larger than the projection budget become cited
   diagnostics rather than model-visible raw data.
-- CSV/TSV projection reparses at most a 1 MiB artifact per page with a strict
+- CSV/TSV projection reparses at most a 32 MiB artifact per page with a strict
   dependency-free parser. It limits columns, fields, and records; treats the
   first row as a unique non-empty header; and structurally redacts common
   credential columns. It does not infer dialects or types, evaluate formulas,
@@ -217,6 +218,9 @@ The current runtime assumes:
   does not render HTML or implement full CommonMark or Setext headings.
 - The 4 KiB Context View budget covers source content; the surrounding MCP/JSON
   tool-result value is capped at 64 KiB and the complete frame at 1 MiB.
+- The optional backend chunk extension accepts only ordered base64 tool-result
+  chunks, caps their decoded total at 32 MiB, and verifies the final byte count
+  and SHA-256 digest before parsing. Partial or inconsistent streams fail closed.
 - Oversized untyped tool-result envelopes are retained as serialized JSON when
   possible. Retention or capacity failure returns a bounded `EG-CAS-001` error
   without reflecting the rejected source.
