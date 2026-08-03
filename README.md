@@ -210,7 +210,7 @@ configuration may instead bind one exact digest-pinned stdio process.
 | Continuity | Artifacts with an unfetched cursor are pinned; recent retries use a bounded page cache; explicit invalidation revokes cached and live cursors |
 | Page bound | At most 4,096 source bytes, cut only at a valid UTF-8 boundary |
 | Redaction | Versioned assignment, bearer-token, and common token-prefix rules run before every emitted page; more than 4,096 detected spans fails closed |
-| Benchmark evidence | Seeded P0–P3 order, stable pair/run IDs, warm task timing, alternating long-lived native/proxy latency profiles, real execution of all four small-read fixture profiles, exclusive JSONL creation, retained failures, deterministic median/p95/bootstrap-CI reports, an absolute long-lived latency gate with relative diagnostics, and review-only exposure recommendations |
+| Benchmark evidence | Seeded P0–P3 order, stable pair/run IDs, warm task timing, alternating long-lived native/proxy latency profiles, real execution of all four small-read fixture profiles, exclusive JSONL creation, retained failures, deterministic median/p95/bootstrap-CI reports, an absolute long-lived latency gate with relative diagnostics, canonical real-host observation import, four-task target-corpus qualification, and review-only exposure recommendations |
 | Errors | Backend errors and stderr content are not passed through verbatim |
 | Flow control | Client input and fixture output pause while downstream writables are backpressured |
 
@@ -694,6 +694,8 @@ The dependency-free suite directly verifies:
   statistical, profiler, and failed-gate evidence before enforcing the verdict;
 - fail-closed exposure recommendations with measured quality gates, explicit
   review requirements, no policy mutation, and no direct-bypass suggestion;
+- offline target-corpus admission that rejects incomplete profile matrices,
+  inconsistent environments, token proxies, and missing native-deferral proof;
 - phase/Capsule-bound protected-intent preparation, exact approval admission,
   idempotent dispatch, lost-response reconciliation, verified Effect/Phase
   Receipts, startup recovery without duplicate dispatch, and stale-state

@@ -248,6 +248,32 @@ it cannot change configuration or policy, never auto-applies a profile, and
 never recommends direct bypass. Fixture evidence has no host-session token
 count, so it intentionally produces `hold`.
 
+Captured real-host observations can be normalized and qualified entirely
+offline:
+
+```powershell
+npm run benchmark:observe -- --input .\BENCH-READ-001.observations.json --output .\BENCH-READ-001.jsonl
+npm run benchmark:target -- --input .\target-corpus-manifest.json > .\target-corpus-qualification.json
+```
+
+The canonical observation file contains the source commit, common environment
+and prompt/rubric digests, plus exactly one P0/P1/P2/P3 metrics record for each
+repetition. The target manifest binds evidence for `BENCH-READ-001`,
+`BENCH-JSON-002`, `BENCH-STREAM-003`, and `BENCH-TABLE-004`. Qualification
+requires 20 complete real-model repetitions per task, qualified native
+deferral, no more than a two-point conservative task-success loss, at most a
+10% fetch-rate bound, at least 70% first-view reduction, and at least 40%
+measured total-input reduction. Only comparable `host_reported` or
+`tokenizer_exact` total-input counts can satisfy the token gate; byte proxies
+remain useful diagnostics but produce `fail`. These commands do not launch a
+model, access a network, or spend provider credits.
+
+For P0, `tool_result_tokens` describes the native initial result; for P1 it
+describes only the bounded first view. `total_input_tokens` covers the complete
+task session. Every token count's `input_digest` must bind the retained raw host
+usage event or exact tokenizer input; the importer does not convert estimates
+into measured values.
+
 The fixture exposes:
 
 | Tool | Purpose |
