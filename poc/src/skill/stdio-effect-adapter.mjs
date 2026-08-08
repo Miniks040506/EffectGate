@@ -20,7 +20,7 @@ import {
 } from "../proxy/mcp-contract.mjs";
 
 const SERVER_NAME = "effectgate-reviewed-effect-fixture";
-const REQUEST_TIMEOUT_MS = 500;
+const REQUEST_TIMEOUT_MS = 1_500;
 const MAX_PENDING = 8;
 const IDENTIFIER = /^eg_[A-Za-z0-9_-]{43}$/u;
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
