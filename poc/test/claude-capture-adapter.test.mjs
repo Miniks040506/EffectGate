@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -13,9 +15,11 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  assembleClaudeObservations,
   buildClaudeMcpDryRun,
   normalizeClaudeHostCapture
 } from "../src/benchmark/claude-capture-adapter.mjs";
+import { runObservedBenchmark } from "../src/benchmark/observation-runner.mjs";
 import { canonicalJson } from "../src/skill/passport-compiler.mjs";
 import { MCP_VERSION } from "../src/proxy/effectgate.mjs";
 import { RpcProcess } from "../src/testkit/rpc-process.mjs";
@@ -24,6 +28,31 @@ const ADAPTER = fileURLToPath(new URL(
   "../src/benchmark/claude-capture-adapter.mjs", import.meta.url
 ));
 const COMMIT = "a".repeat(40);
+const PROFILES = [
+  "P0_NATIVE_DEFAULT",
+  "P1_EG_TYPED",
+  "P2_EG_MUX",
+  "P3_EAGER_DIAGNOSTIC"
+];
+
+function digest(value) {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+function count(value, label) {
+  return {
+    basis: "byte_proxy",
+    counter_id: "utf8-bytes-ceil-div-4",
+    counter_version: "1",
+    input_digest: digest(label),
+    value
+  };
+}
+
+function writeCanonical(file, value) {
+  writeFileSync(file, `${canonicalJson(value)}\n`, "utf8");
+  return file;
+}
 
 function mcpArgs(directory) {
   return [
@@ -159,6 +188,111 @@ test("Claude JSON usage normalizes without copying result text", () => {
       hostVersion: "2.1.233",
       observedAt: "2026-08-16T08:00:00.000Z"
     }), /invalid Claude capture configuration/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Claude captures assemble into accepted offline observations", async () => {
+  const root = mkdtempSync(join(tmpdir(), "effectgate-claude-assembly-"));
+  try {
+    const captureDirectory = join(root, "captures");
+    mkdirSync(captureDirectory);
+    const runs = PROFILES.map((profile, index) => {
+      const raw = join(root, `${profile}.raw.json`);
+      const capture = join(captureDirectory, `${profile}.json`);
+      writeFileSync(raw, JSON.stringify({
+        is_error: false,
+        result: `sensitive result ${profile}`,
+        num_turns: index + 1,
+        total_cost_usd: 0,
+        usage: {
+          input_tokens: index + 1,
+          cache_creation_input_tokens: 10,
+          cache_read_input_tokens: 20,
+          output_tokens: 5
+        }
+      }), "utf8");
+      normalizeClaudeHostCapture({
+        input: raw,
+        output: capture,
+        sourceCommit: COMMIT,
+        taskId: "BENCH-READ-001",
+        profile,
+        repetition: 0,
+        hostVersion: "2.1.233",
+        observedAt: "2026-08-16T08:00:00.000Z"
+      });
+      return {
+        capture_file: join("captures", `${profile}.json`),
+        metrics: {
+          task_success: true,
+          latency_ms: 100 + index,
+          fetch_count: 0,
+          tool_call_count: profile === "P2_EG_MUX" ? 3 : 1,
+          tool_schema_tokens: count(100, `${profile}:schema`),
+          tool_result_tokens: count(200, `${profile}:result`),
+          compatibility: profile === "P1_EG_TYPED"
+            ? {
+                native_deferral: "qualified",
+                evidence_digest: digest("qualified-host-build")
+              }
+            : {
+                native_deferral: profile === "P2_EG_MUX"
+                  ? "profile_not_native_deferred"
+                  : "not_applicable"
+              }
+        }
+      };
+    });
+    const manifest = {
+      backend_digest: digest("backend"),
+      effort: "medium",
+      host_version: "2.1.233",
+      kind: "effectgate_claude_observation_assembly",
+      machine_class: "test-machine",
+      model: "test-model",
+      observed_at: "2026-08-16T08:05:00.000Z",
+      prompt_digest: digest("prompt"),
+      repetitions: 1,
+      rubric_digest: digest("rubric"),
+      runs,
+      schema_version: "1.0.0",
+      seed: "claude-assembly-test",
+      source_commit: COMMIT,
+      task_id: "BENCH-READ-001"
+    };
+    const input = writeCanonical(join(root, "assembly.json"), manifest);
+    const output = join(root, "observations.json");
+    const observations = assembleClaudeObservations({ input, output });
+    assert.deepEqual(
+      observations.runs.map(({ profile }) => profile),
+      PROFILES
+    );
+    assert.deepEqual(
+      observations.runs.map(({ metrics }) =>
+        metrics.total_input_tokens.value),
+      [31, 32, 33, 34]
+    );
+    const stored = readFileSync(output, "utf8");
+    assert.equal(stored, `${canonicalJson(observations)}\n`);
+    assert.equal(stored.includes("sensitive result"), false);
+
+    const imported = await runObservedBenchmark({
+      input: output,
+      output: join(root, "benchmark.jsonl")
+    });
+    assert.equal(imported.benchmark.events.length, 4);
+    assert.ok(imported.benchmark.events.every(
+      ({ status }) => status === "completed"
+    ));
+
+    const invalid = structuredClone(manifest);
+    invalid.runs[1].capture_file = invalid.runs[0].capture_file;
+    assert.throws(() => assembleClaudeObservations({
+      input: writeCanonical(join(root, "duplicate.json"), invalid),
+      output: join(root, "invalid-observations.json")
+    }), /duplicate Claude host capture/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

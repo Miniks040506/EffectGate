@@ -276,6 +276,27 @@ Normalization never launches Claude. It binds the exact raw-event digest,
 records comparable host-reported input usage, and stores only a digest and byte
 length for the final model text.
 
+After all four profiles for a task repetition are normalized, assemble them
+without launching Claude:
+
+```powershell
+npm run benchmark:assemble -- --input .\BENCH-READ-001.assembly.json --output .\BENCH-READ-001.observations.json
+npm run benchmark:observe -- --input .\BENCH-READ-001.observations.json --output .\BENCH-READ-001.jsonl
+```
+
+The canonical assembly manifest uses
+`kind: "effectgate_claude_observation_assembly"`, schema version `1.0.0`, the
+same benchmark metadata accepted by `benchmark:observe`, and a `runs` array.
+Each run contains `capture_file` plus reviewed safe benchmark `metrics` without
+`total_input_tokens`. Capture paths are resolved relative to the manifest.
+The assembler requires exactly one P0/P1/P2/P3 capture per repetition, binds
+source commit, task, host version, profile and repetition, and injects the
+host-reported total-input count from the sanitized capture only. It rejects
+duplicate slots, failed-host/success conflicts, non-canonical files and output
+overwrites. Task success, latency, fetch count and tool-call count remain
+operator-observed inputs because Claude's terminal usage event cannot prove
+them. The command is offline and makes no network or model call.
+
 `benchmark:corpus` builds the frozen `LOG_80K`, `JSON_50K`, `JSONL_25MB`, and
 `CSV_100K` datasets, verifies their pinned SHA-256 digests, retains each in the
 32 MiB ContextStore, and executes cited search/projection oracles with a 4 KiB
