@@ -1131,7 +1131,13 @@ export function runProxy(args) {
     return `${source}__${digest}`;
   }
 
-  function forward(clientRequest, method, params, transform = (value) => value) {
+  function forward(
+    clientRequest,
+    method,
+    params,
+    transform = (value) => value,
+    onResult
+  ) {
     if (!backendAvailable) {
       reply(errorMessage(clientRequest.id, -32002, "The backend is unavailable."));
       return;
@@ -1159,6 +1165,7 @@ export function runProxy(args) {
       timeout,
       transform,
       method,
+      ...(onResult === undefined ? {} : { onResult }),
       ...(method === "tools/call"
         ? {
             chunkedResult: new ChunkedResultReceiver(
@@ -1268,6 +1275,10 @@ export function runProxy(args) {
             bytes: Buffer.byteLength(raw, "utf8")
           });
         }
+        if (waiting.onResult !== undefined) {
+          waiting.onResult(result);
+          return;
+        }
         reply({
           jsonrpc: "2.0",
           id: waiting.clientId,
@@ -1348,6 +1359,85 @@ export function runProxy(args) {
   });
 
   process.once("exit", () => child.kill());
+
+  function verifyCatalog(result) {
+    if (reviewedBackend === undefined) return;
+    try {
+      verifyReviewedBackendFiles(reviewedBackend);
+    } catch {
+      throw new ReviewedBackendDriftError();
+    }
+    if (canonicalJson(result) !== canonicalJson(reviewedBackend.catalog)) {
+      throw new ReviewedBackendDriftError();
+    }
+  }
+
+  function admitCatalog(result, currentNames = new Map()) {
+    if (!Array.isArray(result?.tools) ||
+        (result.nextCursor !== undefined &&
+          typeof result.nextCursor !== "string")) {
+      throw new Error("invalid tools");
+    }
+    const nextNames = new Map(currentNames);
+    const tools = result.tools.flatMap((tool) => {
+      if (!isValidToolContract(tool)) throw new Error("invalid tool contract");
+      if (!isSafeReadTool(tool)) return [];
+      const publicName = publicToolName(tool.name);
+      if (nextNames.has(publicName)) throw new Error("tool name collision");
+      const publicContract = withNativeDeferralMetadata(
+        { ...tool, name: publicName },
+        deferralDecision
+      );
+      if (serializedBytes(publicContract) > MAX_TOOL_RESULT_BYTES) {
+        throw new ResultTooLargeError("tool contract exceeds the output limit");
+      }
+      nextNames.set(publicName, {
+        backendName: tool.name,
+        contextViewEligible: tool.outputSchema === undefined,
+        contract: publicContract
+      });
+      return [publicContract];
+    });
+    return { nextNames, tools };
+  }
+
+  function loadCompactCatalog(clientRequest) {
+    const cursors = new Set();
+    const loadPage = (params, names) => forward(
+      clientRequest,
+      "tools/list",
+      params,
+      undefined,
+      (result) => {
+        verifyCatalog(result);
+        const { nextNames } = admitCatalog(result, names);
+        if (result.nextCursor !== undefined) {
+          if (cursors.size >= MAX_PENDING_REQUESTS ||
+              cursors.has(result.nextCursor)) {
+            throw new Error("invalid tools cursor");
+          }
+          cursors.add(result.nextCursor);
+          loadPage({ cursor: result.nextCursor }, nextNames);
+          return;
+        }
+        const publicCatalog = {
+          tools: [...COMPACT_MUX_TOOLS, CONTEXT_FETCH_TOOL]
+        };
+        const guardedCatalog = guardModelVisible(publicCatalog, {
+          stage: "tool_metadata",
+          category: "tool_schema_tokens_emitted"
+        });
+        toolNames = nextNames;
+        catalogComplete = true;
+        reply({
+          jsonrpc: "2.0",
+          id: clientRequest.id,
+          result: guardedCatalog
+        });
+      }
+    );
+    loadPage({}, new Map());
+  }
 
   readBoundedJsonLines(process.stdin, {
     onMessage(message) {
@@ -1496,64 +1586,41 @@ export function runProxy(args) {
             );
             break;
           }
+          if (compactMux) {
+            if (message.params?.cursor !== undefined) {
+              reply(errorMessage(
+                message.id,
+                -32602,
+                "The tools cursor is invalid."
+              ));
+              break;
+            }
+            toolNames = new Map();
+            catalogComplete = false;
+            loadCompactCatalog(message);
+            break;
+          }
           if (message.params?.cursor === undefined) {
             toolNames = new Map();
             catalogComplete = false;
           }
           forward(message, "tools/list", message.params, (result) => {
-            if (reviewedBackend !== undefined) {
-              try {
-                verifyReviewedBackendFiles(reviewedBackend);
-              } catch {
-                throw new ReviewedBackendDriftError();
-              }
-              if (canonicalJson(result) !==
-                  canonicalJson(reviewedBackend.catalog)) {
-                throw new ReviewedBackendDriftError();
-              }
-            }
-            if (!Array.isArray(result?.tools)) throw new Error("invalid tools");
-            const nextNames =
+            verifyCatalog(result);
+            const currentNames =
               typeof message.params?.cursor === "string"
                 ? new Map(toolNames)
                 : new Map();
-            const tools = result.tools.flatMap((tool) => {
-              if (!isValidToolContract(tool)) {
-                throw new Error("invalid tool contract");
-              }
-              if (!isSafeReadTool(tool)) return [];
-              const publicName = publicToolName(tool.name);
-              if (nextNames.has(publicName)) throw new Error("tool name collision");
-              const publicContract = withNativeDeferralMetadata(
-                { ...tool, name: publicName },
-                deferralDecision
-              );
-              if (serializedBytes(publicContract) > MAX_TOOL_RESULT_BYTES) {
-                throw new ResultTooLargeError(
-                  "tool contract exceeds the output limit"
-                );
-              }
-              nextNames.set(publicName, {
-                backendName: tool.name,
-                contextViewEligible: tool.outputSchema === undefined,
-                contract: publicContract
-              });
-              return [publicContract];
-            });
+            const { nextNames, tools } = admitCatalog(result, currentNames);
             const publicCatalog = {
               ...result,
-              tools: compactMux
-                ? message.params?.cursor === undefined
-                  ? [...COMPACT_MUX_TOOLS, CONTEXT_FETCH_TOOL]
-                  : []
-                : message.params?.cursor === undefined
-                  ? [
-                      ...tools,
-                      CONTEXT_FETCH_TOOL,
-                      CONTEXT_SEARCH_TOOL,
-                      CONTEXT_PROJECT_TOOL
-                    ]
-                  : tools
+              tools: message.params?.cursor === undefined
+                ? [
+                    ...tools,
+                    CONTEXT_FETCH_TOOL,
+                    CONTEXT_SEARCH_TOOL,
+                    CONTEXT_PROJECT_TOOL
+                  ]
+                : tools
             };
             if (serializedBytes(publicCatalog) > MAX_TOOL_RESULT_BYTES) {
               throw new ResultTooLargeError(

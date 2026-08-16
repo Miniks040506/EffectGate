@@ -36,11 +36,7 @@ test("compact mux searches, describes, calls, and fetches admitted tools", async
     COMPACT_CALL_TOOL,
     CONTEXT_FETCH_TOOL
   ]);
-  assert.equal(firstPage.result.nextCursor, "page-2");
-  const secondPage = await proxy.request("tools/list", {
-    cursor: firstPage.result.nextCursor
-  });
-  assert.deepEqual(secondPage.result, { tools: [] });
+  assert.equal(firstPage.result.nextCursor, undefined);
 
   const searched = await proxy.request("tools/call", {
     name: COMPACT_SEARCH_TOOL.name,
@@ -74,6 +70,8 @@ test("compact mux searches, describes, calls, and fetches admitted tools", async
     name: COMPACT_SEARCH_TOOL.name,
     arguments: { query: "large result" }
   });
+  assert.equal(largeSearch.result.catalog_complete, true);
+  assert.equal(largeSearch.result.matches[0].ref, "fixture__large_log");
   const large = await proxy.request("tools/call", {
     name: COMPACT_CALL_TOOL.name,
     arguments: {

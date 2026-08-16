@@ -90,7 +90,6 @@ test("fixture benchmark runs all four real profile paths with joined ledgers", a
         "tool_metadata",
         "tool_metadata",
         "tool_metadata",
-        "tool_metadata",
         "backend_raw_result",
         "first_view"
       ]
