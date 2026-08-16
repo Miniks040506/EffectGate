@@ -29,6 +29,7 @@
     "benchmark:fixture": "node src/benchmark/fixture-runner.mjs",
     "benchmark:corpus": "node src/benchmark/target-corpus-fixture.mjs",
     "benchmark:claude-capture": "node src/benchmark/claude-capture-adapter.mjs",
+    "benchmark:assemble": "node src/benchmark/claude-capture-adapter.mjs assemble",
     "benchmark:observe": "node src/benchmark/observation-runner.mjs",
     "benchmark:report": "node src/benchmark/statistical-report.mjs",
     "benchmark:gate": "node src/benchmark/performance-gate.mjs",
