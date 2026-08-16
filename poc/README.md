@@ -257,6 +257,25 @@ npm run benchmark:observe -- --input .\BENCH-READ-001.observations.json --output
 npm run benchmark:target -- --input .\target-corpus-manifest.json > .\target-corpus-qualification.json
 ```
 
+Prepare a restart-safe Claude MCP configuration without launching Claude:
+
+```powershell
+npm run --silent benchmark:claude-capture -- dry-run --ledger-directory .\claude-ledgers --run-id RUN_ID --profile native_deferred > claude-mcp-dry-run.json
+```
+
+Use the emitted `mcp_config` for a separately authorized Claude run. Every MCP
+process or host retry creates a unique ledger plus a canonical attempt manifest,
+so a retry cannot collide with the prior process's session-bound ledger. After
+retaining Claude's `--output-format json` event, normalize its usage offline:
+
+```powershell
+npm run --silent benchmark:claude-capture -- normalize --input .\claude-raw.json --output .\claude-capture.json --source-commit FULL_40_CHARACTER_GIT_SHA --task-id BENCH-READ-001 --profile P0_NATIVE_DEFAULT --repetition 0 --host-version 2.1.233 --observed-at 2026-08-16T08:00:00.000Z
+```
+
+Normalization never launches Claude. It binds the exact raw-event digest,
+records comparable host-reported input usage, and stores only a digest and byte
+length for the final model text.
+
 `benchmark:corpus` builds the frozen `LOG_80K`, `JSON_50K`, `JSONL_25MB`, and
 `CSV_100K` datasets, verifies their pinned SHA-256 digests, retains each in the
 32 MiB ContextStore, and executes cited search/projection oracles with a 4 KiB
