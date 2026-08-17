@@ -490,6 +490,14 @@ function contextViewResult(view, isError = false) {
   return result;
 }
 
+function structuredToolResult(value) {
+  return {
+    content: [{ type: "text", text: JSON.stringify(value) }],
+    structuredContent: value,
+    isError: false
+  };
+}
+
 function safeToolFailure(code, message) {
   return {
     content: [{ type: "text", text: `${code}: ${message}` }],
@@ -1698,10 +1706,12 @@ export function runProxy(args) {
                 jsonrpc: "2.0",
                 id: message.id,
                 result: guardModelVisible(
-                  searchCompactCapabilities(
-                    toolNames,
-                    message.params?.arguments,
-                    catalogComplete
+                  structuredToolResult(
+                    searchCompactCapabilities(
+                      toolNames,
+                      message.params?.arguments,
+                      catalogComplete
+                    )
                   ),
                   {
                     stage: "tool_metadata",
@@ -1736,7 +1746,7 @@ export function runProxy(args) {
                 jsonrpc: "2.0",
                 id: message.id,
                 result: guardModelVisible(
-                  described,
+                  structuredToolResult(described),
                   {
                     stage: "tool_metadata",
                     category: "tool_schema_tokens_emitted"

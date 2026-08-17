@@ -27,6 +27,9 @@ import { RpcProcess } from "../src/testkit/rpc-process.mjs";
 const ADAPTER = fileURLToPath(new URL(
   "../src/benchmark/claude-capture-adapter.mjs", import.meta.url
 ));
+const CLAUDE_PILOT = fileURLToPath(new URL(
+  "../evidence/claude-code-four-profile-pilot-2.1.233.json", import.meta.url
+));
 const COMMIT = "a".repeat(40);
 const PROFILES = [
   "P0_NATIVE_DEFAULT",
@@ -312,4 +315,30 @@ test("Claude adapter dry-run is local and makes no model call", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("real Claude pilot retains content-free failure evidence", () => {
+  const pilot = JSON.parse(readFileSync(CLAUDE_PILOT, "utf8"));
+  assert.equal(pilot.profiles.length, 4);
+  assert.deepEqual(
+    pilot.profiles.map(({ task_success: success }) => success),
+    [true, true, false, true]
+  );
+  const failed = pilot.profiles[2];
+  assert.equal(failed.failure_code, pilot.finding.failure_code);
+  assert.equal(pilot.finding.local_regression_state, "pass");
+  assert.equal(pilot.finding.real_host_requalification_required, true);
+  assert.equal(pilot.usage_guard.authorized_sessions, 4);
+  assert.equal(pilot.usage_guard.executed_sessions, 4);
+  assert.equal(pilot.usage_guard.is_using_overage, false);
+  assert.ok(
+    pilot.usage_guard.total_metered_equivalent_usd
+      <= pilot.usage_guard.aggregate_max_budget_usd
+  );
+  for (const profile of pilot.profiles) {
+    assert.equal("result" in profile.terminal, false);
+    assert.match(profile.raw_event_digest, /^sha256:[a-f0-9]{64}$/u);
+    assert.ok(Number.isInteger(profile.usage.total_input_tokens));
+  }
+  assert.equal(pilot.evidence_state, "fail");
 });

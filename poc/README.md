@@ -297,6 +297,14 @@ overwrites. Task success, latency, fetch count and tool-call count remain
 operator-observed inputs because Claude's terminal usage event cannot prove
 them. The command is offline and makes no network or model call.
 
+EG-048M-G retains a source-bound Claude Code 2.1.233 four-profile pilot under
+`evidence/`. P0, P1, and P3 passed; P2 failed because compact discovery returned
+a plain JSON object instead of an MCP `CallToolResult`, leaving no model-visible
+result. The shared result boundary is fixed and passes offline regression tests,
+but the retained pilot remains `fail` until a separately authorized P2 real-host
+requalification passes. This plumbing pilot does not count toward the 320-run
+target-corpus qualification claim.
+
 `benchmark:corpus` builds the frozen `LOG_80K`, `JSON_50K`, `JSONL_25MB`, and
 `CSV_100K` datasets, verifies their pinned SHA-256 digests, retains each in the
 32 MiB ContextStore, and executes cited search/projection oracles with a 4 KiB

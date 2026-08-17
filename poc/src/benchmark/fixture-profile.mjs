@@ -115,7 +115,7 @@ export async function runFixtureProfile(
         name: COMPACT_SEARCH_TOOL.name,
         arguments: { query: "deterministic echo", limit: 8 }
       }));
-      const ref = searched.matches?.find(
+      const ref = searched.structuredContent?.matches?.find(
         (match) => match.ref === "fixture__echo"
       )?.ref;
       if (ref === undefined) throw failure("capability_not_found");

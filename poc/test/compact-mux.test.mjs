@@ -13,6 +13,16 @@ import {
 } from "../src/proxy/effectgate.mjs";
 import { RpcProcess } from "../src/testkit/rpc-process.mjs";
 
+function structured(response) {
+  assert.equal(response.error, undefined);
+  assert.equal(response.result.isError, false);
+  assert.deepEqual(
+    JSON.parse(response.result.content[0].text),
+    response.result.structuredContent
+  );
+  return response.result.structuredContent;
+}
+
 test("compact mux searches, describes, calls, and fetches admitted tools", async (context) => {
   const proxy = new RpcProcess([
     "mcp",
@@ -42,23 +52,25 @@ test("compact mux searches, describes, calls, and fetches admitted tools", async
     name: COMPACT_SEARCH_TOOL.name,
     arguments: { query: "echo", limit: 10 }
   });
-  assert.equal(searched.result.catalog_complete, true);
+  const searchResult = structured(searched);
+  assert.equal(searchResult.catalog_complete, true);
   assert.deepEqual(
-    searched.result.matches.map(({ ref }) => ref),
+    searchResult.matches.map(({ ref }) => ref),
     ["fixture__echo", "fixture__echo_again"]
   );
 
   const described = await proxy.request("tools/call", {
     name: COMPACT_DESCRIBE_TOOL.name,
-    arguments: { ref: searched.result.matches[0].ref }
+    arguments: { ref: searchResult.matches[0].ref }
   });
-  assert.deepEqual(described.result.input_schema, FIXTURE_TOOL.inputSchema);
-  assert.deepEqual(described.result.output_schema, FIXTURE_TOOL.outputSchema);
+  const describedResult = structured(described);
+  assert.deepEqual(describedResult.input_schema, FIXTURE_TOOL.inputSchema);
+  assert.deepEqual(describedResult.output_schema, FIXTURE_TOOL.outputSchema);
 
   const called = await proxy.request("tools/call", {
     name: COMPACT_CALL_TOOL.name,
     arguments: {
-      ref: searched.result.matches[0].ref,
+      ref: searchResult.matches[0].ref,
       arguments: { text: "through compact mux" }
     }
   });
@@ -70,12 +82,13 @@ test("compact mux searches, describes, calls, and fetches admitted tools", async
     name: COMPACT_SEARCH_TOOL.name,
     arguments: { query: "large result" }
   });
-  assert.equal(largeSearch.result.catalog_complete, true);
-  assert.equal(largeSearch.result.matches[0].ref, "fixture__large_log");
+  const largeSearchResult = structured(largeSearch);
+  assert.equal(largeSearchResult.catalog_complete, true);
+  assert.equal(largeSearchResult.matches[0].ref, "fixture__large_log");
   const large = await proxy.request("tools/call", {
     name: COMPACT_CALL_TOOL.name,
     arguments: {
-      ref: largeSearch.result.matches[0].ref,
+      ref: largeSearchResult.matches[0].ref,
       arguments: { lines: 600 }
     }
   });

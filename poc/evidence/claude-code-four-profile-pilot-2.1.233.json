@@ -1,0 +1,143 @@
+{
+  "kind": "effectgate_claude_four_profile_pilot",
+  "schema_version": "1.0.0",
+  "task_id": "BENCH-SMALL-005",
+  "source_commit": "2517529ad74509d1f0eac9e66f23c3124baeb035",
+  "client": {
+    "name": "claude-code",
+    "version": "2.1.233",
+    "build_digest": "sha256:8ae35d41252b02a7b747097ececf368b6872fab93ca104832b99a8ec5942fabd"
+  },
+  "model": "claude-sonnet-5",
+  "effort": "low",
+  "prompt_digest": "sha256:9e9e4cdfad6ef6fc144e986fa3881057f740be642abeeaf4a3b0cab1201a8906",
+  "rubric_digest": "sha256:64254d296a407f23fbdfea74077f61c42c1d80c6751806c5439f49a44d3b219c",
+  "repetition": 0,
+  "profiles": [
+    {
+      "profile": "P0_NATIVE_DEFAULT",
+      "configuration_digest": "sha256:d2223c795577dcb5584770c2987271de758405b8255ea86034a95b1c233a64ae",
+      "observed_at": "2026-08-17T08:58:22.179Z",
+      "raw_event_digest": "sha256:3da58de2431664b071939389555aa47cf3843c59ac7b7b093911b1879205ff6e",
+      "terminal": {
+        "is_error": false,
+        "num_turns": 3,
+        "result_bytes": 24,
+        "result_digest": "sha256:53568a4ef1e4dd1e911b5c71760a87c0cef436beb5b5fdea08cc934b5cf7a30f"
+      },
+      "usage": {
+        "total_input_tokens": 31291,
+        "metered_equivalent_usd": 0.049587
+      },
+      "observation": {
+        "mcp_process_attempt_count": 1,
+        "tool_search_call_count": 1,
+        "total_deferred_tools": 3,
+        "selected_tool": "mcp__effectgate__echo",
+        "selected_tool_call_count": 1,
+        "probe_result_exact": true
+      },
+      "task_success": true
+    },
+    {
+      "profile": "P1_EG_TYPED",
+      "configuration_digest": "sha256:163e8092d3a20daebcf341b28a65c0ae41beb362149fb969f59897cf999ccc80",
+      "observed_at": "2026-08-17T08:58:39.597Z",
+      "raw_event_digest": "sha256:ce6e3242be51e0651060c2522bc68ece5dc646264b8796667030d50e25193d44",
+      "terminal": {
+        "is_error": false,
+        "num_turns": 3,
+        "result_bytes": 24,
+        "result_digest": "sha256:53568a4ef1e4dd1e911b5c71760a87c0cef436beb5b5fdea08cc934b5cf7a30f"
+      },
+      "usage": {
+        "total_input_tokens": 31510,
+        "metered_equivalent_usd": 0.019090499999999996
+      },
+      "observation": {
+        "mcp_process_attempt_count": 2,
+        "tool_search_call_count": 1,
+        "total_deferred_tools": 6,
+        "selected_tool": "mcp__effectgate__fixture__echo",
+        "selected_tool_call_count": 1,
+        "probe_result_exact": true
+      },
+      "task_success": true
+    },
+    {
+      "profile": "P2_EG_MUX",
+      "configuration_digest": "sha256:0ab5ebaee8db8e2904f32bbe810fe04c31bbe82a7b6cc9e067b7b1574a26998c",
+      "observed_at": "2026-08-17T08:59:20.636Z",
+      "raw_event_digest": "sha256:5985278f73335d6ae1852c1bafe3a1117f7dcce335084ac9908eb62bcae1e524",
+      "terminal": {
+        "is_error": false,
+        "num_turns": 11,
+        "result_bytes": 588,
+        "result_digest": "sha256:88acd952fe0edf2239ad3aa6c26a77e63f2d684430077975ae55a4080018d9e3"
+      },
+      "usage": {
+        "total_input_tokens": 116208,
+        "metered_equivalent_usd": 0.0797171
+      },
+      "observation": {
+        "mcp_process_attempt_count": 1,
+        "tool_search_call_count": 2,
+        "total_deferred_tools": 4,
+        "compact_tool_call_count": 8,
+        "selected_tool_call_count": 0,
+        "probe_result_exact": false
+      },
+      "failure_code": "compact_call_tool_result_unframed",
+      "task_success": false
+    },
+    {
+      "profile": "P3_EAGER_DIAGNOSTIC",
+      "configuration_digest": "sha256:d2223c795577dcb5584770c2987271de758405b8255ea86034a95b1c233a64ae",
+      "observed_at": "2026-08-17T08:59:47.590Z",
+      "raw_event_digest": "sha256:9049eed22122007bd6cf79756f232cf22cea6e14db2e806725a970fea1db916e",
+      "terminal": {
+        "is_error": false,
+        "num_turns": 2,
+        "result_bytes": 24,
+        "result_digest": "sha256:53568a4ef1e4dd1e911b5c71760a87c0cef436beb5b5fdea08cc934b5cf7a30f"
+      },
+      "usage": {
+        "total_input_tokens": 19817,
+        "metered_equivalent_usd": 0.0649856
+      },
+      "observation": {
+        "mcp_process_attempt_count": 1,
+        "tool_search_call_count": 0,
+        "total_deferred_tools": 0,
+        "selected_tool": "mcp__effectgate__echo",
+        "selected_tool_call_count": 1,
+        "probe_result_exact": true
+      },
+      "task_success": true
+    }
+  ],
+  "usage_guard": {
+    "authentication": "claude.ai",
+    "api_key_source": "none",
+    "authorized_sessions": 4,
+    "executed_sessions": 4,
+    "max_budget_usd_per_session": 0.25,
+    "aggregate_max_budget_usd": 1,
+    "total_metered_equivalent_usd": 0.2133802,
+    "max_rate_limit_utilization": 0.93,
+    "is_using_overage": false
+  },
+  "finding": {
+    "failure_profile": "P2_EG_MUX",
+    "failure_code": "compact_call_tool_result_unframed",
+    "root_cause": "Compact discovery returned a plain JSON object instead of an MCP CallToolResult, so Claude Code exposed no model-visible output.",
+    "local_fix": "Compact search and describe now return text content plus structuredContent through the shared model-visible boundary.",
+    "local_regression_state": "pass",
+    "real_host_requalification_required": true
+  },
+  "qualification_scope": {
+    "plumbing_only": true,
+    "counts_toward_target_corpus": false
+  },
+  "evidence_state": "fail"
+}
