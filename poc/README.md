@@ -312,6 +312,25 @@ pilot remains immutable; the source-bound requalification records the fix as a
 separate `pass`. It is also plumbing-only and does not count toward the target
 corpus claim.
 
+Prepare the 320-run target-corpus campaign without launching Claude:
+
+```powershell
+npm run --silent benchmark:target-batch -- init --state .\target-corpus.db --source-commit FULL_40_CHARACTER_GIT_SHA
+npm run --silent benchmark:target-batch -- claim --state .\target-corpus.db --authorization-id APPROVED_BATCH_ID --limit APPROVED_SESSION_COUNT
+npm run --silent benchmark:target-batch -- status --state .\target-corpus.db
+```
+
+Only the claimed slots may be executed. Normalize each authorized Claude result
+with `benchmark:claude-capture`, then checkpoint it without retaining result text:
+
+```powershell
+npm run --silent benchmark:target-batch -- record --state .\target-corpus.db --authorization-id APPROVED_BATCH_ID --capture .\capture.json
+```
+
+The SQLite checkpoint permits one active authorization, survives restart, binds
+all captures to the exact source commit, and rejects duplicate slots, capture
+digests, paths, and authorization IDs. These commands never launch Claude.
+
 `benchmark:corpus` builds the frozen `LOG_80K`, `JSON_50K`, `JSONL_25MB`, and
 `CSV_100K` datasets, verifies their pinned SHA-256 digests, retains each in the
 32 MiB ContextStore, and executes cited search/projection oracles with a 4 KiB
