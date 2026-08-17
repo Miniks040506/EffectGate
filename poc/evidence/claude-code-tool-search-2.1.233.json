@@ -4,22 +4,24 @@
   "task_id": "EG-014B",
   "client": {
     "name": "claude-code",
-    "version": "2.1.220",
-    "build_digest": "sha256:af5bf1f1b2aadffc768eccd787084c6fdf9ba81624cbe96c1c6d9ac1a1550231"
+    "version": "2.1.233",
+    "build_digest": "sha256:8ae35d41252b02a7b747097ececf368b6872fab93ca104832b99a8ec5942fabd"
   },
   "configuration": {
     "enable_tool_search": "true",
+    "effectgate_source_commit": "476e57430dab675ed9f15f55c7cff72aaadf51b9",
     "mcp_server": "effectgate",
     "profile": "native_deferred",
     "model": "claude-sonnet-5",
     "probe_tool": "mcp__effectgate__fixture__echo"
   },
-  "configuration_digest": "sha256:a0d770b5855ade862c755fb7d1aab23a2761d249c4a084e6d5e609e103e11f10",
+  "configuration_digest": "sha256:72d11d3f9a9787e15dbc5dce0e0582c17a4f48ab16291ab8aa2b4f88181de1a5",
   "observation": {
-    "observed_at": "2026-07-27T15:11:50.785Z",
+    "observed_at": "2026-08-16T14:15:48.293Z",
     "mcp_connected": true,
+    "mcp_process_attempt_count": 2,
     "tool_search_call_count": 1,
-    "total_deferred_tools": 25,
+    "total_deferred_tools": 6,
     "selected_tool": "mcp__effectgate__fixture__echo",
     "selected_tool_call_count": 1,
     "probe_result_exact": true,
@@ -29,9 +31,10 @@
   "usage_guard": {
     "authentication": "claude.ai",
     "api_key_source": "none",
-    "max_budget_usd": 0.25,
-    "metered_equivalent_usd": 0.0811279,
-    "weekly_utilization": 0.99,
+    "max_budget_usd": 0.1,
+    "metered_equivalent_usd": 0.049482700000000004,
+    "overage_status": "rejected",
+    "overage_disabled_reason": "org_level_disabled",
     "is_using_overage": false
   },
   "evidence_state": "pass"

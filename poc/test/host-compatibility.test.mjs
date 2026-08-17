@@ -26,12 +26,17 @@ function digest(value) {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
+const CLAUDE_VERSION = "2.1.233";
+const CLAUDE_BUILD_DIGEST =
+  "sha256:8ae35d41252b02a7b747097ececf368b6872fab93ca104832b99a8ec5942fabd";
+const EFFECTGATE_SOURCE_COMMIT =
+  "476e57430dab675ed9f15f55c7cff72aaadf51b9";
 const CLAUDE_QUALIFICATION = fileURLToPath(new URL(
-  "../evidence/claude-code-tool-search-2.1.220.json",
+  "../evidence/claude-code-tool-search-2.1.233.json",
   import.meta.url
 ));
 const CLAUDE_HOST_EVIDENCE = fileURLToPath(new URL(
-  "../evidence/host-compatibility-claude-code-2.1.220.json",
+  "../evidence/host-compatibility-claude-code-2.1.233.json",
   import.meta.url
 ));
 
@@ -107,15 +112,33 @@ test("EG-014B retains exact-build Claude Tool Search evidence", () => {
   const evidence = loadHostCompatibilityEvidence(CLAUDE_HOST_EVIDENCE);
   assert.equal(qualification.task_id, "EG-014B");
   assert.equal(qualification.evidence_state, "pass");
+  assert.equal(qualification.client.version, CLAUDE_VERSION);
+  assert.equal(qualification.client.build_digest, CLAUDE_BUILD_DIGEST);
+  assert.equal(
+    qualification.configuration.effectgate_source_commit,
+    EFFECTGATE_SOURCE_COMMIT
+  );
+  assert.equal(qualification.observation.mcp_connected, true);
+  assert.equal(qualification.observation.mcp_process_attempt_count, 2);
   assert.equal(qualification.observation.tool_search_call_count, 1);
+  assert.equal(qualification.observation.total_deferred_tools, 6);
   assert.equal(qualification.observation.selected_tool_call_count, 1);
   assert.equal(qualification.observation.probe_result_exact, true);
   assert.equal(qualification.usage_guard.is_using_overage, false);
+  assert.equal(qualification.usage_guard.overage_status, "rejected");
+  assert.equal(
+    qualification.usage_guard.overage_disabled_reason,
+    "org_level_disabled"
+  );
+  assert.ok(
+    qualification.usage_guard.metered_equivalent_usd <=
+      qualification.usage_guard.max_budget_usd
+  );
   assert.equal(
     digest(JSON.stringify(qualification.configuration)),
     qualification.configuration_digest
   );
-  assert.equal(evidence.manifest.client.version, "2.1.220");
+  assert.equal(evidence.manifest.client.version, CLAUDE_VERSION);
   assert.equal(
     evidence.manifest.client.build_digest,
     qualification.client.build_digest

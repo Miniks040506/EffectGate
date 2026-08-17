@@ -188,7 +188,7 @@ Manifest shape:
 
 Replace the placeholder digests and dates with captured qualification
 evidence; never mark an assumed capability as `pass`. EG-014B retains one
-sanitized real-host result for Claude Code 2.1.220 under `evidence/`. It proves
+sanitized real-host result for Claude Code 2.1.233 under `evidence/`. It proves
 that this exact build used Tool Search to discover and call the EffectGate
 fixture once. The evidence is build-bound and expires; it is not a general
 claim about other Claude Code versions.
