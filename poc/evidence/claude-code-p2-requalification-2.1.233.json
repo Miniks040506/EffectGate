@@ -1,0 +1,73 @@
+{
+  "kind": "effectgate_claude_p2_requalification",
+  "schema_version": "1.0.0",
+  "task_id": "EG-048M-H",
+  "source_commit": "e9a04a158756481d322b8a2678a4b452027fc74a",
+  "supersedes": {
+    "evidence": "claude-code-four-profile-pilot-2.1.233.json",
+    "failure_profile": "P2_EG_MUX",
+    "failure_code": "compact_call_tool_result_unframed"
+  },
+  "client": {
+    "name": "claude-code",
+    "version": "2.1.233",
+    "build_digest": "sha256:8ae35d41252b02a7b747097ececf368b6872fab93ca104832b99a8ec5942fabd"
+  },
+  "configuration": {
+    "profile": "P2_EG_MUX",
+    "model": "claude-sonnet-5",
+    "effort": "low",
+    "max_budget_usd": 0.25,
+    "configuration_digest": "sha256:c83243fe1db83e4c286376555e8d06f8905a3dc979b3b1f21f74c57ee4e5525f",
+    "prompt_digest": "sha256:cdfc07504c6ad6afad973b5bb1d2648a3248655660b3bf580c60df7076d0ad84"
+  },
+  "observation": {
+    "observed_at": "2026-08-17T09:26:39.436Z",
+    "process_status": 0,
+    "mcp_connected": true,
+    "mcp_process_attempt_count": 2,
+    "tool_search_call_count": 1,
+    "total_deferred_tools": 19,
+    "compact_search_call_count": 1,
+    "compact_describe_call_count": 1,
+    "compact_call_call_count": 1,
+    "backend_result_count": 1,
+    "probe_result_exact": true,
+    "terminal": {
+      "is_error": false,
+      "num_turns": 5,
+      "result_bytes": 24,
+      "result_digest": "sha256:53568a4ef1e4dd1e911b5c71760a87c0cef436beb5b5fdea08cc934b5cf7a30f"
+    },
+    "usage": {
+      "input_tokens": 10,
+      "cache_creation_input_tokens": 28997,
+      "cache_read_input_tokens": 113212,
+      "output_tokens": 372,
+      "total_input_tokens": 142219,
+      "metered_equivalent_usd": 0.2142186
+    }
+  },
+  "evidence": {
+    "raw_stream_digest": "sha256:bd865b22e15bab828366496bf427527addb10b9abbd46a3e86bd170421ffac5e",
+    "active_ledger_digest": "sha256:d312fdda5189d98f81aed926b9cd0ee845f5cfa3e15eb232a83a8e8b9a322f4c",
+    "retry_ledger_digest": "sha256:80ca4da7eb0f7b769c59dc350aea9dc7d4e00db741a5642b092be5b0014ebb76",
+    "raw_result_retained": false
+  },
+  "usage_guard": {
+    "authentication": "claude.ai",
+    "api_key_source": "none",
+    "authorized_sessions": 1,
+    "executed_sessions": 1,
+    "rate_limit_type": "seven_day",
+    "rate_limit_status": "allowed_warning",
+    "rate_limit_utilization": 0.79,
+    "rate_limit_resets_at": "2026-08-18T07:00:00.000Z",
+    "is_using_overage": false
+  },
+  "qualification_scope": {
+    "plumbing_only": true,
+    "counts_toward_target_corpus": false
+  },
+  "evidence_state": "pass"
+}

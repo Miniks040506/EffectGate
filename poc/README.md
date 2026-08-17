@@ -305,6 +305,13 @@ but the retained pilot remains `fail` until a separately authorized P2 real-host
 requalification passes. This plumbing pilot does not count toward the 320-run
 target-corpus qualification claim.
 
+The separately authorized EG-048M-H evidence now requalifies P2 against commit
+`e9a04a1`: Claude performed Tool Search, compact search, describe, and call once,
+received the exact fixture result, and reported no overage. The original failed
+pilot remains immutable; the source-bound requalification records the fix as a
+separate `pass`. It is also plumbing-only and does not count toward the target
+corpus claim.
+
 `benchmark:corpus` builds the frozen `LOG_80K`, `JSON_50K`, `JSONL_25MB`, and
 `CSV_100K` datasets, verifies their pinned SHA-256 digests, retains each in the
 32 MiB ContextStore, and executes cited search/projection oracles with a 4 KiB

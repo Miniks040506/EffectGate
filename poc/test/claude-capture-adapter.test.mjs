@@ -30,6 +30,9 @@ const ADAPTER = fileURLToPath(new URL(
 const CLAUDE_PILOT = fileURLToPath(new URL(
   "../evidence/claude-code-four-profile-pilot-2.1.233.json", import.meta.url
 ));
+const CLAUDE_P2_REQUALIFICATION = fileURLToPath(new URL(
+  "../evidence/claude-code-p2-requalification-2.1.233.json", import.meta.url
+));
 const COMMIT = "a".repeat(40);
 const PROFILES = [
   "P0_NATIVE_DEFAULT",
@@ -341,4 +344,23 @@ test("real Claude pilot retains content-free failure evidence", () => {
     assert.ok(Number.isInteger(profile.usage.total_input_tokens));
   }
   assert.equal(pilot.evidence_state, "fail");
+});
+
+test("real Claude compact requalification retains content-free pass evidence", () => {
+  const evidence = JSON.parse(readFileSync(CLAUDE_P2_REQUALIFICATION, "utf8"));
+  assert.equal(evidence.source_commit.length, 40);
+  assert.equal(evidence.supersedes.failure_code, "compact_call_tool_result_unframed");
+  assert.equal(evidence.configuration.profile, "P2_EG_MUX");
+  assert.equal(evidence.observation.compact_search_call_count, 1);
+  assert.equal(evidence.observation.compact_describe_call_count, 1);
+  assert.equal(evidence.observation.compact_call_call_count, 1);
+  assert.equal(evidence.observation.backend_result_count, 1);
+  assert.equal(evidence.observation.probe_result_exact, true);
+  assert.equal(evidence.usage_guard.authorized_sessions, 1);
+  assert.equal(evidence.usage_guard.executed_sessions, 1);
+  assert.equal(evidence.usage_guard.is_using_overage, false);
+  assert.equal(evidence.evidence.raw_result_retained, false);
+  assert.match(evidence.evidence.raw_stream_digest, /^sha256:[a-f0-9]{64}$/u);
+  assert.equal(evidence.qualification_scope.counts_toward_target_corpus, false);
+  assert.equal(evidence.evidence_state, "pass");
 });
