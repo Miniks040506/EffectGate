@@ -305,7 +305,7 @@ export function normalizeClaudeHostCapture({
   return capture;
 }
 
-function validatedHostCapture(file) {
+export function validatedHostCapture(file) {
   const { value } = readCanonical(file, "Claude host capture");
   const terminal = value?.terminal;
   const usage = value?.usage;
