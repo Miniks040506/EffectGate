@@ -7,6 +7,8 @@ import {
   COMPACT_SEARCH_TOOL
 } from "../src/proxy/compact-mux.mjs";
 import {
+  COMPACT_CONTEXT_PROJECT_TOOL,
+  COMPACT_CONTEXT_SEARCH_TOOL,
   CONTEXT_FETCH_TOOL,
   FIXTURE_TOOL,
   MCP_VERSION
@@ -44,7 +46,9 @@ test("compact mux searches, describes, calls, and fetches admitted tools", async
     COMPACT_SEARCH_TOOL,
     COMPACT_DESCRIBE_TOOL,
     COMPACT_CALL_TOOL,
-    CONTEXT_FETCH_TOOL
+    CONTEXT_FETCH_TOOL,
+    COMPACT_CONTEXT_SEARCH_TOOL,
+    COMPACT_CONTEXT_PROJECT_TOOL
   ]);
   assert.equal(firstPage.result.nextCursor, undefined);
 

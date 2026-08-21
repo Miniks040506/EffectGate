@@ -48,6 +48,7 @@ import {
   TokenLedgerWriteError
 } from "../budget/token-ledger.mjs";
 import { BYTE_PROXY_COUNTER } from "../budget/token-counter.mjs";
+import { buildTargetDataset } from "../benchmark/target-corpus-fixture.mjs";
 import { canonicalJson } from "../skill/passport-compiler.mjs";
 import {
   COMPACT_CALL_TOOL,
@@ -100,6 +101,7 @@ export {
 };
 export const MAX_PENDING_REQUESTS = 64;
 export const FIXTURE_MAX_LINES = 100_000;
+export const TARGET_CORPUS_PAGE_BYTES = 128 * 1024;
 const MAX_ID_BYTES = 128;
 const CURSOR_INPUT_PATTERN = new RegExp(CURSOR_PATTERN, "u");
 const TOKEN_LEDGER_PROFILES = new Set([
@@ -191,6 +193,100 @@ export const FIXTURE_LARGE_LOG_TOOL = Object.freeze({
   },
   annotations: FIXTURE_TOOL.annotations
 });
+
+export const TARGET_CORPUS_TOOL = Object.freeze({
+  name: "target_corpus",
+  title: "Frozen Target Corpus",
+  description: "Returns the exact frozen corpus for one benchmark task.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["task_id"],
+    properties: {
+      task_id: {
+        type: "string",
+        enum: [
+          "BENCH-READ-001",
+          "BENCH-JSON-002",
+          "BENCH-STREAM-003",
+          "BENCH-TABLE-004"
+        ]
+      }
+    }
+  },
+  annotations: FIXTURE_TOOL.annotations
+});
+
+export const TARGET_CORPUS_PAGE_TOOL = Object.freeze({
+  name: "target_corpus_page",
+  title: "Page Frozen Target Corpus",
+  description: "Returns one digest-bound UTF-8 page without private framing.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["task_id"],
+    properties: {
+      task_id: TARGET_CORPUS_TOOL.inputSchema.properties.task_id,
+      offset: { type: "integer", minimum: 0 },
+      max_bytes: {
+        type: "integer",
+        minimum: 1024,
+        maximum: TARGET_CORPUS_PAGE_BYTES,
+        default: TARGET_CORPUS_PAGE_BYTES
+      }
+    }
+  },
+  annotations: FIXTURE_TOOL.annotations
+});
+
+const targetDatasetCache = new Map();
+
+function cachedTargetDataset(taskId) {
+  if (!targetDatasetCache.has(taskId)) {
+    const dataset = buildTargetDataset(taskId);
+    const bytes = Buffer.from(dataset.text, "utf8");
+    targetDatasetCache.set(taskId, {
+      dataset,
+      bytes,
+      source_digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`
+    });
+  }
+  return targetDatasetCache.get(taskId);
+}
+
+function targetCorpusPage(args) {
+  if (args === null || typeof args !== "object" || Array.isArray(args) ||
+      typeof args.task_id !== "string" ||
+      (args.offset !== undefined &&
+        (!Number.isSafeInteger(args.offset) || args.offset < 0)) ||
+      (args.max_bytes !== undefined &&
+        (!Number.isSafeInteger(args.max_bytes) || args.max_bytes < 1024 ||
+          args.max_bytes > TARGET_CORPUS_PAGE_BYTES)) ||
+      Object.keys(args).some(
+        (key) => key !== "task_id" && key !== "offset" && key !== "max_bytes"
+      )) {
+    throw new TypeError("invalid target corpus page arguments");
+  }
+  const { dataset, bytes, source_digest } = cachedTargetDataset(args.task_id);
+  const offset = args.offset ?? 0;
+  if (offset > bytes.length ||
+      (offset < bytes.length && (bytes[offset] & 0xc0) === 0x80)) {
+    throw new TypeError("invalid target corpus page offset");
+  }
+  let end = Math.min(offset + (args.max_bytes ?? TARGET_CORPUS_PAGE_BYTES),
+    bytes.length);
+  while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end -= 1;
+  return {
+    task_id: dataset.task_id,
+    media_type: dataset.media_type,
+    source_digest,
+    byte_start: offset,
+    byte_end: end,
+    total_bytes: bytes.length,
+    next_offset: end < bytes.length ? end : null,
+    content: bytes.subarray(offset, end).toString("utf8")
+  };
+}
 
 export const FIXTURE_SECRETS = Object.freeze([
   "eg_test_K7m2P9q4R8s1T6v3W5x0",
@@ -343,6 +439,16 @@ export const CONTEXT_PROJECT_TOOL = Object.freeze({
     }
   },
   annotations: FIXTURE_TOOL.annotations
+});
+
+export const COMPACT_CONTEXT_SEARCH_TOOL = Object.freeze({
+  ...CONTEXT_SEARCH_TOOL,
+  name: "effectgate_artifact_search"
+});
+
+export const COMPACT_CONTEXT_PROJECT_TOOL = Object.freeze({
+  ...CONTEXT_PROJECT_TOOL,
+  name: "effectgate_artifact_project"
 });
 
 function validateFixtureArguments(lines, includeSecrets) {
@@ -661,7 +767,7 @@ function validateRequest(message) {
   );
 }
 
-function fixtureResponse(request) {
+function fixtureResponse(request, targetCorpus = false) {
   const id = request.id;
 
   switch (request.method) {
@@ -672,7 +778,12 @@ function fixtureResponse(request) {
         result: {
           protocolVersion: MCP_VERSION,
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: "effectgate-fixture", version: EFFECTGATE_VERSION }
+          serverInfo: {
+            name: targetCorpus
+              ? "effectgate-target-corpus"
+              : "effectgate-fixture",
+            version: EFFECTGATE_VERSION
+          }
         }
       };
 
@@ -680,6 +791,16 @@ function fixtureResponse(request) {
       return { jsonrpc: "2.0", id, result: {} };
 
     case "tools/list":
+      if (targetCorpus) {
+        if (request.params?.cursor !== undefined) {
+          return errorMessage(id, -32602, "The tools cursor is invalid.");
+        }
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: { tools: [TARGET_CORPUS_TOOL, TARGET_CORPUS_PAGE_TOOL] }
+        };
+      }
       if (request.params?.cursor === "oversized") {
         return {
           jsonrpc: "2.0",
@@ -715,6 +836,40 @@ function fixtureResponse(request) {
 
     case "tools/call": {
       const { name, arguments: args } = request.params ?? {};
+      if (targetCorpus) {
+        if (name === TARGET_CORPUS_PAGE_TOOL.name) {
+          try {
+            return {
+              jsonrpc: "2.0",
+              id,
+              result: structuredToolResult(targetCorpusPage(args))
+            };
+          } catch {
+            return errorMessage(id, -32602, "The tool arguments are invalid.");
+          }
+        }
+        if (name !== TARGET_CORPUS_TOOL.name || args === null ||
+            typeof args !== "object" || Array.isArray(args) ||
+            typeof args.task_id !== "string" ||
+            Object.keys(args).length !== 1) {
+          return errorMessage(id, -32602, "The tool arguments are invalid.");
+        }
+        try {
+          return {
+            jsonrpc: "2.0",
+            id,
+            result: {
+              content: [{
+                type: "text",
+                text: cachedTargetDataset(args.task_id).dataset.text
+              }],
+              isError: false
+            }
+          };
+        } catch {
+          return errorMessage(id, -32602, "The tool arguments are invalid.");
+        }
+      }
       if (name === FIXTURE_LARGE_LOG_TOOL.name) {
         if (
           args === null ||
@@ -794,7 +949,10 @@ function fixtureResponse(request) {
   }
 }
 
-export function runFixture() {
+export function runFixture({ targetCorpus = false } = {}) {
+  if (typeof targetCorpus !== "boolean") {
+    throw new TypeError("invalid fixture configuration");
+  }
   let outputBlocked = false;
   const outputQueue = [];
 
@@ -853,7 +1011,7 @@ export function runFixture() {
       }
 
       if (message.id === undefined) return;
-      reply(fixtureResponse(message));
+      reply(fixtureResponse(message, targetCorpus));
     },
     onError(kind) {
       const code = kind === "frame_too_large" ? -32001 : -32700;
@@ -1034,7 +1192,10 @@ export function runProxy(args) {
   const child = spawn(
     reviewedBackend?.executable_path ?? process.execPath,
     reviewedBackend?.argv ??
-      [fileURLToPath(import.meta.url), "fixture"],
+      [
+        fileURLToPath(import.meta.url),
+        source === "target-corpus" ? "target-corpus-fixture" : "fixture"
+      ],
     {
       ...(reviewedBackend === undefined
         ? {}
@@ -1429,7 +1590,12 @@ export function runProxy(args) {
           return;
         }
         const publicCatalog = {
-          tools: [...COMPACT_MUX_TOOLS, CONTEXT_FETCH_TOOL]
+          tools: [
+            ...COMPACT_MUX_TOOLS,
+            CONTEXT_FETCH_TOOL,
+            COMPACT_CONTEXT_SEARCH_TOOL,
+            COMPACT_CONTEXT_PROJECT_TOOL
+          ]
         };
         const guardedCatalog = guardModelVisible(publicCatalog, {
           stage: "tool_metadata",
@@ -1800,7 +1966,9 @@ export function runProxy(args) {
             return;
           }
 
-          if (!compactMux && publicName === CONTEXT_SEARCH_TOOL.name) {
+          if (publicName === (compactMux
+            ? COMPACT_CONTEXT_SEARCH_TOOL.name
+            : CONTEXT_SEARCH_TOOL.name)) {
             const callArguments = message.params?.arguments;
             const queryLength =
               typeof callArguments?.query === "string"
@@ -1885,7 +2053,9 @@ export function runProxy(args) {
             return;
           }
 
-          if (!compactMux && publicName === CONTEXT_PROJECT_TOOL.name) {
+          if (publicName === (compactMux
+            ? COMPACT_CONTEXT_PROJECT_TOOL.name
+            : CONTEXT_PROJECT_TOOL.name)) {
             const callArguments = message.params?.arguments;
             const fields = callArguments?.fields ?? [];
             const columns = callArguments?.columns ?? [];
@@ -2090,6 +2260,11 @@ export async function main(args = process.argv.slice(2)) {
 
   if (args[0] === "fixture" && args.length === 1) {
     runFixture();
+    return;
+  }
+
+  if (args[0] === "target-corpus-fixture" && args.length === 1) {
+    runFixture({ targetCorpus: true });
     return;
   }
 

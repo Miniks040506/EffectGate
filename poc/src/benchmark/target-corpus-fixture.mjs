@@ -170,6 +170,19 @@ export function buildTargetCorpus() {
   return [buildLog(), buildJson(), buildJsonl(), buildCsv()];
 }
 
+export function buildTargetDataset(taskId) {
+  const builders = {
+    "BENCH-READ-001": buildLog,
+    "BENCH-JSON-002": buildJson,
+    "BENCH-STREAM-003": buildJsonl,
+    "BENCH-TABLE-004": buildCsv
+  };
+  if (!Object.hasOwn(builders, taskId)) {
+    throw new TypeError("unknown target corpus task");
+  }
+  return builders[taskId]();
+}
+
 function retrievedView(store, dataset, artifactId) {
   if (dataset.dataset_id === "LOG_80K") {
     return store.search(artifactId, ROOT_CAUSE, 1, 512);
