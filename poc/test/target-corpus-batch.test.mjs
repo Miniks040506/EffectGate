@@ -392,9 +392,17 @@ test("target corpus campaign plans bind deterministic inputs and all slots", () 
     const sessionPlan = JSON.parse(readFileSync(sessionFile, "utf8"));
     assert.equal(summary.execution_enabled, false);
     assert.equal(summary.session_count, 4);
-    assert.equal(summary.aggregate_max_budget_usd, 0.04);
+    assert.equal(summary.aggregate_cli_threshold_usd, 0.04);
+    assert.equal(summary.hard_ceiling, false);
     assert.equal(sessionPlan.execution_enabled, false);
     assert.equal(sessionPlan.sessions.length, 4);
+    assert.deepEqual(sessionPlan.usage_guard, {
+      aggregate_cli_threshold_usd: 0.04,
+      atomic_request_overshoot_possible: true,
+      cli_threshold_usd_per_session: 0.01,
+      hard_ceiling: false,
+      requires_separate_execution_authorization: true
+    });
     assert.ok(sessionPlan.sessions.every(({ args, command, stdout_file: file }) =>
       command === "claude" && args.includes("--max-budget-usd") &&
       args.includes("--strict-mcp-config") && args.includes("ToolSearch") &&

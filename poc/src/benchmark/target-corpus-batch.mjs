@@ -754,8 +754,12 @@ export class TargetCorpusBatchStore {
       sessions,
       source_commit: validation.source_commit,
       usage_guard: {
-        aggregate_max_budget_usd: Number((budget * sessions.length).toFixed(6)),
-        max_budget_usd_per_session: budget,
+        aggregate_cli_threshold_usd: Number(
+          (budget * sessions.length).toFixed(6)
+        ),
+        atomic_request_overshoot_possible: true,
+        cli_threshold_usd_per_session: budget,
+        hard_ceiling: false,
         requires_separate_execution_authorization: true
       }
     };
@@ -772,7 +776,9 @@ export class TargetCorpusBatchStore {
       plan_file: outputFile,
       plan_digest: digest(bytes),
       session_count: sessions.length,
-      aggregate_max_budget_usd: plan.usage_guard.aggregate_max_budget_usd
+      aggregate_cli_threshold_usd:
+        plan.usage_guard.aggregate_cli_threshold_usd,
+      hard_ceiling: plan.usage_guard.hard_ceiling
     });
   }
 
