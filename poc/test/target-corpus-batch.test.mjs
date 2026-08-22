@@ -397,7 +397,8 @@ test("target corpus campaign plans bind deterministic inputs and all slots", () 
     assert.equal(sessionPlan.sessions.length, 4);
     assert.ok(sessionPlan.sessions.every(({ args, command, stdout_file: file }) =>
       command === "claude" && args.includes("--max-budget-usd") &&
-      args.includes("--strict-mcp-config") && !existsSync(file)));
+      args.includes("--strict-mcp-config") && args.includes("ToolSearch") &&
+      args.includes("mcp__effectgate__*") && !existsSync(file)));
     assert.throws(() => store.planAuthorizedSessions({
       inputDirectory: firstDirectory,
       authorizationId: "plan-batch",

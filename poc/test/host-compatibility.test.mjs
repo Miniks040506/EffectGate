@@ -39,6 +39,22 @@ const CLAUDE_HOST_EVIDENCE = fileURLToPath(new URL(
   "../evidence/host-compatibility-claude-code-2.1.233.json",
   import.meta.url
 ));
+const CURRENT_CLAUDE_QUALIFICATION = fileURLToPath(new URL(
+  "../evidence/claude-code-tool-search-2.1.239.json",
+  import.meta.url
+));
+const CURRENT_CLAUDE_FAILED_QUALIFICATION = fileURLToPath(new URL(
+  "../evidence/claude-code-tool-search-2.1.239-attempt-1.json",
+  import.meta.url
+));
+const CURRENT_CLAUDE_HOST_EVIDENCE = fileURLToPath(new URL(
+  "../evidence/host-compatibility-claude-code-2.1.239.json",
+  import.meta.url
+));
+const CURRENT_CLAUDE_FAILED_HOST_EVIDENCE = fileURLToPath(new URL(
+  "../evidence/host-compatibility-claude-code-2.1.239-attempt-1.json",
+  import.meta.url
+));
 
 function manifest(overrides = {}) {
   return {
@@ -144,6 +160,62 @@ test("EG-014B retains exact-build Claude Tool Search evidence", () => {
     qualification.client.build_digest
   );
   assert.equal(evidence.manifest.tool_search.state, "enabled_observed");
+});
+
+test("EG-014B fails closed when the exact-build probe is denied", () => {
+  const qualification = JSON.parse(readFileSync(
+    CURRENT_CLAUDE_FAILED_QUALIFICATION, "utf8"
+  ));
+  const evidence = loadHostCompatibilityEvidence(
+    CURRENT_CLAUDE_FAILED_HOST_EVIDENCE
+  );
+  assert.equal(qualification.client.version, "2.1.239");
+  assert.equal(qualification.evidence_state, "fail");
+  assert.equal(qualification.observation.mcp_connected, true);
+  assert.equal(qualification.observation.tool_search_call_count, 1);
+  assert.equal(qualification.observation.total_deferred_tools, 6);
+  assert.equal(qualification.observation.probe_result_exact, false);
+  assert.equal(qualification.observation.permission_denial_count, 1);
+  assert.equal(qualification.failure_code, "mcp_tool_permission_denied");
+  assert.equal(qualification.usage_guard.is_using_overage, false);
+  assert.ok(qualification.usage_guard.metered_equivalent_usd <=
+    qualification.usage_guard.max_budget_usd);
+  assert.equal(
+    digest(JSON.stringify(qualification.configuration)),
+    qualification.configuration_digest
+  );
+  assert.equal(evidence.manifest.client.version, "2.1.239");
+  assert.equal(evidence.manifest.evidence_state, "fail");
+  assert.equal(decideNativeDeferral(evidence, {
+    clientInfo: { name: "claude-code", version: "2.1.239" },
+    clientBuildDigest: qualification.client.build_digest,
+    now: () => Date.parse("2026-08-23T00:00:00.000Z")
+  }).reason, "support_not_proven");
+});
+
+test("EG-014B qualifies the corrected exact-build permission plan", () => {
+  const qualification = JSON.parse(readFileSync(
+    CURRENT_CLAUDE_QUALIFICATION, "utf8"
+  ));
+  const evidence = loadHostCompatibilityEvidence(
+    CURRENT_CLAUDE_HOST_EVIDENCE
+  );
+  assert.equal(qualification.client.version, "2.1.239");
+  assert.equal(qualification.evidence_state, "pass");
+  assert.equal(qualification.observation.tool_search_call_count, 1);
+  assert.equal(qualification.observation.total_deferred_tools, 6);
+  assert.equal(qualification.observation.selected_tool_call_count, 1);
+  assert.equal(qualification.observation.probe_result_exact, true);
+  assert.equal(qualification.observation.permission_denial_count, 0);
+  assert.equal(qualification.usage_guard.is_using_overage, false);
+  assert.ok(qualification.usage_guard.metered_equivalent_usd <=
+    qualification.usage_guard.max_budget_usd);
+  assert.equal(evidence.manifest.evidence_state, "pass");
+  assert.equal(decideNativeDeferral(evidence, {
+    clientInfo: { name: "claude-code", version: "2.1.239" },
+    clientBuildDigest: qualification.client.build_digest,
+    now: () => Date.parse("2026-08-23T00:00:00.000Z")
+  }).reason, "qualified");
 });
 
 test("host evidence fails closed on mismatch, weak state, expiry, or corruption", () => {
