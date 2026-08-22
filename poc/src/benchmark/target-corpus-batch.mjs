@@ -4,14 +4,18 @@ import { createHash } from "node:crypto";
 import {
   mkdirSync,
   readFileSync,
-  realpathSync
+  realpathSync,
+  unlinkSync
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import process from "node:process";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
-import { validatedHostCapture } from "./claude-capture-adapter.mjs";
+import {
+  normalizeClaudeStreamCapture,
+  validatedHostCapture
+} from "./claude-capture-adapter.mjs";
 import { BENCHMARK_PROFILES } from "./paired-harness.mjs";
 import { canonicalJson, deepFreeze } from "../skill/passport-compiler.mjs";
 
@@ -30,6 +34,10 @@ const USAGE = "Usage: target-corpus-batch.mjs " +
   "init --state FILE --source-commit SHA | " +
   "claim --state FILE --authorization-id ID --limit COUNT | " +
   "record --state FILE --authorization-id ID --capture FILE | " +
+  "record-stream --state FILE --authorization-id ID --stream FILE " +
+  "--capture FILE --metrics FILE --task-id ID --profile PROFILE " +
+  "--repetition COUNT --host-version VERSION --observed-at TIMESTAMP " +
+  "[--ledger FILE] [--host-evidence FILE] | " +
   "status --state FILE";
 const SCHEMA = `
   PRAGMA journal_mode=WAL;
@@ -56,6 +64,8 @@ const SCHEMA = `
     authorization_id TEXT REFERENCES target_authorizations(authorization_id),
     capture_path TEXT UNIQUE,
     capture_digest TEXT UNIQUE,
+    metrics_path TEXT UNIQUE,
+    metrics_digest TEXT UNIQUE,
     terminal_error INTEGER CHECK (terminal_error IN (0, 1)),
     recorded_at TEXT,
     PRIMARY KEY (task_id, repetition, profile)
@@ -90,6 +100,21 @@ export class TargetCorpusBatchStore {
     mkdirSync(dirname(absolute), { recursive: true, mode: 0o700 });
     this.#database = new DatabaseSync(absolute);
     this.#database.exec(SCHEMA);
+    const columns = new Set(this.#database.prepare(
+      "PRAGMA table_info(target_slots)"
+    ).all().map(({ name }) => name));
+    if (!columns.has("metrics_path")) {
+      this.#database.exec("ALTER TABLE target_slots ADD COLUMN metrics_path TEXT");
+    }
+    if (!columns.has("metrics_digest")) {
+      this.#database.exec("ALTER TABLE target_slots ADD COLUMN metrics_digest TEXT");
+    }
+    this.#database.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS target_slots_metrics_path
+        ON target_slots(metrics_path);
+      CREATE UNIQUE INDEX IF NOT EXISTS target_slots_metrics_digest
+        ON target_slots(metrics_digest);
+    `);
     this.#now = now;
   }
 
@@ -170,6 +195,82 @@ export class TargetCorpusBatchStore {
     const capture = validatedHostCapture(captureFile);
     const path = realpathSync(resolve(captureFile));
     const captureDigest = digest(readFileSync(path));
+    return this.#checkpoint({
+      authorizationId,
+      capture,
+      capturePath: path,
+      captureDigest
+    });
+  }
+
+  recordStream({
+    authorizationId,
+    streamFile,
+    captureFile,
+    metricsFile,
+    taskId,
+    profile,
+    repetition,
+    hostVersion,
+    observedAt,
+    ledgerFile,
+    hostEvidenceFile
+  } = {}) {
+    if (!AUTHORIZATION.test(authorizationId ?? "") ||
+        ![streamFile, captureFile, metricsFile].every((file) => bounded(file)) ||
+        !TASKS.includes(taskId) || !PROFILES.includes(profile) ||
+        !Number.isSafeInteger(repetition) || repetition < 0 ||
+        repetition >= REPETITIONS ||
+        (ledgerFile !== undefined && !bounded(ledgerFile)) ||
+        (hostEvidenceFile !== undefined && !bounded(hostEvidenceFile)) ||
+        new Set([streamFile, captureFile, metricsFile]
+          .map((file) => resolve(file))).size !== 3) {
+      throw new TypeError("invalid target corpus stream record");
+    }
+    const campaign = this.#campaign();
+    const claimed = this.#database.prepare(`SELECT 1 FROM target_slots
+      WHERE task_id=? AND repetition=? AND profile=? AND status='claimed'
+      AND authorization_id=?`).get(
+      taskId, repetition, profile, authorizationId
+    );
+    if (!claimed) throw new Error("capture slot is not authorized");
+
+    const normalized = normalizeClaudeStreamCapture({
+      input: streamFile,
+      output: captureFile,
+      metricsOutput: metricsFile,
+      sourceCommit: campaign.source_commit,
+      taskId,
+      profile,
+      repetition,
+      hostVersion,
+      observedAt,
+      ledgerFile,
+      hostEvidenceFile,
+      requireCompleteMetrics: true
+    });
+    const capturePath = realpathSync(resolve(captureFile));
+    const metricsPath = realpathSync(resolve(metricsFile));
+    const checkpoint = this.#checkpoint({
+      authorizationId,
+      capture: normalized.capture,
+      capturePath,
+      captureDigest: digest(readFileSync(capturePath)),
+      metricsPath,
+      metricsDigest: digest(readFileSync(metricsPath))
+    });
+    unlinkSync(realpathSync(resolve(streamFile)));
+    return deepFreeze({ ...checkpoint, raw_stream_deleted: true });
+  }
+
+  #checkpoint({
+    authorizationId,
+    capture,
+    capturePath,
+    captureDigest,
+    metricsPath = null,
+    metricsDigest = null
+  }) {
     return this.#transaction(() => {
       const campaign = this.#campaign();
       if (capture.source_commit !== campaign.source_commit ||
@@ -177,10 +278,12 @@ export class TargetCorpusBatchStore {
         throw new Error("capture does not match target corpus campaign");
       }
       const changed = this.#database.prepare(`UPDATE target_slots SET
-        status='completed', capture_path=?, capture_digest=?, terminal_error=?,
-        recorded_at=? WHERE task_id=? AND repetition=? AND profile=?
+        status='completed', capture_path=?, capture_digest=?, metrics_path=?,
+        metrics_digest=?, terminal_error=?, recorded_at=?
+        WHERE task_id=? AND repetition=? AND profile=?
         AND status='claimed' AND authorization_id=?`).run(
-        path, captureDigest, Number(capture.terminal.is_error), timestamp(this.#now),
+        capturePath, captureDigest, metricsPath, metricsDigest,
+        Number(capture.terminal.is_error), timestamp(this.#now),
         capture.task_id, capture.repetition, capture.profile, authorizationId
       ).changes;
       if (changed !== 1) throw new Error("capture slot is not authorized");
@@ -192,6 +295,7 @@ export class TargetCorpusBatchStore {
         repetition: capture.repetition,
         profile: capture.profile,
         capture_digest: captureDigest,
+        ...(metricsDigest === null ? {} : { metrics_digest: metricsDigest }),
         terminal_error: capture.terminal.is_error
       });
     });
@@ -270,9 +374,20 @@ function parse(args) {
     init: ["--source-commit", "--state"],
     claim: ["--authorization-id", "--limit", "--state"],
     record: ["--authorization-id", "--capture", "--state"],
+    "record-stream": [
+      "--authorization-id", "--capture", "--host-version", "--metrics",
+      "--observed-at", "--profile", "--repetition", "--state", "--stream",
+      "--task-id"
+    ],
     status: ["--state"]
   }[command];
-  if (!expected || canonicalJson(keys) !== canonicalJson(expected)) {
+  const validKeys = command === "record-stream"
+    ? keys.length >= expected.length &&
+      expected.every((key) => keys.includes(key)) &&
+      keys.every((key) => expected.includes(key) ||
+        key === "--ledger" || key === "--host-evidence")
+    : expected && canonicalJson(keys) === canonicalJson(expected);
+  if (!expected || !validKeys) {
     throw new Error(USAGE);
   }
   return { command, values };
@@ -294,6 +409,20 @@ export function main(args = process.argv.slice(2)) {
               authorizationId: values["--authorization-id"],
               captureFile: values["--capture"]
             })
+          : command === "record-stream"
+            ? store.recordStream({
+                authorizationId: values["--authorization-id"],
+                streamFile: values["--stream"],
+                captureFile: values["--capture"],
+                metricsFile: values["--metrics"],
+                taskId: values["--task-id"],
+                profile: values["--profile"],
+                repetition: Number(values["--repetition"]),
+                hostVersion: values["--host-version"],
+                observedAt: values["--observed-at"],
+                ledgerFile: values["--ledger"],
+                hostEvidenceFile: values["--host-evidence"]
+              })
           : store.status();
     process.stdout.write(`${canonicalJson(result)}\n`);
     return result;
