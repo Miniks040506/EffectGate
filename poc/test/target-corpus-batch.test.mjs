@@ -14,11 +14,16 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { canonicalJson } from "../src/skill/passport-compiler.mjs";
+import { runObservedBenchmark } from
+  "../src/benchmark/observation-runner.mjs";
 import { TargetCorpusBatchStore } from
   "../src/benchmark/target-corpus-batch.mjs";
 
 const CLI = fileURLToPath(new URL(
   "../src/benchmark/target-corpus-batch.mjs", import.meta.url
+));
+const HOST_EVIDENCE = fileURLToPath(new URL(
+  "../evidence/host-compatibility-claude-code-2.1.233.json", import.meta.url
 ));
 const COMMIT = "a".repeat(40);
 const NOW = Date.parse("2026-08-18T00:00:00.000Z");
@@ -85,6 +90,55 @@ function stream(file, complete = true) {
     }
   ];
   writeFileSync(file, `${events.map(JSON.stringify).join("\n")}\n`, "utf8");
+  return file;
+}
+
+function tokenCount(value, label) {
+  return {
+    value,
+    basis: "byte_proxy",
+    counter_id: "utf8-bytes-ceil-div-4",
+    counter_version: "1",
+    input_digest: digest(label)
+  };
+}
+
+function metrics(file, slot) {
+  const raw = digest(`raw:${slot.task_id}:${slot.repetition}:${slot.profile}`);
+  const resultTokens = tokenCount(1, `result:${raw}`);
+  const benchmark = {
+    task_success: true,
+    latency_ms: 100,
+    fetch_count: 0,
+    tool_call_count: 1,
+    tool_schema_tokens: tokenCount(2, `schema:${raw}`),
+    tool_result_tokens: resultTokens,
+    compatibility: slot.profile === "P1_EG_TYPED"
+      ? { native_deferral: "qualified", evidence_digest: digest("host") }
+      : {
+          native_deferral: slot.profile === "P2_EG_MUX"
+            ? "profile_not_native_deferred"
+            : "not_applicable"
+        }
+  };
+  const value = {
+    benchmark_metrics: benchmark,
+    fetch_count: 0,
+    kind: "effectgate_claude_stream_metrics",
+    latency_ms: 100,
+    profile: slot.profile,
+    raw_stream_digest: raw,
+    repetition: slot.repetition,
+    schema_version: "1.0.0",
+    source_commit: COMMIT,
+    task_id: slot.task_id,
+    task_success: true,
+    terminal_success: true,
+    tool_call_count: 1,
+    tool_counts: { fixture_tool: 1 },
+    tool_result_tokens: resultTokens
+  };
+  writeFileSync(file, `${canonicalJson(value)}\n`, "utf8");
   return file;
 }
 
@@ -264,3 +318,181 @@ test("target corpus stream checkpoint deletes raw input only after success", () 
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("target corpus campaign plans bind deterministic inputs and all slots", () => {
+  const directory = mkdtempSync(join(tmpdir(), "effectgate-target-plan-"));
+  const state = join(directory, "campaign.db");
+  const store = new TargetCorpusBatchStore({
+    file: state, now: () => NOW
+  });
+  const configuration = {
+    seed: "target-corpus-v1",
+    backendDigest: digest("backend"),
+    model: "claude-sonnet-5",
+    effort: "medium",
+    hostVersion: "2.1.233",
+    machineClass: "windows-x64-test",
+    observedAt: "2026-08-18T00:00:00.000Z"
+  };
+  try {
+    store.initialize({ sourceCommit: COMMIT });
+    const firstDirectory = join(directory, "first");
+    const secondDirectory = join(directory, "second");
+    const first = store.prepareCampaign({
+      ...configuration, outputDirectory: firstDirectory
+    });
+    const prepared = spawnSync(process.execPath, [
+      CLI, "prepare", "--state", state, "--output", secondDirectory,
+      "--seed", configuration.seed,
+      "--backend-digest", configuration.backendDigest,
+      "--model", configuration.model, "--effort", configuration.effort,
+      "--host-version", configuration.hostVersion,
+      "--machine-class", configuration.machineClass,
+      "--observed-at", configuration.observedAt
+    ], { encoding: "utf8" });
+    assert.equal(prepared.status, 0, prepared.stderr);
+    const second = JSON.parse(prepared.stdout);
+    assert.equal(first.slot_count, 320);
+    assert.deepEqual(
+      [first.inputs_digest, first.manifest_digest, first.slots_digest],
+      [second.inputs_digest, second.manifest_digest, second.slots_digest]
+    );
+    for (const filename of ["inputs.json", "export-manifest.json", "slots.jsonl"]) {
+      assert.equal(
+        readFileSync(join(firstDirectory, filename), "utf8"),
+        readFileSync(join(secondDirectory, filename), "utf8")
+      );
+    }
+    const slotFile = join(firstDirectory, "slots.jsonl");
+    const slotSource = readFileSync(slotFile, "utf8");
+    const slots = slotSource.trimEnd().split("\n").map(JSON.parse);
+    assert.equal(slots.length, 320);
+    assert.deepEqual(
+      [slots[0].task_id, slots[0].repetition, slots[0].profile],
+      ["BENCH-READ-001", 0, "P0_NATIVE_DEFAULT"]
+    );
+    assert.deepEqual(
+      [slots.at(-1).task_id, slots.at(-1).repetition, slots.at(-1).profile],
+      ["BENCH-TABLE-004", 19, "P3_EAGER_DIAGNOSTIC"]
+    );
+    const validated = spawnSync(process.execPath, [
+      CLI, "validate-plan", "--state", state, "--input", firstDirectory
+    ], { encoding: "utf8" });
+    assert.equal(validated.status, 0, validated.stderr);
+    assert.equal(JSON.parse(validated.stdout).slot_count, 320);
+    store.claim({ authorizationId: "plan-batch", limit: 4 });
+    const sessionFile = join(directory, "session-plan.json");
+    const planned = spawnSync(process.execPath, [
+      CLI, "session-plan", "--state", state, "--input", firstDirectory,
+      "--authorization-id", "plan-batch", "--output", sessionFile,
+      "--max-budget-usd", "0.01", "--host-evidence", HOST_EVIDENCE
+    ], { encoding: "utf8" });
+    assert.equal(planned.status, 0, planned.stderr);
+    const summary = JSON.parse(planned.stdout);
+    const sessionPlan = JSON.parse(readFileSync(sessionFile, "utf8"));
+    assert.equal(summary.execution_enabled, false);
+    assert.equal(summary.session_count, 4);
+    assert.equal(summary.aggregate_max_budget_usd, 0.04);
+    assert.equal(sessionPlan.execution_enabled, false);
+    assert.equal(sessionPlan.sessions.length, 4);
+    assert.ok(sessionPlan.sessions.every(({ args, command, stdout_file: file }) =>
+      command === "claude" && args.includes("--max-budget-usd") &&
+      args.includes("--strict-mcp-config") && !existsSync(file)));
+    assert.throws(() => store.planAuthorizedSessions({
+      inputDirectory: firstDirectory,
+      authorizationId: "plan-batch",
+      output: join(directory, "over-budget.json"),
+      maxBudgetUsd: 0.26,
+      hostEvidenceFile: HOST_EVIDENCE
+    }), /invalid target corpus session plan/);
+    writeFileSync(slotFile, "tampered\n", "utf8");
+    assert.throws(() => store.validateCampaignPlan({
+      inputDirectory: firstDirectory
+    }), /slot mismatch/);
+    writeFileSync(slotFile, slotSource, "utf8");
+    const inputFile = join(firstDirectory, "inputs.json");
+    const inputs = JSON.parse(readFileSync(inputFile, "utf8"));
+    inputs.tasks[0].prompt += " altered";
+    writeFileSync(inputFile, `${canonicalJson(inputs)}\n`, "utf8");
+    assert.throws(() => store.validateCampaignPlan({
+      inputDirectory: firstDirectory
+    }), /input mismatch/);
+  } finally {
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("target corpus export verifies all checkpoints and emits four observations",
+  async () => {
+    const directory = mkdtempSync(join(tmpdir(), "effectgate-target-export-"));
+    const state = join(directory, "campaign.db");
+    const store = new TargetCorpusBatchStore({ file: state, now: () => NOW });
+    try {
+      store.initialize({ sourceCommit: COMMIT });
+      const manifestFile = join(directory, "export-manifest.json");
+      writeFileSync(manifestFile, `${canonicalJson({
+        backend_digest: digest("backend"),
+        effort: "medium",
+        host_version: "2.1.233",
+        kind: "effectgate_target_corpus_export",
+        machine_class: "test-machine",
+        model: "test-model",
+        observed_at: "2026-08-18T00:00:00.000Z",
+        schema_version: "1.0.0",
+        seed: "target-export-test",
+        source_commit: COMMIT,
+        tasks: [
+          "BENCH-READ-001", "BENCH-JSON-002", "BENCH-STREAM-003",
+          "BENCH-TABLE-004"
+        ].map((taskId) => ({
+          task_id: taskId,
+          prompt_digest: digest(`prompt:${taskId}`),
+          rubric_digest: digest(`rubric:${taskId}`)
+        }))
+      })}\n`, "utf8");
+      assert.throws(() => store.exportObservations({
+        manifestFile,
+        outputDirectory: join(directory, "incomplete")
+      }), /campaign is incomplete/);
+      const { slots } = store.claim({
+        authorizationId: "export-batch",
+        limit: 320
+      });
+      for (const [index, slot] of slots.entries()) {
+        store.record({
+          authorizationId: "export-batch",
+          captureFile: capture(join(directory, `capture-${index}.json`), slot),
+          metricsFile: metrics(join(directory, `metrics-${index}.json`), slot)
+        });
+      }
+      const output = join(directory, "observations");
+      const exported = store.exportObservations({
+        manifestFile,
+        outputDirectory: output
+      });
+      assert.equal(exported.length, 4);
+      for (const item of exported) {
+        const source = readFileSync(item.file, "utf8");
+        const value = JSON.parse(source);
+        assert.equal(source, `${canonicalJson(value)}\n`);
+        assert.equal(value.runs.length, 80);
+        assert.ok(value.runs.every(({ metrics: runMetrics }) =>
+          runMetrics.total_input_tokens.value === 6));
+      }
+      const imported = await runObservedBenchmark({
+        input: exported[0].file,
+        output: join(directory, "observed.jsonl")
+      });
+      assert.equal(imported.benchmark.events.length, 80);
+
+      writeFileSync(join(directory, "metrics-0.json"), "tampered\n", "utf8");
+      assert.throws(() => store.exportObservations({
+        manifestFile,
+        outputDirectory: join(directory, "tampered-output")
+      }), /checkpoint digest mismatch/);
+    } finally {
+      store.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
