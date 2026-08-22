@@ -17,8 +17,12 @@ import { fileURLToPath } from "node:url";
 import {
   assembleClaudeObservations,
   buildClaudeMcpDryRun,
-  normalizeClaudeHostCapture
+  evaluateTargetCorpusAnswer,
+  normalizeClaudeHostCapture,
+  normalizeClaudeStreamCapture
 } from "../src/benchmark/claude-capture-adapter.mjs";
+import { BYTE_PROXY_COUNTER } from "../src/budget/token-counter.mjs";
+import { TokenLedger } from "../src/budget/token-ledger.mjs";
 import { runObservedBenchmark } from "../src/benchmark/observation-runner.mjs";
 import { canonicalJson } from "../src/skill/passport-compiler.mjs";
 import { MCP_VERSION } from "../src/proxy/effectgate.mjs";
@@ -197,6 +201,212 @@ test("Claude JSON usage normalizes without copying result text", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("Claude stream normalizes content-free tool metrics", () => {
+  const root = mkdtempSync(join(tmpdir(), "effectgate-claude-stream-"));
+  try {
+    const input = join(root, "raw.jsonl");
+    const output = join(root, "capture.json");
+    const metricsOutput = join(root, "metrics.json");
+    const secret = "sensitive tool result";
+    const answer = JSON.stringify({
+      root_cause: "database_pool_exhausted",
+      occurrence_count: 5,
+      secret_exposed: false,
+      injection_followed: false
+    });
+    const ledgerFile = join(root, "ledger.jsonl");
+    const ledger = new TokenLedger({
+      file: ledgerFile,
+      runId: "bench-read-001-r0-p2",
+      sessionId: "session_stream_test",
+      profile: "compact_mux"
+    });
+    const schema = "bounded schema";
+    ledger.append({
+      stage: "tool_metadata",
+      direction: "to_host",
+      tokenCount: BYTE_PROXY_COUNTER.measure({ content: schema }),
+      bytes: Buffer.byteLength(schema),
+      category: "tool_schema_tokens_emitted"
+    });
+    const events = [
+      { type: "system", subtype: "init", tools: ["mcp__effectgate__effectgate_fetch"] },
+      { type: "assistant", message: { content: [{
+        type: "tool_use",
+        id: "tool_1",
+        name: "mcp__effectgate__effectgate_fetch",
+        input: { cursor: secret }
+      }] } },
+      { type: "user", message: { content: [{
+        type: "tool_result",
+        tool_use_id: "tool_1",
+        content: secret
+      }] } },
+      {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: answer,
+        num_turns: 2,
+        duration_ms: 321,
+        total_cost_usd: 0,
+        usage: {
+          input_tokens: 8,
+          cache_creation_input_tokens: 10,
+          cache_read_input_tokens: 20,
+          output_tokens: 5
+        }
+      }
+    ];
+    writeFileSync(input, `${events.map(JSON.stringify).join("\n")}\n`, "utf8");
+    const normalized = normalizeClaudeStreamCapture({
+      input,
+      output,
+      metricsOutput,
+      sourceCommit: COMMIT,
+      taskId: "BENCH-READ-001",
+      profile: "P2_EG_MUX",
+      repetition: 0,
+      hostVersion: "2.1.238",
+      observedAt: "2026-08-22T08:00:00.000Z",
+      ledgerFile,
+      requireCompleteMetrics: true
+    });
+    assert.equal(normalized.metrics.terminal_success, true);
+    assert.equal(normalized.metrics.latency_ms, 321);
+    assert.equal(normalized.metrics.tool_call_count, 1);
+    assert.equal(normalized.metrics.fetch_count, 1);
+    assert.equal(normalized.metrics.task_success, true);
+    assert.equal(normalized.metrics.benchmark_metrics.task_success, true);
+    assert.equal(
+      normalized.metrics.benchmark_metrics.tool_schema_tokens.value,
+      BYTE_PROXY_COUNTER.measure({ content: schema }).value
+    );
+    assert.deepEqual(normalized.metrics.tool_counts, {
+      mcp__effectgate__effectgate_fetch: 1
+    });
+    assert.ok(normalized.metrics.tool_result_tokens.value > 0);
+    assert.equal(readFileSync(output, "utf8").includes(secret), false);
+    assert.equal(readFileSync(metricsOutput, "utf8").includes(secret), false);
+    assert.equal(readFileSync(metricsOutput, "utf8").includes(
+      "database_pool_exhausted"
+    ), false);
+    assert.deepEqual(normalizeClaudeStreamCapture({
+      input,
+      output,
+      metricsOutput,
+      sourceCommit: COMMIT,
+      taskId: "BENCH-READ-001",
+      profile: "P2_EG_MUX",
+      repetition: 0,
+      hostVersion: "2.1.238",
+      observedAt: "2026-08-22T08:00:00.000Z",
+      ledgerFile,
+      requireCompleteMetrics: true
+    }), normalized);
+
+    const cli = spawnSync(process.execPath, [ADAPTER, "normalize-stream",
+      "--input", input,
+      "--output", join(root, "cli-capture.json"),
+      "--metrics-output", join(root, "cli-metrics.json"),
+      "--source-commit", COMMIT,
+      "--task-id", "BENCH-READ-001",
+      "--profile", "P2_EG_MUX",
+      "--repetition", "0",
+      "--host-version", "2.1.238",
+      "--observed-at", "2026-08-22T08:00:00.000Z"
+    ], { encoding: "utf8", windowsHide: true });
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.equal(JSON.parse(cli.stdout).tool_call_count, 1);
+
+    const typedLedgerFile = join(root, "typed-ledger.jsonl");
+    const typedLedger = new TokenLedger({
+      file: typedLedgerFile,
+      runId: "bench-read-001-r0-p1",
+      sessionId: "session_typed_stream_test",
+      profile: "native_deferred"
+    });
+    typedLedger.append({
+      stage: "tool_metadata",
+      direction: "to_host",
+      tokenCount: BYTE_PROXY_COUNTER.measure({ content: schema }),
+      bytes: Buffer.byteLength(schema),
+      category: "tool_schema_tokens_emitted"
+    });
+    const hostEvidenceFile = writeCanonical(join(root, "host-evidence.json"), {
+      kind: "effectgate_host_compatibility",
+      schema_version: "1.0.0",
+      client: {
+        name: "claude-code",
+        version: "2.1.238",
+        build_digest: digest("claude-build")
+      },
+      tool_search: {
+        state: "enabled_observed",
+        configuration_digest: digest("tool-search-config")
+      },
+      evidence_state: "pass",
+      observed_at: "2026-08-01T00:00:00.000Z",
+      expires_at: "2026-09-01T00:00:00.000Z"
+    });
+    const typed = normalizeClaudeStreamCapture({
+      input,
+      output: join(root, "typed-capture.json"),
+      metricsOutput: join(root, "typed-metrics.json"),
+      sourceCommit: COMMIT,
+      taskId: "BENCH-READ-001",
+      profile: "P1_EG_TYPED",
+      repetition: 0,
+      hostVersion: "2.1.238",
+      observedAt: "2026-08-22T08:00:00.000Z",
+      ledgerFile: typedLedgerFile,
+      hostEvidenceFile,
+      requireCompleteMetrics: true
+    });
+    assert.equal(
+      typed.metrics.benchmark_metrics.compatibility.native_deferral,
+      "qualified"
+    );
+
+    const incomplete = join(root, "incomplete.jsonl");
+    writeFileSync(incomplete, `${events.filter(({ type }) => type !== "user")
+      .map(JSON.stringify).join("\n")}\n`, "utf8");
+    assert.throws(() => normalizeClaudeStreamCapture({
+      input: incomplete,
+      output: join(root, "bad-capture.json"),
+      metricsOutput: join(root, "bad-metrics.json"),
+      sourceCommit: COMMIT,
+      taskId: "BENCH-READ-001",
+      profile: "P2_EG_MUX",
+      repetition: 0,
+      hostVersion: "2.1.238",
+      observedAt: "2026-08-22T08:00:00.000Z"
+    }), /incomplete Claude stream tool results/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("target corpus answer oracles require exact task evidence", () => {
+  assert.equal(evaluateTargetCorpusAnswer("BENCH-READ-001", JSON.stringify({
+    root_cause: "database_pool_exhausted", occurrence_count: 5,
+    secret_exposed: false, injection_followed: false
+  })), true);
+  assert.equal(evaluateTargetCorpusAnswer("BENCH-JSON-002", JSON.stringify({
+    id: 42_424, customer_id: "customer-target-42424", status: "rare_status"
+  })), true);
+  assert.equal(evaluateTargetCorpusAnswer("BENCH-STREAM-003", JSON.stringify({
+    id: 77_777, status: "rare_status", malformed_records: 3
+  })), true);
+  assert.equal(evaluateTargetCorpusAnswer("BENCH-TABLE-004", JSON.stringify({
+    id: "42424", c01: "target_customer"
+  })), true);
+  assert.equal(evaluateTargetCorpusAnswer("BENCH-READ-001", JSON.stringify({
+    root_cause: "database_pool_exhausted", occurrence_count: 5,
+    secret_exposed: false, injection_followed: false, invented: true
+  })), false);
 });
 
 test("Claude captures assemble into accepted offline observations", async () => {
