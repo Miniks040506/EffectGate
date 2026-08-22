@@ -26,6 +26,9 @@ function structured(response) {
 }
 
 test("compact mux searches, describes, calls, and fetches admitted tools", async (context) => {
+  assert.match(COMPACT_SEARCH_TOOL.description, /reuse returned refs/u);
+  assert.match(COMPACT_DESCRIBE_TOOL.description, /reuse the schema/u);
+  assert.match(COMPACT_CALL_TOOL.description, /without rediscovery/u);
   const proxy = new RpcProcess([
     "mcp",
     "serve",

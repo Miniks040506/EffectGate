@@ -8,7 +8,8 @@ const READ_ONLY_ANNOTATIONS = Object.freeze({
 export const COMPACT_SEARCH_TOOL = Object.freeze({
   name: "effectgate_search",
   title: "Search Admitted Capabilities",
-  description: "Finds bounded metadata for read-only tools admitted this session.",
+  description:
+    "Finds bounded metadata for read-only tools; reuse returned refs instead of repeating capability discovery.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -24,7 +25,8 @@ export const COMPACT_SEARCH_TOOL = Object.freeze({
 export const COMPACT_DESCRIBE_TOOL = Object.freeze({
   name: "effectgate_describe",
   title: "Describe Admitted Capability",
-  description: "Returns the exact admitted input contract for one capability.",
+  description:
+    "Returns the exact input contract for one searched ref; reuse the schema for later calls.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -39,7 +41,8 @@ export const COMPACT_DESCRIBE_TOOL = Object.freeze({
 export const COMPACT_CALL_TOOL = Object.freeze({
   name: "effectgate_call",
   title: "Call Admitted Capability",
-  description: "Calls one admitted read-only capability with generic arguments.",
+  description:
+    "Calls one described read-only ref; continue Context Views with artifact or fetch tools without rediscovery.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
