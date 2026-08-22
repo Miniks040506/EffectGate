@@ -644,6 +644,47 @@ export function validatedHostCapture(file) {
   return value;
 }
 
+export function validatedStreamMetrics(file) {
+  const { value } = readCanonical(file, "Claude stream metrics");
+  const counts = value?.tool_counts;
+  const benchmark = value?.benchmark_metrics;
+  const resultTokens = value?.tool_result_tokens;
+  if (!exact(value, [
+    "benchmark_metrics", "fetch_count", "kind", "latency_ms", "profile",
+    "raw_stream_digest", "repetition", "schema_version", "source_commit",
+    "task_id", "task_success", "terminal_success", "tool_call_count",
+    "tool_counts", "tool_result_tokens"
+  ]) || value.kind !== "effectgate_claude_stream_metrics" ||
+      value.schema_version !== "1.0.0" ||
+      !COMMIT.test(value.source_commit ?? "") ||
+      !TARGET_TASKS.has(value.task_id) || !PROFILE_IDS.has(value.profile) ||
+      !Number.isSafeInteger(value.repetition) || value.repetition < 0 ||
+      value.repetition > 999 || !DIGEST.test(value.raw_stream_digest) ||
+      typeof value.terminal_success !== "boolean" ||
+      typeof value.task_success !== "boolean" ||
+      (!value.terminal_success && value.task_success) ||
+      !Number.isFinite(value.latency_ms) || value.latency_ms < 0 ||
+      !Number.isSafeInteger(value.tool_call_count) ||
+      value.tool_call_count < 0 || !Number.isSafeInteger(value.fetch_count) ||
+      value.fetch_count < 0 || value.fetch_count > value.tool_call_count ||
+      counts === null || typeof counts !== "object" || Array.isArray(counts) ||
+      Object.entries(counts).some(([name, count]) =>
+        !bounded(name, 256) || !Number.isSafeInteger(count) || count < 1) ||
+      Object.values(counts).reduce((sum, count) => sum + count, 0) !==
+        value.tool_call_count) {
+    throw new TypeError("invalid Claude stream metrics");
+  }
+  const validated = validateBenchmarkMetrics(benchmark);
+  if (validated.task_success !== value.task_success ||
+      validated.latency_ms !== value.latency_ms ||
+      validated.fetch_count !== value.fetch_count ||
+      validated.tool_call_count !== value.tool_call_count ||
+      canonicalJson(validated.tool_result_tokens) !== canonicalJson(resultTokens)) {
+    throw new TypeError("invalid Claude stream metrics");
+  }
+  return value;
+}
+
 export function assembleClaudeObservations({ input, output } = {}) {
   if (!bounded(input) || !bounded(output)) {
     throw new TypeError("invalid Claude observation assembly configuration");
