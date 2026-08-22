@@ -176,6 +176,21 @@ function readLedger(file) {
   return { header: Object.freeze(header), entries };
 }
 
+export function loadTokenLedger(file) {
+  if (typeof file !== "string" || file.length < 1 ||
+      Buffer.byteLength(file, "utf8") > 1024 || file.includes("\0")) {
+    throw new TypeError("invalid token ledger file");
+  }
+  const absolute = resolve(file);
+  const stat = fs.lstatSync(absolute);
+  if (!stat.isFile()) throw new CorruptTokenLedgerError();
+  const ledger = readLedger(fs.realpathSync(absolute));
+  return Object.freeze({
+    header: ledger.header,
+    entries: Object.freeze(ledger.entries)
+  });
+}
+
 export class TokenLedger {
   constructor({ file, runId, sessionId, profile = "native_deferred", now = Date.now }) {
     if (

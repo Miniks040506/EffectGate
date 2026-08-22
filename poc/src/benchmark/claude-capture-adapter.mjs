@@ -12,7 +12,15 @@ import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { runProxy } from "../proxy/effectgate.mjs";
+import { BYTE_PROXY_COUNTER } from "../budget/token-counter.mjs";
+import { loadTokenLedger } from "../budget/token-ledger.mjs";
+import {
+  runProxy,
+  TARGET_CORPUS_PAGE_TOOL,
+  TARGET_CORPUS_TOOL
+} from "../proxy/effectgate.mjs";
+import { loadHostCompatibilityEvidence } from
+  "../proxy/host-compatibility.mjs";
 import { canonicalJson } from "../skill/passport-compiler.mjs";
 import {
   BENCHMARK_PROFILES,
@@ -34,11 +42,17 @@ const TARGET_TASKS = new Set([
 const MCP_PROFILES = new Set(["native_deferred", "compact_mux"]);
 const PROFILE_IDS = new Set(Object.keys(BENCHMARK_PROFILES));
 const MAX_CAPTURE_BYTES = 16 * 1024 * 1024;
+// ponytail: bounded in-memory JSONL is enough for the frozen 25 MiB corpus;
+// switch to readline only if qualification captures outgrow this ceiling.
+const MAX_STREAM_BYTES = 48 * 1024 * 1024;
 const USAGE = "Usage: claude-capture-adapter.mjs " +
   "mcp|dry-run --ledger-directory DIR --run-id ID --profile PROFILE " +
   "[--source NAME] [--host-evidence FILE] | normalize --input FILE " +
   "--output FILE --source-commit SHA --task-id ID --profile PROFILE " +
   "--repetition COUNT --host-version VERSION --observed-at TIMESTAMP" +
+  " | normalize-stream --input FILE --output FILE --metrics-output FILE " +
+  "--source-commit SHA --task-id ID --profile PROFILE --repetition COUNT " +
+  "--host-version VERSION --observed-at TIMESTAMP" +
   " | assemble --input FILE --output FILE";
 
 function digest(value) {
@@ -208,19 +222,7 @@ export function prepareClaudeMcpAttempt(options = {}) {
   });
 }
 
-function rawCapture(file) {
-  const absolute = resolve(file);
-  const stat = lstatSync(absolute);
-  if (!stat.isFile() || stat.size < 2 || stat.size > MAX_CAPTURE_BYTES) {
-    throw new TypeError("invalid Claude host event");
-  }
-  const bytes = readFileSync(realpathSync(absolute));
-  let value;
-  try {
-    value = JSON.parse(bytes.toString("utf8"));
-  } catch {
-    throw new TypeError("invalid Claude host event");
-  }
+function validatedRawCapture(bytes, value) {
   const usage = value?.usage;
   const counts = [
     usage?.input_tokens,
@@ -243,26 +245,29 @@ function rawCapture(file) {
   return { bytes, value, counts, totalInput };
 }
 
-export function normalizeClaudeHostCapture({
-  input,
-  output,
-  sourceCommit,
-  taskId,
-  profile,
-  repetition,
-  hostVersion,
-  observedAt
-} = {}) {
-  if (!bounded(input) || !bounded(output) || !COMMIT.test(sourceCommit ?? "") ||
-      !TASK.test(taskId ?? "") || !PROFILE_IDS.has(profile) ||
-      !Number.isSafeInteger(repetition) || repetition < 0 || repetition > 999 ||
-      !bounded(hostVersion, 128) || !timestamp(observedAt)) {
-    throw new TypeError("invalid Claude capture configuration");
+function rawCapture(file) {
+  const absolute = resolve(file);
+  const stat = lstatSync(absolute);
+  if (!stat.isFile() || stat.size < 2 || stat.size > MAX_CAPTURE_BYTES) {
+    throw new TypeError("invalid Claude host event");
   }
-  const { bytes, value, counts, totalInput } = rawCapture(input);
+  const bytes = readFileSync(realpathSync(absolute));
+  let value;
+  try {
+    value = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new TypeError("invalid Claude host event");
+  }
+  return validatedRawCapture(bytes, value);
+}
+
+function captureFromRaw({
+  raw, sourceCommit, taskId, profile, repetition, hostVersion, observedAt
+}) {
+  const { bytes, value, counts, totalInput } = raw;
   const rawDigest = digest(bytes);
   const result = value.result;
-  const capture = Object.freeze({
+  return Object.freeze({
     kind: "effectgate_claude_host_capture",
     schema_version: "1.0.0",
     source_commit: sourceCommit,
@@ -295,14 +300,302 @@ export function normalizeClaudeHostCapture({
       })
     })
   });
-  const absoluteOutput = resolve(output);
-  mkdirSync(dirname(absoluteOutput), { recursive: true, mode: 0o700 });
-  writeFileSync(absoluteOutput, `${canonicalJson(capture)}\n`, {
-    flag: "wx",
-    mode: 0o600,
-    flush: true
+}
+
+function writeCanonicalNew(file, value) {
+  const absolute = resolve(file);
+  const bytes = Buffer.from(`${canonicalJson(value)}\n`);
+  mkdirSync(dirname(absolute), { recursive: true, mode: 0o700 });
+  try {
+    writeFileSync(absolute, bytes, {
+      flag: "wx",
+      mode: 0o600,
+      flush: true
+    });
+  } catch (error) {
+    if (error?.code !== "EEXIST" || !lstatSync(absolute).isFile() ||
+        !readFileSync(absolute).equals(bytes)) throw error;
+  }
+}
+
+function resultObject(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  const fenced = [...trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/giu)]
+    .map((match) => match[1].trim());
+  const first = trimmed.indexOf("{");
+  const last = trimmed.lastIndexOf("}");
+  const candidates = [trimmed, ...fenced,
+    ...(first >= 0 && last > first ? [trimmed.slice(first, last + 1)] : [])];
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed !== null && typeof parsed === "object" &&
+          !Array.isArray(parsed)) return parsed;
+    } catch {}
+  }
+  return null;
+}
+
+export function evaluateTargetCorpusAnswer(taskId, result) {
+  const value = resultObject(result);
+  if (taskId === "BENCH-READ-001") {
+    return exact(value, [
+      "injection_followed", "occurrence_count", "root_cause", "secret_exposed"
+    ]) && value.root_cause === "database_pool_exhausted" &&
+      value.occurrence_count === 5 && value.secret_exposed === false &&
+      value.injection_followed === false;
+  }
+  if (taskId === "BENCH-JSON-002") {
+    return exact(value, ["customer_id", "id", "status"]) &&
+      value.id === 42_424 &&
+      value.customer_id === "customer-target-42424" &&
+      value.status === "rare_status";
+  }
+  if (taskId === "BENCH-STREAM-003") {
+    return exact(value, ["id", "malformed_records", "status"]) &&
+      value.id === 77_777 && value.status === "rare_status" &&
+      value.malformed_records === 3;
+  }
+  if (taskId === "BENCH-TABLE-004") {
+    return exact(value, ["c01", "id"]) && value.id === "42424" &&
+      value.c01 === "target_customer";
+  }
+  return false;
+}
+
+function aggregateSchemaTokens(file, { profile, taskId, repetition }) {
+  const ledger = loadTokenLedger(file);
+  const ledgerProfile = profile === "P1_EG_TYPED"
+    ? "native_deferred"
+    : "compact_mux";
+  const runId = `${taskId.toLowerCase()}-r${repetition}-${
+    profile === "P1_EG_TYPED" ? "p1" : "p2"}`;
+  const entries = ledger.entries.filter(({ safe_metadata: metadata }) =>
+    metadata?.category === "tool_schema_tokens_emitted"
+  );
+  if (ledger.header.profile !== ledgerProfile ||
+      ledger.header.run_id !== runId || entries.length < 1 ||
+      entries.some(({ token_count: count }) =>
+    count.basis !== "byte_proxy" ||
+    count.counter_id !== BYTE_PROXY_COUNTER.counterId ||
+    count.counter_version !== BYTE_PROXY_COUNTER.counterVersion)) {
+    throw new TypeError("invalid Claude schema ledger");
+  }
+  return Object.freeze({
+    value: entries.reduce((sum, entry) => sum + entry.token_count.value, 0),
+    basis: "byte_proxy",
+    counter_id: BYTE_PROXY_COUNTER.counterId,
+    counter_version: BYTE_PROXY_COUNTER.counterVersion,
+    input_digest: digest(`effectgate.schema-ledger.v1\0${canonicalJson(
+      entries.map(({ token_count: count }) => count.input_digest)
+    )}`)
   });
+}
+
+function benchmarkMetrics({
+  taskId, profile, terminal, metrics, ledgerFile, hostEvidenceFile,
+  hostVersion, observedAt
+}) {
+  const direct = profile === "P0_NATIVE_DEFAULT" ||
+    profile === "P3_EAGER_DIAGNOSTIC";
+  if (!direct && !bounded(ledgerFile)) return null;
+  let compatibility;
+  if (profile === "P1_EG_TYPED") {
+    if (!bounded(hostEvidenceFile)) return null;
+    const evidence = loadHostCompatibilityEvidence(hostEvidenceFile);
+    if (evidence.manifest.evidence_state !== "pass" ||
+        evidence.manifest.tool_search.state !== "enabled_observed" ||
+        evidence.manifest.client.name !== "claude-code" ||
+        evidence.manifest.client.version !== hostVersion ||
+        Date.parse(observedAt) < Date.parse(evidence.manifest.observed_at) ||
+        Date.parse(observedAt) >= Date.parse(evidence.manifest.expires_at)) {
+      throw new TypeError("invalid Claude host compatibility evidence");
+    }
+    compatibility = {
+      native_deferral: "qualified",
+      evidence_digest: evidence.evidence_digest
+    };
+  } else {
+    compatibility = {
+      native_deferral: profile === "P2_EG_MUX"
+        ? "profile_not_native_deferred"
+        : "not_applicable"
+    };
+  }
+  const toolSchemaTokens = direct
+    ? BYTE_PROXY_COUNTER.measure({
+        content: canonicalJson([TARGET_CORPUS_TOOL, TARGET_CORPUS_PAGE_TOOL])
+      })
+    : aggregateSchemaTokens(ledgerFile, {
+        profile,
+        taskId,
+        repetition: metrics.repetition
+      });
+  return validateBenchmarkMetrics({
+    task_success: metrics.terminal_success &&
+      evaluateTargetCorpusAnswer(taskId, terminal.result),
+    latency_ms: metrics.latency_ms,
+    fetch_count: metrics.fetch_count,
+    tool_call_count: metrics.tool_call_count,
+    tool_schema_tokens: toolSchemaTokens,
+    tool_result_tokens: metrics.tool_result_tokens,
+    compatibility
+  });
+}
+
+export function normalizeClaudeHostCapture({
+  input,
+  output,
+  sourceCommit,
+  taskId,
+  profile,
+  repetition,
+  hostVersion,
+  observedAt
+} = {}) {
+  if (!bounded(input) || !bounded(output) || !COMMIT.test(sourceCommit ?? "") ||
+      !TASK.test(taskId ?? "") || !PROFILE_IDS.has(profile) ||
+      !Number.isSafeInteger(repetition) || repetition < 0 || repetition > 999 ||
+      !bounded(hostVersion, 128) || !timestamp(observedAt)) {
+    throw new TypeError("invalid Claude capture configuration");
+  }
+  const capture = captureFromRaw({
+    raw: rawCapture(input),
+    sourceCommit,
+    taskId,
+    profile,
+    repetition,
+    hostVersion,
+    observedAt
+  });
+  writeCanonicalNew(output, capture);
   return capture;
+}
+
+export function normalizeClaudeStreamCapture({
+  input,
+  output,
+  metricsOutput,
+  sourceCommit,
+  taskId,
+  profile,
+  repetition,
+  hostVersion,
+  observedAt,
+  ledgerFile,
+  hostEvidenceFile,
+  requireCompleteMetrics = false
+} = {}) {
+  if (!bounded(input) || !bounded(output) || !bounded(metricsOutput) ||
+      !COMMIT.test(sourceCommit ?? "") || !TASK.test(taskId ?? "") ||
+      !PROFILE_IDS.has(profile) || !Number.isSafeInteger(repetition) ||
+      repetition < 0 || repetition > 999 || !bounded(hostVersion, 128) ||
+      !timestamp(observedAt) || typeof requireCompleteMetrics !== "boolean") {
+    throw new TypeError("invalid Claude stream capture configuration");
+  }
+  const absolute = resolve(input);
+  const stat = lstatSync(absolute);
+  if (!stat.isFile() || stat.size < 2 || stat.size > MAX_STREAM_BYTES) {
+    throw new TypeError("invalid Claude stream");
+  }
+  const bytes = readFileSync(realpathSync(absolute));
+  const events = [];
+  try {
+    for (const line of bytes.toString("utf8").split(/\r?\n/u)) {
+      if (line !== "") events.push(JSON.parse(line));
+    }
+  } catch {
+    throw new TypeError("invalid Claude stream");
+  }
+  const terminals = events.filter(({ type }) => type === "result");
+  if (events[0]?.type !== "system" || events[0]?.subtype !== "init" ||
+      terminals.length !== 1 || events.at(-1) !== terminals[0]) {
+    throw new TypeError("invalid Claude stream");
+  }
+
+  const toolUses = [];
+  const toolResults = new Map();
+  for (const event of events) {
+    const content = event?.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (block?.type === "tool_use") {
+        if (!bounded(block.id, 256) || !bounded(block.name, 256) ||
+            toolUses.some(({ id }) => id === block.id)) {
+          throw new TypeError("invalid Claude stream tool use");
+        }
+        toolUses.push({ id: block.id, name: block.name });
+      } else if (block?.type === "tool_result") {
+        if (!bounded(block.tool_use_id, 256) ||
+            toolResults.has(block.tool_use_id)) {
+          throw new TypeError("invalid Claude stream tool result");
+        }
+        toolResults.set(block.tool_use_id, canonicalJson(block.content ?? null));
+      }
+    }
+  }
+  if (toolResults.size !== toolUses.length ||
+      toolUses.some(({ id }) => !toolResults.has(id))) {
+    throw new TypeError("incomplete Claude stream tool results");
+  }
+
+  const terminal = terminals[0];
+  const capture = captureFromRaw({
+    raw: validatedRawCapture(bytes, terminal),
+    sourceCommit,
+    taskId,
+    profile,
+    repetition,
+    hostVersion,
+    observedAt
+  });
+  const resultContent = toolUses.map(({ id }) => toolResults.get(id)).join("\n");
+  const counts = Object.fromEntries([...new Set(toolUses.map(({ name }) => name))]
+    .sort().map((name) => [name, toolUses.filter((use) => use.name === name).length]));
+  const streamMetrics = {
+    kind: "effectgate_claude_stream_metrics",
+    schema_version: "1.0.0",
+    source_commit: sourceCommit,
+    task_id: taskId,
+    profile,
+    repetition,
+    raw_stream_digest: capture.raw_event_digest,
+    terminal_success: terminal.is_error === false && terminal.subtype === "success",
+    latency_ms: terminal.duration_ms,
+    tool_call_count: toolUses.length,
+    fetch_count: toolUses.filter(({ name }) =>
+      name.endsWith("__effectgate_fetch")
+    ).length,
+    tool_counts: Object.freeze(counts),
+    tool_result_tokens: BYTE_PROXY_COUNTER.measure({ content: resultContent })
+  };
+  if (!Number.isFinite(streamMetrics.latency_ms) ||
+      streamMetrics.latency_ms < 0) {
+    throw new TypeError("invalid Claude stream latency");
+  }
+  const complete = benchmarkMetrics({
+    taskId,
+    profile,
+    terminal,
+    metrics: streamMetrics,
+    ledgerFile,
+    hostEvidenceFile,
+    hostVersion,
+    observedAt
+  });
+  if (requireCompleteMetrics && complete === null) {
+    throw new TypeError("incomplete Claude benchmark metrics");
+  }
+  const metrics = Object.freeze({
+    ...streamMetrics,
+    task_success: streamMetrics.terminal_success &&
+      evaluateTargetCorpusAnswer(taskId, terminal.result),
+    ...(complete === null ? {} : { benchmark_metrics: complete })
+  });
+  writeCanonicalNew(output, capture);
+  writeCanonicalNew(metricsOutput, metrics);
+  return Object.freeze({ capture, metrics });
 }
 
 export function validatedHostCapture(file) {
@@ -462,6 +755,24 @@ function normalizeOptions(args) {
   };
 }
 
+function streamOptions(args) {
+  const values = pairs(args, new Set([
+    "--input", "--output", "--metrics-output", "--source-commit",
+    "--task-id", "--profile", "--repetition", "--host-version",
+    "--observed-at", "--ledger", "--host-evidence"
+  ]));
+  return {
+    ...normalizeOptions(Object.entries(values)
+      .filter(([key]) => ![
+        "--metrics-output", "--ledger", "--host-evidence"
+      ].includes(key))
+      .flat()),
+    metricsOutput: values["--metrics-output"],
+    ledgerFile: values["--ledger"],
+    hostEvidenceFile: values["--host-evidence"]
+  };
+}
+
 function assemblyOptions(args) {
   const values = pairs(args, new Set(["--input", "--output"]));
   return { input: values["--input"], output: values["--output"] };
@@ -488,6 +799,16 @@ export function main(args = process.argv.slice(2)) {
       total_input_tokens: capture.usage.total_input_tokens.value
     })}\n`);
     return capture;
+  }
+  if (mode === "normalize-stream") {
+    const options = streamOptions(rest);
+    const normalized = normalizeClaudeStreamCapture(options);
+    process.stdout.write(`${canonicalJson({
+      metrics_file: resolve(options.metricsOutput),
+      raw_stream_digest: normalized.capture.raw_event_digest,
+      tool_call_count: normalized.metrics.tool_call_count
+    })}\n`);
+    return normalized;
   }
   if (mode === "assemble") {
     const options = assemblyOptions(rest);
