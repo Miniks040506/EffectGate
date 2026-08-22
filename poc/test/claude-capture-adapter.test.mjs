@@ -370,6 +370,40 @@ test("Claude stream normalizes content-free tool metrics", () => {
       "qualified"
     );
 
+    const budgetInput = join(root, "budget-error.jsonl");
+    writeFileSync(budgetInput, `${[
+      { type: "system", subtype: "init", tools: [] },
+      {
+        type: "result",
+        subtype: "error_max_budget_usd",
+        is_error: true,
+        num_turns: 1,
+        duration_ms: 123,
+        total_cost_usd: 0.052,
+        usage: {
+          input_tokens: 2,
+          cache_creation_input_tokens: 10_628,
+          cache_read_input_tokens: 0,
+          output_tokens: 177
+        }
+      }
+    ].map(JSON.stringify).join("\n")}\n`, "utf8");
+    const budgetError = normalizeClaudeStreamCapture({
+      input: budgetInput,
+      output: join(root, "budget-error-capture.json"),
+      metricsOutput: join(root, "budget-error-metrics.json"),
+      sourceCommit: COMMIT,
+      taskId: "BENCH-READ-001",
+      profile: "P0_NATIVE_DEFAULT",
+      repetition: 0,
+      hostVersion: "2.1.239",
+      observedAt: "2026-08-22T08:00:00.000Z",
+      requireCompleteMetrics: true
+    });
+    assert.equal(budgetError.capture.terminal.is_error, true);
+    assert.equal(budgetError.capture.terminal.result_bytes, 0);
+    assert.equal(budgetError.metrics.task_success, false);
+
     const incomplete = join(root, "incomplete.jsonl");
     writeFileSync(incomplete, `${events.filter(({ type }) => type !== "user")
       .map(JSON.stringify).join("\n")}\n`, "utf8");

@@ -223,6 +223,9 @@ export function prepareClaudeMcpAttempt(options = {}) {
 }
 
 function validatedRawCapture(bytes, value) {
+  if (value?.is_error === true && !Object.hasOwn(value, "result")) {
+    value = { ...value, result: null };
+  }
   const usage = value?.usage;
   const counts = [
     usage?.input_tokens,
