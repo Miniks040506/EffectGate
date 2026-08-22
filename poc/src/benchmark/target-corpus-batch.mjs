@@ -723,12 +723,13 @@ export class TargetCorpusBatchStore {
           "--print", "--verbose", "--output-format", "stream-json",
           "--no-session-persistence", "--no-chrome",
           "--disable-slash-commands", "--strict-mcp-config",
+          "--mcp-config", canonicalJson(mcpConfig),
           "--permission-mode", "dontAsk", "--tools", "ToolSearch",
           "--allowedTools", "mcp__effectgate__*",
           "--model", manifest.model, "--effort", manifest.effort,
           "--max-budget-usd", String(budget),
           "--json-schema", canonicalJson(resultSchema(task.rubric)),
-          "--mcp-config", canonicalJson(mcpConfig), task.prompt
+          task.prompt
         ],
         capture_file: resolve(root, slot.capture_file),
         command: "claude",
