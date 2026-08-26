@@ -1,0 +1,16 @@
+{
+  "kind": "effectgate_host_compatibility",
+  "schema_version": "1.0.0",
+  "client": {
+    "name": "claude-code",
+    "version": "2.1.241",
+    "build_digest": "sha256:c49a05922a787c33478067a5164002932235f6611948523b55ae1fbdb303ac1f"
+  },
+  "tool_search": {
+    "state": "enabled_observed",
+    "configuration_digest": "sha256:a8f480c2804f662551df3921419a59b9fb9904ba549e5fd2b193f36acb586789"
+  },
+  "evidence_state": "pass",
+  "observed_at": "2026-08-24T17:42:18.648Z",
+  "expires_at": "2026-09-23T17:42:18.648Z"
+}

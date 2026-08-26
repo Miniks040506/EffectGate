@@ -196,7 +196,7 @@ configuration may instead bind one exact digest-pinned stdio process.
 | Lifecycle | Exactly one successful initialization path per stdio process |
 | Catalog | Calls require a public name learned from a `tools/list` page that passed the 64 KiB public-result guard |
 | Compact mux | A session pinned to `compact_mux` exposes only bounded search, describe, call, and authenticated fetch tools; direct typed names are denied |
-| Native deferral evidence | Deferral metadata requires an unexpired `pass` manifest, observed Tool Search, and exact client name/version/build match; EG-014B observed real Tool Search on Claude Code 2.1.233 |
+| Native deferral evidence | Deferral metadata requires an unexpired `pass` manifest, observed Tool Search, and exact client name/version/build match; EG-014B most recently passed on Claude Code 2.1.241 |
 | Name isolation | Backend names cannot be called directly or invented |
 | Eligible results | Exact text above 4 KiB and oversized untyped envelopes are retained; small text with a redaction or opacity match is bounded too |
 | Typed safety | A typed result that needs redaction or opaque handling fails closed instead of violating its `outputSchema` or exposing source bytes |
