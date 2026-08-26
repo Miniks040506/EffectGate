@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { canonicalJson } from "../src/skill/passport-compiler.mjs";
 import { runObservedBenchmark } from
   "../src/benchmark/observation-runner.mjs";
-import { TargetCorpusBatchStore } from
+import { planTargetCorpusRetries, TargetCorpusBatchStore } from
   "../src/benchmark/target-corpus-batch.mjs";
 
 const CLI = fileURLToPath(new URL(
@@ -24,6 +24,9 @@ const CLI = fileURLToPath(new URL(
 ));
 const HOST_EVIDENCE = fileURLToPath(new URL(
   "../evidence/host-compatibility-claude-code-2.1.233.json", import.meta.url
+));
+const PAIRED_EVIDENCE = fileURLToPath(new URL(
+  "../evidence/claude-code-target-paired-cell-2.1.241.json", import.meta.url
 ));
 const COMMIT = "a".repeat(40);
 const NOW = Date.parse("2026-08-18T00:00:00.000Z");
@@ -430,6 +433,43 @@ test("target corpus campaign plans bind deterministic inputs and all slots", () 
     }), /input mismatch/);
   } finally {
     store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("offline retry planning is bounded, source-bound, and non-executable", () => {
+  const directory = mkdtempSync(join(tmpdir(), "effectgate-target-retry-"));
+  try {
+    const output = join(directory, "retry-plan.json");
+    const planned = spawnSync(process.execPath, [
+      CLI, "retry-plan", "--evidence", PAIRED_EVIDENCE, "--output", output
+    ], { encoding: "utf8", windowsHide: true });
+    assert.equal(planned.status, 0, planned.stderr);
+    assert.equal(JSON.parse(planned.stdout).candidate_count, 3);
+    const source = readFileSync(output, "utf8");
+    const plan = JSON.parse(source);
+    assert.equal(source, `${canonicalJson(plan)}\n`);
+    assert.equal(plan.execution_enabled, false);
+    assert.deepEqual(
+      plan.retry_candidates.map(({ profile }) => profile),
+      ["P0_NATIVE_DEFAULT", "P1_EG_TYPED", "P3_EAGER_DIAGNOSTIC"]
+    );
+    assert.equal(plan.retry_candidates[0].retry_gate,
+      "offline_call_reduction_required");
+    assert.equal(plan.retry_candidates[1].retry_gate,
+      "provider_allowance_reset_required");
+    assert.equal(plan.usage_guard.maximum_next_authorization_sessions, 1);
+    assert.equal(plan.usage_guard.provider_overage_must_be_disabled, true);
+
+    const invalid = JSON.parse(readFileSync(PAIRED_EVIDENCE, "utf8"));
+    invalid.evidence.raw_streams_retained = true;
+    const invalidFile = join(directory, "invalid.json");
+    writeFileSync(invalidFile, JSON.stringify(invalid), "utf8");
+    assert.throws(() => planTargetCorpusRetries({
+      evidenceFile: invalidFile,
+      output: join(directory, "invalid-plan.json")
+    }), /invalid target corpus paired evidence/);
+  } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });

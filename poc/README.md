@@ -187,8 +187,8 @@ Manifest shape:
 ```
 
 Replace the placeholder digests and dates with captured qualification
-evidence; never mark an assumed capability as `pass`. EG-014B retains one
-sanitized real-host result for Claude Code 2.1.233 under `evidence/`. It proves
+evidence; never mark an assumed capability as `pass`. EG-014B retains
+sanitized real-host results, most recently for Claude Code 2.1.241 under `evidence/`. It proves
 that this exact build used Tool Search to discover and call the EffectGate
 fixture once. The evidence is build-bound and expires; it is not a general
 claim about other Claude Code versions.
@@ -311,6 +311,27 @@ received the exact fixture result, and reported no overage. The original failed
 pilot remains immutable; the source-bound requalification records the fix as a
 separate `pass`. It is also plumbing-only and does not count toward the target
 corpus claim.
+
+The source-bound Claude Code 2.1.241 target-corpus P2 requalification passes
+`BENCH-READ-001` in 14 tool calls, down from the prior 20-call failed attempt.
+Its sanitized evidence counts as one of 320 required campaign slots; it does
+not claim that the full campaign is complete.
+
+The matching four-profile cell is also complete: P2 passed, P0 and P3 reached
+their per-session budget, and P1 reached Claude's session limit. Its sanitized
+paired verdict therefore fails closed; raw results and streams are not kept.
+
+Generate a non-executable retry plan from that sanitized verdict:
+
+```powershell
+node src/benchmark/target-corpus-batch.mjs retry-plan `
+  --evidence evidence/claude-code-target-paired-cell-2.1.241.json `
+  --output retry-plan.json
+```
+
+The planner excludes the passing profile, lowers the CLI threshold, requires
+offline call reduction or a provider reset, permits at most one newly
+authorized session, and never launches Claude.
 
 Prepare the 320-run target-corpus campaign without launching Claude:
 

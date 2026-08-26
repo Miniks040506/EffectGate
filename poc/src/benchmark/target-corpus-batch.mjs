@@ -83,6 +83,7 @@ const USAGE = "Usage: target-corpus-batch.mjs " +
   "validate-plan --state FILE --input DIRECTORY | " +
   "session-plan --state FILE --input DIRECTORY --authorization-id ID " +
   "--output FILE --max-budget-usd USD [--host-evidence FILE] | " +
+  "retry-plan --evidence FILE --output FILE | " +
   "export --state FILE --manifest FILE --output DIRECTORY | " +
   "status --state FILE";
 const SCHEMA = `
@@ -195,6 +196,98 @@ function readExportManifest(file) {
     throw new TypeError("invalid target corpus export manifest");
   }
   return value;
+}
+
+export function planTargetCorpusRetries({ evidenceFile, output } = {}) {
+  if (!bounded(output)) throw new TypeError("invalid target corpus retry plan");
+  const evidence = readRegular(
+    evidenceFile, "target corpus paired evidence", 1_000_000
+  );
+  let value;
+  try { value = JSON.parse(evidence.source); } catch {
+    throw new TypeError("invalid target corpus paired evidence");
+  }
+  const failures = Array.isArray(value.profiles)
+    ? value.profiles.filter(({ task_success: success }) => success === false)
+    : [];
+  if (value.kind !== "effectgate_claude_target_corpus_paired_cell" ||
+      value.schema_version !== "1.0.0" ||
+      !COMMIT.test(value.source_commit ?? "") ||
+      !TASKS.includes(value.task_id) ||
+      !Number.isSafeInteger(value.repetition) || value.repetition < 0 ||
+      value.repetition >= REPETITIONS ||
+      !AUTHORIZATION.test(value.authorization_id ?? "") ||
+      !Array.isArray(value.profiles) || value.profiles.length !== PROFILES.length ||
+      canonicalJson(value.profiles.map(({ profile }) => profile)) !==
+        canonicalJson(PROFILES) ||
+      value.profiles.some((profile) =>
+        typeof profile.task_success !== "boolean" ||
+        !Number.isSafeInteger(profile.tool_call_count) ||
+        profile.tool_call_count < 0 || profile.tool_call_count > 1_000 ||
+        !Number.isFinite(profile.metered_equivalent_usd) ||
+        profile.metered_equivalent_usd < 0 ||
+        (profile.task_success
+          ? profile.failure_code !== null
+          : !["error_max_budget_usd", "session_limit_429"]
+            .includes(profile.failure_code))) ||
+      !Number.isFinite(value.configuration?.max_budget_usd_per_session) ||
+      value.configuration.max_budget_usd_per_session <= 0 ||
+      value.configuration.max_budget_usd_per_session > 0.25 ||
+      value.usage_guard?.is_using_overage !== false ||
+      value.evidence?.raw_results_retained !== false ||
+      value.evidence?.raw_streams_retained !== false ||
+      value.qualification_scope?.paired_cell_complete !== true ||
+      value.verdict?.state !== "fail" || failures.length < 1) {
+    throw new TypeError("invalid target corpus paired evidence");
+  }
+  const threshold = Number(Math.min(
+    0.2, value.configuration.max_budget_usd_per_session * 0.8
+  ).toFixed(6));
+  const plan = {
+    execution_enabled: false,
+    kind: "effectgate_target_corpus_retry_plan",
+    next_action: "satisfy_retry_gates_then_request_new_authorization",
+    prior_authorization_id: value.authorization_id,
+    repetition: value.repetition,
+    retry_candidates: failures.map((profile) => ({
+      cli_threshold_usd: threshold,
+      prior_failure_code: profile.failure_code,
+      prior_metered_equivalent_usd: profile.metered_equivalent_usd,
+      prior_tool_call_count: profile.tool_call_count,
+      profile: profile.profile,
+      retry_gate: profile.failure_code === "session_limit_429"
+        ? "provider_allowance_reset_required"
+        : "offline_call_reduction_required",
+      target_tool_call_count: Math.max(
+        1, Math.floor(profile.tool_call_count * 0.8)
+      )
+    })),
+    schema_version: "1.0.0",
+    source_commit: value.source_commit,
+    source_evidence_digest: digest(evidence.source),
+    task_id: value.task_id,
+    usage_guard: {
+      atomic_request_overshoot_possible: true,
+      hard_ceiling: false,
+      maximum_next_authorization_sessions: 1,
+      provider_overage_must_be_disabled: true,
+      requires_separate_execution_authorization: true
+    }
+  };
+  const outputFile = resolve(output);
+  const bytes = Buffer.from(`${canonicalJson(plan)}\n`);
+  mkdirSync(dirname(outputFile), { recursive: true, mode: 0o700 });
+  writeFileSync(outputFile, bytes, {
+    flag: "wx", mode: 0o600, flush: true
+  });
+  return deepFreeze({
+    candidate_count: failures.length,
+    execution_enabled: false,
+    kind: "effectgate_target_corpus_retry_plan_dry_run",
+    plan_digest: digest(bytes),
+    plan_file: outputFile,
+    schema_version: "1.0.0"
+  });
 }
 
 function campaignTasks() {
@@ -936,6 +1029,7 @@ function parse(args) {
       "--authorization-id", "--input", "--max-budget-usd", "--output",
       "--state"
     ],
+    "retry-plan": ["--evidence", "--output"],
     export: ["--manifest", "--output", "--state"],
     status: ["--state"]
   }[command];
@@ -961,6 +1055,13 @@ function parse(args) {
 
 export function main(args = process.argv.slice(2)) {
   const { command, values } = parse(args);
+  if (command === "retry-plan") {
+    const result = planTargetCorpusRetries({
+      evidenceFile: values["--evidence"], output: values["--output"]
+    });
+    process.stdout.write(`${canonicalJson(result)}\n`);
+    return result;
+  }
   const store = new TargetCorpusBatchStore({ file: values["--state"] });
   try {
     const result = command === "init"
