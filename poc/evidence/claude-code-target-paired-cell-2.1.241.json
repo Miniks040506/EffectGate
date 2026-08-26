@@ -1,0 +1,102 @@
+{
+  "kind": "effectgate_claude_target_corpus_paired_cell",
+  "schema_version": "1.0.0",
+  "task_id": "BENCH-READ-001",
+  "repetition": 0,
+  "source_commit": "f382cdc02c3bf56263e7a358bc829e4a952cae11",
+  "authorization_id": "target-corpus-cc241-p2-requal-002",
+  "client": {
+    "name": "claude-code",
+    "version": "2.1.241",
+    "build_digest": "sha256:c49a05922a787c33478067a5164002932235f6611948523b55ae1fbdb303ac1f"
+  },
+  "configuration": {
+    "model": "claude-sonnet-5",
+    "effort": "medium",
+    "max_budget_usd_per_session": 0.25,
+    "backend_digest": "sha256:e15689dcd5ce3781becb4b518150681e2ced361a38ce7967d66142eeec0a8f21",
+    "prompt_digest": "sha256:60bb6f153e5e122783de3dcdfa747d8845df92165d81f8be4978e970d6b9d2d1",
+    "rubric_digest": "sha256:3be7d2c2cff5750e627ed999783bff3f6393c063eb3718492fd74bf82f77af44"
+  },
+  "profiles": [
+    {
+      "profile": "P0_NATIVE_DEFAULT",
+      "observed_at": "2026-08-25T09:34:48.674Z",
+      "task_success": false,
+      "failure_code": "error_max_budget_usd",
+      "tool_call_count": 11,
+      "fetch_count": 0,
+      "total_input_tokens": 253851,
+      "metered_equivalent_usd": 0.26323899999999995,
+      "capture_digest": "sha256:f1be9fef2bf44deb601d85bc4ddf7260ecfbfed232decc3217dc4175b2ddb394",
+      "metrics_digest": "sha256:6ae64c7c2919f328f36f9a083fe061ca52d217bb1f38bfeb149383cf17891ba9"
+    },
+    {
+      "profile": "P1_EG_TYPED",
+      "observed_at": "2026-08-25T09:36:03.747Z",
+      "task_success": false,
+      "failure_code": "session_limit_429",
+      "tool_call_count": 8,
+      "fetch_count": 3,
+      "total_input_tokens": 143279,
+      "metered_equivalent_usd": 0.1263334,
+      "capture_digest": "sha256:d55b44176532cf56456a67512327a87272cbeb48ec10030550ffe5cff045c77e",
+      "metrics_digest": "sha256:a3f280191f77354c1181427e3a8c4dcf8a225fd07e27b35543258f84c16d348c"
+    },
+    {
+      "profile": "P2_EG_MUX",
+      "observed_at": "2026-08-25T09:27:52.366Z",
+      "task_success": true,
+      "failure_code": null,
+      "tool_call_count": 14,
+      "fetch_count": 4,
+      "total_input_tokens": 212824,
+      "metered_equivalent_usd": 0.20065840000000001,
+      "capture_digest": "sha256:b83603e47c6a5b24d5e35746934fa00cba3e8ca363748fafb6c2994f2cadcc85",
+      "metrics_digest": "sha256:7cde42be51d71ee3aafe74b663da0e62c1a5a64469790850e81b02ba7a36efd8"
+    },
+    {
+      "profile": "P3_EAGER_DIAGNOSTIC",
+      "observed_at": "2026-08-26T03:13:57.169Z",
+      "task_success": false,
+      "failure_code": "error_max_budget_usd",
+      "tool_call_count": 10,
+      "fetch_count": 0,
+      "total_input_tokens": 188057,
+      "metered_equivalent_usd": 0.30823979999999995,
+      "capture_digest": "sha256:faab1f4dd5c1dd5ab0b068c9025c1d0e971e3978b5b4ae13c376671363103146",
+      "metrics_digest": "sha256:076503f8d679bde2819a6178b28bf7eaa0a897ec6f5d992adde30ef0273628d2"
+    }
+  ],
+  "usage_guard": {
+    "authentication": "claude.ai",
+    "api_key_source": "none",
+    "authorized_sessions": 4,
+    "executed_sessions": 4,
+    "aggregate_max_budget_usd": 1,
+    "total_metered_equivalent_usd": 0.8984705999999999,
+    "is_using_overage": false,
+    "overage_disabled_reason": "org_level_disabled"
+  },
+  "evidence": {
+    "raw_results_retained": false,
+    "raw_streams_retained": false,
+    "completed_profiles": 4,
+    "passed_profiles": 1
+  },
+  "qualification_scope": {
+    "paired_cell_complete": true,
+    "qualified_slots": 1,
+    "completed_slots": 4,
+    "required_slots": 320,
+    "full_campaign_complete": false
+  },
+  "verdict": {
+    "state": "fail",
+    "reasons": [
+      "P0_NATIVE_DEFAULT exceeded the per-session budget",
+      "P1_EG_TYPED reached the Claude session limit",
+      "P3_EAGER_DIAGNOSTIC exceeded the per-session budget"
+    ]
+  }
+}

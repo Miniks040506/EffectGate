@@ -37,6 +37,13 @@ const CLAUDE_PILOT = fileURLToPath(new URL(
 const CLAUDE_P2_REQUALIFICATION = fileURLToPath(new URL(
   "../evidence/claude-code-p2-requalification-2.1.233.json", import.meta.url
 ));
+const CLAUDE_TARGET_P2_REQUALIFICATION = fileURLToPath(new URL(
+  "../evidence/claude-code-target-p2-requalification-2.1.241.json",
+  import.meta.url
+));
+const CLAUDE_TARGET_PAIRED_CELL = fileURLToPath(new URL(
+  "../evidence/claude-code-target-paired-cell-2.1.241.json", import.meta.url
+));
 const COMMIT = "a".repeat(40);
 const PROFILES = [
   "P0_NATIVE_DEFAULT",
@@ -607,4 +614,42 @@ test("real Claude compact requalification retains content-free pass evidence", (
   assert.match(evidence.evidence.raw_stream_digest, /^sha256:[a-f0-9]{64}$/u);
   assert.equal(evidence.qualification_scope.counts_toward_target_corpus, false);
   assert.equal(evidence.evidence_state, "pass");
+});
+
+test("real target-corpus P2 requalification reduces calls and passes", () => {
+  const evidence = JSON.parse(readFileSync(
+    CLAUDE_TARGET_P2_REQUALIFICATION, "utf8"
+  ));
+  assert.equal(evidence.client.version, "2.1.241");
+  assert.equal(evidence.configuration.profile, "P2_EG_MUX");
+  assert.equal(evidence.observation.task_success, true);
+  assert.equal(evidence.observation.probe_result_exact, true);
+  assert.equal(evidence.observation.tool_call_count, 14);
+  assert.equal(evidence.observation.comparison.previous_tool_call_count, 20);
+  assert.equal(evidence.observation.comparison.tool_call_reduction_percent, 30);
+  assert.equal(evidence.usage_guard.authorized_sessions, 1);
+  assert.equal(evidence.usage_guard.executed_sessions, 1);
+  assert.equal(evidence.usage_guard.is_using_overage, false);
+  assert.equal(evidence.evidence.raw_result_retained, false);
+  assert.equal(evidence.evidence.raw_stream_retained, false);
+  assert.equal(evidence.qualification_scope.qualified_slots, 1);
+  assert.equal(evidence.qualification_scope.full_campaign_complete, false);
+  assert.equal(evidence.evidence_state, "pass");
+});
+
+test("real target-corpus paired cell records its fail-closed verdict", () => {
+  const evidence = JSON.parse(readFileSync(CLAUDE_TARGET_PAIRED_CELL, "utf8"));
+  assert.deepEqual(evidence.profiles.map(({ profile }) => profile), PROFILES);
+  assert.deepEqual(
+    evidence.profiles.map(({ task_success: success }) => success),
+    [false, false, true, false]
+  );
+  assert.equal(evidence.usage_guard.authorized_sessions, 4);
+  assert.equal(evidence.usage_guard.executed_sessions, 4);
+  assert.equal(evidence.usage_guard.is_using_overage, false);
+  assert.equal(evidence.evidence.raw_results_retained, false);
+  assert.equal(evidence.evidence.raw_streams_retained, false);
+  assert.equal(evidence.qualification_scope.paired_cell_complete, true);
+  assert.equal(evidence.qualification_scope.full_campaign_complete, false);
+  assert.equal(evidence.verdict.state, "fail");
 });

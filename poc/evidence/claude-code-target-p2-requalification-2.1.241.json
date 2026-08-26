@@ -1,0 +1,82 @@
+{
+  "kind": "effectgate_claude_target_corpus_p2_requalification",
+  "schema_version": "1.0.0",
+  "task_id": "BENCH-READ-001",
+  "source_commit": "f382cdc02c3bf56263e7a358bc829e4a952cae11",
+  "authorization_id": "target-corpus-cc241-p2-requal-002",
+  "client": {
+    "name": "claude-code",
+    "version": "2.1.241",
+    "build_digest": "sha256:c49a05922a787c33478067a5164002932235f6611948523b55ae1fbdb303ac1f"
+  },
+  "configuration": {
+    "profile": "P2_EG_MUX",
+    "model": "claude-sonnet-5",
+    "effort": "medium",
+    "max_budget_usd": 0.25,
+    "backend_digest": "sha256:e15689dcd5ce3781becb4b518150681e2ced361a38ce7967d66142eeec0a8f21",
+    "prompt_digest": "sha256:60bb6f153e5e122783de3dcdfa747d8845df92165d81f8be4978e970d6b9d2d1",
+    "rubric_digest": "sha256:3be7d2c2cff5750e627ed999783bff3f6393c063eb3718492fd74bf82f77af44"
+  },
+  "observation": {
+    "observed_at": "2026-08-25T09:27:52.366Z",
+    "process_status": 0,
+    "mcp_connected": true,
+    "mcp_process_attempt_count": 1,
+    "task_success": true,
+    "probe_result_exact": true,
+    "tool_call_count": 14,
+    "fetch_count": 4,
+    "tool_counts": {
+      "structured_output": 1,
+      "tool_search": 2,
+      "compact_search": 3,
+      "compact_describe": 1,
+      "compact_call": 1,
+      "artifact_search": 2,
+      "fetch": 4
+    },
+    "comparison": {
+      "previous_tool_call_count": 20,
+      "tool_call_reduction_count": 6,
+      "tool_call_reduction_percent": 30
+    },
+    "terminal": {
+      "is_error": false,
+      "num_turns": 15,
+      "result_bytes": 111,
+      "result_digest": "sha256:8c83c30f8c84e0765f82fb53816594028d5ec53e162f381f311ec55106517744"
+    },
+    "usage": {
+      "input_tokens": 24,
+      "cache_creation_input_tokens": 28833,
+      "cache_read_input_tokens": 183967,
+      "output_tokens": 4744,
+      "total_input_tokens": 212824,
+      "metered_equivalent_usd": 0.20065840000000001
+    }
+  },
+  "evidence": {
+    "raw_stream_digest": "sha256:7078f099f85fce5d015fa4841bda5f32ad450e3b67a8f27c3c3038c779c7fd3c",
+    "capture_digest": "sha256:b83603e47c6a5b24d5e35746934fa00cba3e8ca363748fafb6c2994f2cadcc85",
+    "metrics_digest": "sha256:7cde42be51d71ee3aafe74b663da0e62c1a5a64469790850e81b02ba7a36efd8",
+    "ledger_digest": "sha256:7bd4640b7d5f401482e5493524cfa2896311f6d77e038fa04852c1552a32a097",
+    "raw_result_retained": false,
+    "raw_stream_retained": false
+  },
+  "usage_guard": {
+    "authentication": "claude.ai",
+    "api_key_source": "none",
+    "authorized_sessions": 1,
+    "executed_sessions": 1,
+    "is_using_overage": false,
+    "overage_disabled_reason": "org_level_disabled"
+  },
+  "qualification_scope": {
+    "counts_toward_target_corpus": true,
+    "qualified_slots": 1,
+    "required_slots": 320,
+    "full_campaign_complete": false
+  },
+  "evidence_state": "pass"
+}
