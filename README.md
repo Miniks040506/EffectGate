@@ -766,7 +766,7 @@ The dependency-free suite directly verifies:
 |---|---|
 | Fixture proxy, reviewed read-only third-party stdio binding, and one digest-pinned reviewed stdio effect fixture | Streamable HTTP and broader reviewed backend adapters |
 | Exact executable/source, identity, catalog, and typed read-only admission pins | Signed backend capability passports and sealed generations |
-| Exact-build Claude Code 2.1.233 Tool Search evidence plus evidence-gated metadata | Automatic build-identity transport and multi-version RC evidence |
+| Exact-build Claude Code 2.1.241 Tool Search evidence plus evidence-gated metadata | Automatic build-identity transport and multi-version RC evidence |
 | Quota-limited partitioned filesystem CAS with explicit invalidation | Durable metadata, shared-writer locking, crash-root recovery, and production GC |
 | Cited paging/search/projection plus fail-closed opaque-content withholding | Ranked multi-window search, safe regex policy, streaming indexes, richer predicates, full CommonMark structure, and fuzz qualification |
 | HMAC-authenticated process/session-bound cursors with a policy-version binding | Authenticated OS principal/client identity and durable policy-generation binding |
