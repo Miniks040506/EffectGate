@@ -4,6 +4,42 @@ How EffectGate is built, what it guarantees, and every limit it enforces.
 This is the reference companion to the [README](../README.md); read that first
 for what the runtime is for.
 
+## Request path
+
+```mermaid
+flowchart LR
+    Client["MCP client"]
+
+    subgraph Gate["EffectGate"]
+        Input["UTF-8 line parser<br/>1 MiB frame guard"]
+        Router["JSON-RPC / MCP router"]
+        Catalog["Read-only admission map<br/>public name → backend name"]
+        Views["Context View service<br/>paging · search · projection"]
+        Store["Temporary filesystem CAS<br/>SHA-256 · 64 MiB quota"]
+        Output["Error sanitizer<br/>output guard + backpressure"]
+
+        Input --> Router
+        Router -.-> Catalog
+        Router --> Views
+        Views <--> Store
+        Router --> Output
+        Views --> Output
+    end
+
+    Backend["Bundled fixture<br/>or one reviewed stdio backend"]
+
+    Client -->|"stdio"| Input
+    Router <-->|"fixed subprocess protocol"| Backend
+    Backend -->|"typed result"| Router
+    Output -->|"stdio"| Client
+```
+
+A tool can only be called under a public name the client actually learned from
+an admitted `tools/list` page. Backend names cannot be invented or reached
+directly. There is no network listener: without `--config`, EffectGate spawns
+only the bundled fixture, and `--source` changes only its public namespace. A
+reviewed configuration may instead bind one exact digest-pinned stdio process.
+
 ## Implemented invariants
 
 | Boundary | Current behavior |
