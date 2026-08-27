@@ -265,6 +265,7 @@ acceptance evidence exists.
 | [Connecting real backends](docs/backends.md) | Reviewed third-party stdio backends, verified-effect fixture, operator CLI |
 | [Verification evidence](docs/verification.md) | What the 163-test suite actually asserts |
 | [Release engineering](docs/releasing.md) | Verify, reproduce, sign, and cut a release; uninstall and purge |
+| [Native installers](docs/native-installers.md) | Qualified MSI, PKG, DEB, and RPM packaging and trust boundary |
 | [HTTP adapter preview](docs/adapters/streamable-http-json.md) | v1.1 preview: reviewed Streamable HTTP JSON bridge |
 | [External review handoff](docs/review/v1.0.0.md) | Scope and required report for an independent auditor |
 | [Security policy](SECURITY.md) | Threat boundary, known limitations, private reporting |
