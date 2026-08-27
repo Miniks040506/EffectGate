@@ -17,6 +17,8 @@
 [Architecture](#architecture) ·
 [Protocol](#protocol-surface) ·
 [Security](#security-model) ·
+[External review](docs/review/v1.0.0.md) ·
+[HTTP adapter preview](docs/adapters/streamable-http-json.md) ·
 [Changelog](CHANGELOG.md) ·
 [MCP setup](#connect-an-mcp-client)
 
@@ -59,6 +61,23 @@ npm install --global https://github.com/Miniks040506/EffectGate/releases/downloa
 effectgate --version
 effectgate mcp serve
 ```
+
+Verified installer entry points are also available for Windows and for
+Linux/macOS checkouts:
+
+```powershell
+.\install\install.ps1 -Check
+.\install\install.ps1
+```
+
+```sh
+./install/install.sh --check
+./install/install.sh
+```
+
+Both installers require Node.js 24 and npm, download only the pinned v1.0.0
+release tarball, verify its SHA-256 digest, disable lifecycle scripts, and
+confirm the installed CLI version.
 
 The version command must print `1.0.0`. `effectgate mcp serve` starts a local
 stdio MCP server backed only by the bundled deterministic fixture; it does not
