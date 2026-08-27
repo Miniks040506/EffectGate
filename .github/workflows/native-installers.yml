@@ -190,8 +190,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "WiX failed to build EffectGate MSI." }
           $extract = Join-Path $PWD "native/msi-smoke"
           New-Item -ItemType Directory -Path $extract | Out-Null
-          & msiexec.exe /a $msi /qn "TARGETDIR=$extract"
-          if ($LASTEXITCODE -ne 0) { throw "Could not extract EffectGate MSI." }
+          $extractProcess = Start-Process -FilePath msiexec.exe `
+            -ArgumentList "/a `"$msi`" /qn TARGETDIR=`"$extract`"" `
+            -Wait -PassThru -WindowStyle Hidden
+          if ($extractProcess.ExitCode -ne 0) { throw "Could not extract EffectGate MSI." }
           $launchers = @(Get-ChildItem -LiteralPath $extract -Recurse -Filter effectgate.cmd)
           if ($launchers.Count -ne 1) { throw "MSI must contain exactly one EffectGate launcher." }
           $installedVersion = (& $launchers[0].FullName --version).Trim()

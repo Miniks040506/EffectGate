@@ -186,6 +186,7 @@ test("native installer workflow is exact-release-bound and non-publishing", () =
   assert.match(source, /dotnet tool install --global wix --version 6\.0\.2/u);
   assert.match(source, /\$payload = \(Resolve-Path native\/windows\)\.Path/u);
   assert.match(source, /-bindpath \$payload/u);
+  assert.match(source, /Start-Process -FilePath msiexec\.exe[\s\S]*-Wait -PassThru/u);
   for (const tool of ["dpkg-deb", "rpmbuild", "pkgbuild", "wix build"]) {
     assert.match(source, new RegExp(tool, "u"));
   }
