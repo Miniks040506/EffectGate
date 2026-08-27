@@ -95,9 +95,9 @@ test("runtime supply chain is dependency-free and action-pinned", () => {
   assert.deepEqual(
     Object.fromEntries(actionCounts),
     {
-      "actions/checkout": 5,
-      "actions/setup-node": 4,
-      "actions/upload-artifact": 3,
+      "actions/checkout": 8,
+      "actions/setup-node": 7,
+      "actions/upload-artifact": 6,
       "actions/download-artifact": 1
     }
   );
@@ -107,7 +107,7 @@ test("runtime supply chain is dependency-free and action-pinned", () => {
     runtime_files: runtimeFiles.length,
     runtime_imports: importCount,
     declared_dependencies: 0,
-    pinned_action_references: 13,
+    pinned_action_references: 22,
     mutable_action_references: 0,
     dependency_high_findings: 0
   })}\n`);
@@ -169,4 +169,23 @@ test("Tier-1 release workflow compares four source-bound bundles", () => {
   assert.match(source, /release-compare\.mjs --input \S+ --source-commit/u);
   assert.match(source, /needs: build/u);
   assert.match(source, /name: Upload release qualification/u);
+});
+
+test("native installer workflow is exact-release-bound and non-publishing", () => {
+  const source = readFileSync(
+    join(REPOSITORY_ROOT, ".github", "workflows", "native-installers.yml"),
+    "utf8"
+  );
+  assert.match(source, /^on:\r?\n  workflow_dispatch:\s*$/mu);
+  assert.match(source, /^permissions:\r?\n  contents: read\s*$/mu);
+  assert.doesNotMatch(source, /^\s+(?:push|pull_request):/mu);
+  assert.match(
+    source,
+    /EFFECTGATE_TARBALL_SHA256: 44aa32776701e22d8dab8e76307ea9013fd528a39493a63419545a3aed4f9c20/u
+  );
+  assert.match(source, /dotnet tool install --global wix --version 6\.0\.2/u);
+  for (const tool of ["dpkg-deb", "rpmbuild", "pkgbuild", "wix build"]) {
+    assert.match(source, new RegExp(tool, "u"));
+  }
+  assert.doesNotMatch(source, /(?:gh release upload|contents: write)/u);
 });

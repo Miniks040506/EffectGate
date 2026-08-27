@@ -1,0 +1,11 @@
+Package: effectgate-preview
+Version: 1.0.0
+Section: utils
+Priority: optional
+Architecture: all
+Depends: nodejs (>= 24)
+Maintainer: EffectGate maintainers <noreply@github.com>
+Homepage: https://github.com/Miniks040506/EffectGate
+Description: Evidence-gated MCP context and effect control runtime
+ EffectGate is a local MCP proxy that bounds tool output and makes
+ approved tool effects verifiable.

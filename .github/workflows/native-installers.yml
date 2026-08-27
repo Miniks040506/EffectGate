@@ -1,0 +1,209 @@
+name: Native installer qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  EFFECTGATE_VERSION: 1.0.0
+  EFFECTGATE_TARBALL_SHA256: 44aa32776701e22d8dab8e76307ea9013fd528a39493a63419545a3aed4f9c20
+  EFFECTGATE_TARBALL_URL: https://github.com/Miniks040506/EffectGate/releases/download/v1.0.0/effectgate-preview-1.0.0.tgz
+
+jobs:
+  linux:
+    name: Linux DEB and RPM
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out packaging source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Use exact Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.14.0
+          package-manager-cache: false
+
+      - name: Test native payload staging
+        working-directory: poc
+        run: npm run test:native
+
+      - name: Install RPM build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends rpm cpio
+
+      - name: Verify and stage signed package
+        run: |
+          curl --fail --location --silent --show-error "$EFFECTGATE_TARBALL_URL" --output effectgate.tgz
+          printf '%s  %s\n' "$EFFECTGATE_TARBALL_SHA256" effectgate.tgz | sha256sum --check --strict
+          mkdir unpacked
+          tar --extract --gzip --file effectgate.tgz --directory unpacked
+          node poc/src/release/native-package-stage.mjs \
+            --package unpacked/package \
+            --output native/linux \
+            --platform linux \
+            --version "$EFFECTGATE_VERSION" \
+            --sha256 "$EFFECTGATE_TARBALL_SHA256"
+
+      - name: Build and inspect Debian package
+        run: |
+          mkdir --parents artifacts native/linux/DEBIAN
+          install --mode 0644 packaging/linux/debian-control native/linux/DEBIAN/control
+          dpkg-deb --root-owner-group --build native/linux "artifacts/effectgate-preview_${EFFECTGATE_VERSION}_all.deb"
+          dpkg-deb --info "artifacts/effectgate-preview_${EFFECTGATE_VERSION}_all.deb"
+          mkdir native/deb-smoke
+          dpkg-deb --extract "artifacts/effectgate-preview_${EFFECTGATE_VERSION}_all.deb" native/deb-smoke
+          node native/deb-smoke/usr/lib/effectgate-preview/package/src/proxy/effectgate.mjs --version
+
+      - name: Build and inspect RPM package
+        run: |
+          mkdir --parents native/rpm-source/effectgate-preview-${EFFECTGATE_VERSION}
+          cp --archive native/linux/usr native/rpm-source/effectgate-preview-${EFFECTGATE_VERSION}/
+          mkdir --parents native/rpmbuild/BUILD native/rpmbuild/BUILDROOT native/rpmbuild/RPMS native/rpmbuild/SOURCES native/rpmbuild/SPECS native/rpmbuild/SRPMS
+          tar --create --gzip \
+            --file native/rpmbuild/SOURCES/effectgate-preview-${EFFECTGATE_VERSION}.tar.gz \
+            --directory native/rpm-source \
+            effectgate-preview-${EFFECTGATE_VERSION}
+          cp packaging/linux/effectgate.spec native/rpmbuild/SPECS/effectgate.spec
+          rpmbuild --define "_topdir $PWD/native/rpmbuild" -bb native/rpmbuild/SPECS/effectgate.spec
+          cp "native/rpmbuild/RPMS/noarch/effectgate-preview-${EFFECTGATE_VERSION}-1.noarch.rpm" \
+            "artifacts/effectgate-preview-${EFFECTGATE_VERSION}-1.noarch.rpm"
+          rpm --query --package --info "artifacts/effectgate-preview-${EFFECTGATE_VERSION}-1.noarch.rpm"
+          mkdir native/rpm-smoke
+          cd native/rpm-smoke
+          rpm2cpio "../../artifacts/effectgate-preview-${EFFECTGATE_VERSION}-1.noarch.rpm" | cpio --extract --make-directories --quiet
+          node usr/lib/effectgate-preview/package/src/proxy/effectgate.mjs --version
+
+      - name: Record Linux installer checksums
+        run: sha256sum artifacts/* > artifacts/SHA256SUMS-linux.txt
+
+      - name: Upload Linux installers
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: effectgate-native-linux-${{ github.sha }}
+          path: artifacts
+          if-no-files-found: error
+          retention-days: 30
+
+  macos:
+    name: macOS PKG
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - name: Check out packaging source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Use exact Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.14.0
+          package-manager-cache: false
+
+      - name: Verify and stage signed package
+        run: |
+          curl --fail --location --silent --show-error "$EFFECTGATE_TARBALL_URL" --output effectgate.tgz
+          printf '%s  %s\n' "$EFFECTGATE_TARBALL_SHA256" effectgate.tgz | shasum --algorithm 256 --check
+          mkdir unpacked
+          tar --extract --gzip --file effectgate.tgz --directory unpacked
+          node poc/src/release/native-package-stage.mjs \
+            --package unpacked/package \
+            --output native/macos \
+            --platform macos \
+            --version "$EFFECTGATE_VERSION" \
+            --sha256 "$EFFECTGATE_TARBALL_SHA256"
+
+      - name: Build and inspect macOS package
+        run: |
+          mkdir artifacts
+          pkgbuild \
+            --root native/macos \
+            --identifier dev.effectgate.cli \
+            --version "$EFFECTGATE_VERSION" \
+            --install-location / \
+            "artifacts/effectgate-preview-${EFFECTGATE_VERSION}-universal.pkg"
+          pkgutil --payload-files "artifacts/effectgate-preview-${EFFECTGATE_VERSION}-universal.pkg"
+          node native/macos/usr/local/lib/effectgate-preview/package/src/proxy/effectgate.mjs --version
+          shasum --algorithm 256 artifacts/*.pkg > artifacts/SHA256SUMS-macos.txt
+
+      - name: Upload macOS installer
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: effectgate-native-macos-${{ github.sha }}
+          path: artifacts
+          if-no-files-found: error
+          retention-days: 30
+
+  windows:
+    name: Windows MSI
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Check out packaging source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Use exact Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.14.0
+          package-manager-cache: false
+
+      - name: Install pinned WiX Toolset
+        shell: pwsh
+        run: dotnet tool install --global wix --version 6.0.2
+
+      - name: Verify and stage signed package
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri $env:EFFECTGATE_TARBALL_URL -OutFile effectgate.tgz
+          $actual = (Get-FileHash -LiteralPath effectgate.tgz -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:EFFECTGATE_TARBALL_SHA256) { throw "EffectGate tarball checksum mismatch." }
+          New-Item -ItemType Directory -Path unpacked | Out-Null
+          tar --extract --gzip --file effectgate.tgz --directory unpacked
+          if ($LASTEXITCODE -ne 0) { throw "Could not extract EffectGate tarball." }
+          node poc/src/release/native-package-stage.mjs `
+            --package unpacked/package `
+            --output native/windows `
+            --platform windows `
+            --version $env:EFFECTGATE_VERSION `
+            --sha256 $env:EFFECTGATE_TARBALL_SHA256
+          if ($LASTEXITCODE -ne 0) { throw "Could not stage EffectGate MSI payload." }
+
+      - name: Build and inspect Windows installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts | Out-Null
+          $msi = Join-Path $PWD "artifacts/effectgate-preview-$env:EFFECTGATE_VERSION-x64.msi"
+          wix build packaging/windows/effectgate.wxs `
+            -arch x64 `
+            -bindpath native/windows `
+            -out $msi
+          if ($LASTEXITCODE -ne 0) { throw "WiX failed to build EffectGate MSI." }
+          $extract = Join-Path $PWD "native/msi-smoke"
+          New-Item -ItemType Directory -Path $extract | Out-Null
+          & msiexec.exe /a $msi /qn "TARGETDIR=$extract"
+          if ($LASTEXITCODE -ne 0) { throw "Could not extract EffectGate MSI." }
+          $launchers = @(Get-ChildItem -LiteralPath $extract -Recurse -Filter effectgate.cmd)
+          if ($launchers.Count -ne 1) { throw "MSI must contain exactly one EffectGate launcher." }
+          $installedVersion = (& $launchers[0].FullName --version).Trim()
+          if ($LASTEXITCODE -ne 0 -or $installedVersion -ne $env:EFFECTGATE_VERSION) {
+            throw "Extracted EffectGate MSI failed its version smoke test."
+          }
+          $digest = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$digest  $([IO.Path]::GetFileName($msi))" | Set-Content -NoNewline artifacts/SHA256SUMS-windows.txt
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: effectgate-native-windows-${{ github.sha }}
+          path: artifacts
+          if-no-files-found: error
+          retention-days: 30
