@@ -182,9 +182,10 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path artifacts | Out-Null
           $msi = Join-Path $PWD "artifacts/effectgate-preview-$env:EFFECTGATE_VERSION-x64.msi"
+          $payload = (Resolve-Path native/windows).Path
           wix build packaging/windows/effectgate.wxs `
             -arch x64 `
-            -bindpath native/windows `
+            -bindpath $payload `
             -out $msi
           if ($LASTEXITCODE -ne 0) { throw "WiX failed to build EffectGate MSI." }
           $extract = Join-Path $PWD "native/msi-smoke"
