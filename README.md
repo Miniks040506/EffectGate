@@ -7,7 +7,7 @@
 **Design goal:** Spend tokens on reasoning, not tool noise.
 
 [![Status](https://img.shields.io/badge/status-evidence--gated-7c3aed?style=flat-square)](#current-boundary)
-[![Version](https://img.shields.io/badge/version-1.0.0-0f766e?style=flat-square)](poc/package.json)
+[![Release](https://img.shields.io/github/v/release/Miniks040506/EffectGate?display_name=tag&sort=semver&style=flat-square)](https://github.com/Miniks040506/EffectGate/releases/latest)
 [![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25-111827?style=flat-square)](#protocol-surface)
 [![License](https://img.shields.io/badge/license-Apache--2.0-D22128?style=flat-square)](LICENSE)
@@ -47,8 +47,59 @@ a summary.
 
 ## Quick start
 
-Requires [Node.js 24 or newer](https://nodejs.org/). There are no runtime
-packages to install.
+Requires [Node.js 24 or newer](https://nodejs.org/). EffectGate has no
+third-party runtime dependencies.
+
+### Install the stable release
+
+Install the exact qualified v1.0.0 package from GitHub Releases:
+
+```powershell
+npm install --global https://github.com/Miniks040506/EffectGate/releases/download/v1.0.0/effectgate-preview-1.0.0.tgz
+effectgate --version
+effectgate mcp serve
+```
+
+The version command must print `1.0.0`. `effectgate mcp serve` starts a local
+stdio MCP server backed only by the bundled deterministic fixture; it does not
+open a network listener. A client can launch it with:
+
+```json
+{
+  "mcpServers": {
+    "effectgate": {
+      "command": "effectgate",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+### Verify before installing
+
+Download `effectgate-preview-1.0.0.tgz` from the
+[v1.0.0 release](https://github.com/Miniks040506/EffectGate/releases/tag/v1.0.0),
+then verify its SHA-256 digest:
+
+```text
+44aa32776701e22d8dab8e76307ea9013fd528a39493a63419545a3aed4f9c20
+```
+
+On Windows use `Get-FileHash effectgate-preview-1.0.0.tgz -Algorithm SHA256`.
+On Linux use `sha256sum effectgate-preview-1.0.0.tgz`; on macOS use
+`shasum -a 256 effectgate-preview-1.0.0.tgz`. The release also publishes
+`SHA256SUMS`, a CycloneDX SBOM, source-bound provenance, qualification evidence,
+five Ed25519 approvals, their public keys, and the final sign-off evidence.
+
+After verification, install the downloaded file with:
+
+```powershell
+npm install --global ./effectgate-preview-1.0.0.tgz
+```
+
+### Run from source
+
+For development or independent source verification:
 
 ```powershell
 git clone https://github.com/Miniks040506/EffectGate.git
@@ -60,15 +111,6 @@ npm --prefix poc start
 `npm --prefix poc start` launches a local stdio MCP server backed only by the
 bundled deterministic fixture. No package installation or network listener is
 involved.
-
-To install the same runtime as an `effectgate` command from a checked-out
-repository:
-
-```powershell
-npm install --global ./poc
-effectgate --version
-effectgate mcp serve
-```
 
 The package contains only the runtime source, focused operating guide, and
 Apache-2.0 license. Tests, qualification evidence, and design files are not
