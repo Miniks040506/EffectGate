@@ -15,6 +15,7 @@
 [![Dependencies](https://img.shields.io/badge/runtime_dependencies-0-0284c7?style=flat-square)](poc/package.json)
 
 **[Quick start](#quick-start)** ·
+[Full usage guide](https://miniks040506.github.io/EffectGate/) ·
 [What it looks like](#what-it-looks-like) ·
 [Features](#what-you-get) ·
 [Docs](#documentation) ·
@@ -68,20 +69,30 @@ instead of scrolling.
 Requires [Node.js 24+](https://nodejs.org/). Zero third-party runtime
 dependencies.
 
+> [!TIP]
+> **New to EffectGate?** Open the
+> [interactive installation and usage guide](https://miniks040506.github.io/EffectGate/)
+> for platform-specific downloads, MCP setup, the fixture tour, reviewed
+> backends, protected effects, recovery commands, and troubleshooting.
+
 ### 1. Install
 
 ```powershell
-npm install --global https://github.com/Miniks040506/EffectGate/releases/download/v1.0.0/effectgate-preview-1.0.0.tgz
+npm install --global effectgate-preview@1.0.0
 effectgate --version   # must print 1.0.0
 ```
 
 <details>
-<summary>Verified installers, or verify the tarball by hand</summary>
+<summary>Native installers, or verify the release tarball by hand</summary>
 
 <br>
 
-The bundled installers download only the pinned release tarball, check its
-SHA-256, and disable lifecycle scripts:
+Qualified MSI, PKG, DEB, and RPM packages are attached to the
+[v1.0.0 release](https://github.com/Miniks040506/EffectGate/releases/tag/v1.0.0).
+They contain the same dependency-free CLI and do not run npm during install.
+
+The repository install scripts download only the pinned release tarball, check
+its SHA-256, and disable lifecycle scripts:
 
 ```powershell
 .\install\install.ps1 -Check   # then: .\install\install.ps1
@@ -181,7 +192,7 @@ npm --prefix poc start
 - **Arguments stay private** — exact arguments are reviewable only over a
   user-local socket or named pipe, and never reach the journal.
 
-Both surfaces are covered by a dependency-free suite: **163 tests, zero
+Both surfaces are covered by a dependency-free suite: **168 tests, zero
 third-party imports**. See [Verification evidence](docs/verification.md).
 
 ## How it works
@@ -250,7 +261,7 @@ duties. The handoff for a genuine external audit is open:
 | HMAC-authenticated process/session-bound cursors | Authenticated OS principal identity and durable policy binding |
 | Basis-aware counters, output guards, compact mux, P0–P3 fixture evidence | SQLite-backed evidence and real-host comparison qualification |
 | Deterministic tests plus seeded JSONL/MCP and effect fuzz evidence | Broader fuzz, compatibility, latency, and crash qualification |
-| Dependency-free Node.js 24 runtime | Registry distribution and platform-native installers |
+| Dependency-free Node.js 24 runtime, public npm package, and qualified MSI, PKG, DEB, and RPM installers | Signed/notarized native packages and managed OS package repositories |
 
 No date or production claim attaches to a future capability until its
 acceptance evidence exists.
@@ -261,9 +272,10 @@ acceptance evidence exists.
 
 | Document | What's inside |
 |---|---|
+| [Interactive usage guide](https://miniks040506.github.io/EffectGate/) | Install, connect an MCP client, take the fixture tour, run protected effects, and troubleshoot |
 | [Architecture](docs/architecture.md) | Request path, invariants, every enforced bound, protocol surface, Context View contract |
 | [Connecting real backends](docs/backends.md) | Reviewed third-party stdio backends, verified-effect fixture, operator CLI |
-| [Verification evidence](docs/verification.md) | What the 163-test suite actually asserts |
+| [Verification evidence](docs/verification.md) | What the 168-test suite actually asserts |
 | [Release engineering](docs/releasing.md) | Verify, reproduce, sign, and cut a release; uninstall and purge |
 | [Native installers](docs/native-installers.md) | Qualified MSI, PKG, DEB, and RPM packaging and trust boundary |
 | [HTTP adapter preview](docs/adapters/streamable-http-json.md) | v1.1 preview: reviewed Streamable HTTP JSON bridge |

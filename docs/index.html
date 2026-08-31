@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Install, connect, and operate EffectGate 1.0 with any MCP client.">
+  <meta name="theme-color" content="#10130f">
+  <title>EffectGate 1.0 | Practical guide</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg:#f3f4ed; --surface:#fff; --surface-2:#e9ebdf; --ink:#171a16;
+      --muted:#5d655a; --line:#cbd0c2; --accent:#397b26; --accent-ink:#f7fff2;
+      --code:#151914; --code-ink:#e9f1e4; --code-muted:#9ba797;
+      --warn:#8a4d0f; --radius:12px; --shadow:0 18px 60px rgb(35 43 31 / 9%);
+      --sans:"Segoe UI","Helvetica Neue",Arial,sans-serif;
+      --mono:"Cascadia Code","SFMono-Regular",Consolas,monospace;
+    }
+    [data-theme="dark"] {
+      color-scheme:dark; --bg:#10130f; --surface:#171b16; --surface-2:#20261e;
+      --ink:#edf2e9; --muted:#a7b0a2; --line:#343c31; --accent:#8dce70;
+      --accent-ink:#14200f; --code:#0b0e0a; --code-ink:#e9f1e4;
+      --code-muted:#8e9b89; --warn:#e7ad67; --shadow:0 24px 70px rgb(0 0 0 / 26%);
+    }
+    @media (prefers-color-scheme:dark) {
+      :root:not([data-theme="light"]) {
+        color-scheme:dark; --bg:#10130f; --surface:#171b16; --surface-2:#20261e;
+        --ink:#edf2e9; --muted:#a7b0a2; --line:#343c31; --accent:#8dce70;
+        --accent-ink:#14200f; --code:#0b0e0a; --code-ink:#e9f1e4;
+        --code-muted:#8e9b89; --warn:#e7ad67; --shadow:0 24px 70px rgb(0 0 0 / 26%);
+      }
+    }
+    *{box-sizing:border-box} html{scroll-behavior:smooth}
+    body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 var(--sans);text-rendering:optimizeLegibility}
+    a{color:inherit;text-decoration-color:var(--accent);text-underline-offset:4px}
+    a:hover{color:var(--accent)} button,summary{font:inherit}
+    button:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid var(--accent);outline-offset:4px}
+    code{font-family:var(--mono);font-size:.92em}.wrap{width:min(1180px,calc(100% - 40px));margin-inline:auto}
+    .site-header{position:sticky;top:0;z-index:20;border-bottom:1px solid color-mix(in srgb,var(--line) 75%,transparent);background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(16px)}
+    .nav{min-height:64px;display:flex;align-items:center;gap:24px}.brand{font-weight:760;letter-spacing:-.03em;text-decoration:none}.brand span{color:var(--accent)}
+    .nav-links{display:flex;align-items:center;gap:18px;margin-left:auto}.nav-links a{color:var(--muted);font-size:14px;text-decoration:none}
+    .theme-button{border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink);padding:6px 11px;cursor:pointer;font-size:13px}
+    .hero{min-height:calc(100dvh - 64px);display:grid;grid-template-columns:minmax(0,1.05fr) minmax(380px,.95fr);align-items:center;gap:clamp(48px,8vw,104px);padding-block:72px}
+    .eyebrow{margin:0 0 18px;color:var(--accent);font:700 12px/1.2 var(--mono);letter-spacing:.12em;text-transform:uppercase}
+    h1,h2,h3{margin-top:0;letter-spacing:-.045em;line-height:1.05}h1{max-width:760px;margin-bottom:24px;font-size:clamp(48px,6vw,76px)}
+    h2{max-width:760px;margin-bottom:20px;font-size:clamp(34px,4.5vw,58px)}h3{margin-bottom:10px;font-size:22px}
+    .hero-copy{max-width:610px;color:var(--muted);font-size:clamp(18px,2vw,22px)}.actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:30px}
+    .button{display:inline-flex;min-height:46px;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink);padding:10px 17px;font-weight:700;text-decoration:none;white-space:nowrap}
+    .button.primary{border-color:var(--accent);background:var(--accent);color:var(--accent-ink)}.button:hover{transform:translateY(-1px);color:var(--ink)}.button.primary:hover{color:var(--accent-ink);filter:brightness(1.04)}
+    .terminal,.code-block{position:relative;overflow:hidden;border:1px solid #2d352b;border-radius:var(--radius);background:var(--code);box-shadow:var(--shadow);color:var(--code-ink)}
+    .terminal-bar{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #2d352b;padding:10px 14px;color:var(--code-muted);font:12px var(--mono)}
+    .terminal pre,.code-block pre{margin:0;overflow-x:auto;padding:22px;color:var(--code-ink);font:13px/1.75 var(--mono);white-space:pre}.prompt{color:#8dce70}.comment{color:var(--code-muted)}.result{color:#9fd7ee}
+    .proof-strip{display:grid;grid-template-columns:repeat(4,1fr);border-block:1px solid var(--line)}.proof{padding:24px 20px}.proof+.proof{border-left:1px solid var(--line)}
+    .proof strong{display:block;font:700 24px/1.2 var(--mono)}.proof span{color:var(--muted);font-size:13px}
+    section{scroll-margin-top:82px;padding-block:clamp(76px,10vw,130px)}.section-intro{max-width:760px;margin-bottom:48px;color:var(--muted);font-size:19px}.section-intro strong{color:var(--ink)}.section-rule{border-top:1px solid var(--line)}
+    .install-layout{display:grid;grid-template-columns:minmax(230px,.34fr) 1fr;gap:48px}.install-layout>*,.step>*,.reference-layout>*,.feature{min-width:0}.install-nav{align-self:start;position:sticky;top:100px}.install-nav p{color:var(--muted)}
+    .tab-list{display:flex;flex-direction:column;gap:6px}.tab{border:0;border-radius:8px;background:transparent;color:var(--muted);padding:10px 12px;text-align:left;cursor:pointer}
+    .tab[aria-selected="true"]{background:var(--surface-2);color:var(--ink);font-weight:700}.tab-panel[hidden]{display:none}.tab-panel h3{margin-bottom:16px}
+    .note{margin:22px 0 0;border-left:3px solid var(--accent);background:var(--surface-2);padding:14px 17px;color:var(--muted)}.note strong{color:var(--ink)}.note.warning{border-color:var(--warn)}
+    .copy{position:absolute;top:10px;right:10px;border:1px solid #3b4538;border-radius:7px;background:#1e241c;color:var(--code-ink);padding:5px 9px;cursor:pointer;font:12px var(--mono)}
+    .steps{counter-reset:guide}.step{counter-increment:guide;display:grid;grid-template-columns:54px 1fr;gap:24px;padding:30px 0}.step+.step{border-top:1px solid var(--line)}
+    .step::before{content:counter(guide,decimal-leading-zero);color:var(--accent);font:700 15px var(--mono)}.step p{max-width:760px;margin:0 0 18px;color:var(--muted)}
+    .syntax-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;overflow:hidden;border:1px solid var(--line);border-radius:var(--radius);background:var(--line);margin-bottom:42px}
+    .syntax{min-width:0;background:var(--surface);padding:24px}.syntax strong{display:block;margin-bottom:7px;font-size:18px}.syntax p{margin:0;color:var(--muted)}.syntax code{color:var(--accent)}
+    .invoke-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:18px 0}.invoke{min-width:0;border-left:3px solid var(--line);padding:4px 0 4px 16px}.invoke strong{display:block;margin-bottom:5px;color:var(--ink)}.invoke p{margin:0;color:var(--muted)}
+    .tool-name{display:inline-block;margin:0 0 14px;color:var(--accent);font:700 13px var(--mono)}
+    .evidence-image{display:block;width:100%;margin:0 0 24px;border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+    .feature-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:1px;overflow:hidden;border:1px solid var(--line);border-radius:var(--radius);background:var(--line)}
+    .feature{min-height:240px;background:var(--surface);padding:clamp(26px,4vw,44px)}.feature:nth-child(3){grid-column:1/-1;min-height:auto}.feature p{max-width:650px;color:var(--muted)}.feature code{color:var(--accent)}
+    .metric{margin:34px 0 10px;font:760 clamp(38px,6vw,72px)/1 var(--mono);letter-spacing:-.08em}.metric-label{color:var(--muted)}
+    .reference-layout{display:grid;grid-template-columns:.85fr 1.15fr;gap:56px;align-items:start}.reference-copy{position:sticky;top:100px}.reference-copy p{color:var(--muted)}
+    details{border-top:1px solid var(--line)}details:last-child{border-bottom:1px solid var(--line)}summary{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:20px 0;cursor:pointer;font-weight:720;list-style:none}
+    summary::-webkit-details-marker{display:none}summary::after{content:"+";color:var(--accent);font:22px var(--mono)}details[open] summary::after{content:"−"}.detail-body{padding:0 0 26px;color:var(--muted)}.detail-body p:first-child{margin-top:0}
+    .status-table{width:100%;border-collapse:collapse}.status-table th,.status-table td{padding:17px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+    .status-table th{color:var(--muted);font:700 12px var(--mono);letter-spacing:.06em;text-transform:uppercase}.status-table td:first-child{font-weight:700}.state{color:var(--accent);font-weight:700}.state.caution{color:var(--warn)}
+    .closing{display:grid;grid-template-columns:1fr auto;align-items:end;gap:32px;border-top:1px solid var(--line);padding-block:70px}.closing h2{margin-bottom:10px}.closing p{max-width:620px;margin:0;color:var(--muted)}
+    footer{border-top:1px solid var(--line);padding:28px 0 44px;color:var(--muted);font-size:14px}.footer-row{display:flex;flex-wrap:wrap;justify-content:space-between;gap:16px}.footer-links{display:flex;flex-wrap:wrap;gap:18px}
+    @media(max-width:900px){.nav-links a:not(:last-of-type){display:none}.hero{min-height:auto;grid-template-columns:1fr;padding-block:64px 80px}.proof-strip{grid-template-columns:repeat(2,1fr)}.proof:nth-child(3){border-left:0;border-top:1px solid var(--line)}.proof:nth-child(4){border-top:1px solid var(--line)}.install-layout,.reference-layout{grid-template-columns:1fr}.install-nav,.reference-copy{position:static}.tab-list{flex-direction:row;overflow-x:auto}.tab{white-space:nowrap}}
+    @media(max-width:620px){.wrap{width:min(100% - 28px,1180px)}.nav{gap:10px}.nav-links{gap:10px}.nav-links a{display:none}h1{font-size:clamp(43px,14vw,64px)}section{padding-block:72px}.proof-strip,.feature-grid,.syntax-grid,.invoke-grid{grid-template-columns:1fr}.proof+.proof{border-left:0;border-top:1px solid var(--line)}.feature:nth-child(3){grid-column:auto}.step{grid-template-columns:38px 1fr;gap:12px}.status-table{display:block;overflow-x:auto}.closing{grid-template-columns:1fr;align-items:start}.button{width:100%}}
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important}}
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav wrap" aria-label="Primary navigation">
+      <a class="brand" href="#top">Effect<span>Gate</span></a>
+      <div class="nav-links">
+        <a href="#install">Install</a><a href="#connect">Connect</a><a href="#use-features">Use features</a><a href="#effects">Effects</a>
+        <a href="https://github.com/Miniks040506/EffectGate">GitHub</a>
+        <button class="theme-button" type="button" data-theme-toggle aria-label="Change color theme">Theme: Auto</button>
+      </div>
+    </nav>
+  </header>
+
+  <main id="top">
+    <div class="hero wrap">
+      <div>
+        <p class="eyebrow">EffectGate 1.0 practical guide</p>
+        <h1>Keep evidence. Cut context.</h1>
+        <p class="hero-copy">Install a local MCP proxy that bounds tool results and puts risky effects behind reviewable proof.</p>
+        <div class="actions">
+          <a class="button primary" href="#install">Install EffectGate</a>
+          <a class="button" href="https://github.com/Miniks040506/EffectGate/releases/tag/v1.0.0">View release</a>
+        </div>
+      </div>
+      <div class="terminal" aria-label="EffectGate installation example">
+        <div class="terminal-bar"><span>local terminal</span><span>Node.js 24+</span></div>
+        <pre><span class="prompt">$</span> npm install --global effectgate-preview@1.0.0
+
+<span class="prompt">$</span> effectgate --version
+<span class="result">1.0.0</span>
+
+<span class="prompt">$</span> claude mcp add --transport stdio \
+    effectgate -- effectgate mcp serve
+
+<span class="comment"># No port opened. Fixture only by default.</span></pre>
+      </div>
+    </div>
+
+    <div class="proof-strip wrap" aria-label="Release facts">
+      <div class="proof"><strong>168 / 168</strong><span>dependency-free tests passing</span></div>
+      <div class="proof"><strong>4 KiB</strong><span>default source-content page</span></div>
+      <div class="proof"><strong>0</strong><span>third-party runtime imports</span></div>
+      <div class="proof"><strong>Local</strong><span>stdio transport, no network listener</span></div>
+    </div>
+
+    <section id="install" class="wrap">
+      <p class="eyebrow">Choose your install path</p>
+      <h2>One CLI, five supported packages.</h2>
+      <p class="section-intro">The npm package is the shortest route. Native packages contain the same dependency-free runtime and require <strong>Node.js 24 or newer</strong>.</p>
+      <div class="install-layout">
+        <div class="install-nav">
+          <p>Select your platform. Downloads point to the qualified v1.0.0 GitHub release.</p>
+          <div class="tab-list" role="tablist" aria-label="Installation method">
+            <button class="tab" role="tab" aria-selected="true" aria-controls="install-npm" id="tab-npm">npm</button>
+            <button class="tab" role="tab" aria-selected="false" aria-controls="install-windows" id="tab-windows" tabindex="-1">Windows</button>
+            <button class="tab" role="tab" aria-selected="false" aria-controls="install-macos" id="tab-macos" tabindex="-1">macOS</button>
+            <button class="tab" role="tab" aria-selected="false" aria-controls="install-deb" id="tab-deb" tabindex="-1">Debian / Ubuntu</button>
+            <button class="tab" role="tab" aria-selected="false" aria-controls="install-rpm" id="tab-rpm" tabindex="-1">RPM Linux</button>
+          </div>
+        </div>
+        <div>
+          <div class="tab-panel" id="install-npm" role="tabpanel" aria-labelledby="tab-npm">
+            <h3>Install from npm</h3>
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>npm install --global effectgate-preview@1.0.0
+effectgate --version</pre></div>
+            <p class="note"><strong>Expected:</strong> the version command prints <code>1.0.0</code>. The package has no install lifecycle script.</p>
+          </div>
+          <div class="tab-panel" id="install-windows" role="tabpanel" aria-labelledby="tab-windows" hidden>
+            <h3>Install the Windows x64 MSI</h3>
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>msiexec /i effectgate-preview-1.0.0-x64.msi
+effectgate --version</pre></div>
+            <p><a href="https://github.com/Miniks040506/EffectGate/releases/download/v1.0.0/effectgate-preview-1.0.0-x64.msi">Download MSI</a> and verify its checksum from the release.</p>
+            <p class="note warning"><strong>Unsigned preview:</strong> Windows SmartScreen may warn. Inspect the checksum before continuing.</p>
+          </div>
+          <div class="tab-panel" id="install-macos" role="tabpanel" aria-labelledby="tab-macos" hidden>
+            <h3>Install the universal macOS package</h3>
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>sudo installer -pkg effectgate-preview-1.0.0-universal.pkg -target /
+effectgate --version</pre></div>
+            <p><a href="https://github.com/Miniks040506/EffectGate/releases/download/v1.0.0/effectgate-preview-1.0.0-universal.pkg">Download PKG</a> and verify its checksum from the release.</p>
+            <p class="note warning"><strong>Unsigned preview:</strong> the package is not Apple-notarized, so Gatekeeper may warn.</p>
+          </div>
+          <div class="tab-panel" id="install-deb" role="tabpanel" aria-labelledby="tab-deb" hidden>
+            <h3>Install on Debian-family Linux</h3>
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>sudo apt install ./effectgate-preview_1.0.0_all.deb
+effectgate --version</pre></div>
+            <p><a href="https://github.com/Miniks040506/EffectGate/releases/download/v1.0.0/effectgate-preview_1.0.0_all.deb">Download DEB</a>. This package is suitable for Debian-family distributions, not Linux as a whole.</p>
+          </div>
+          <div class="tab-panel" id="install-rpm" role="tabpanel" aria-labelledby="tab-rpm" hidden>
+            <h3>Install on RPM-family Linux</h3>
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>sudo dnf install ./effectgate-preview-1.0.0-1.noarch.rpm
+effectgate --version</pre></div>
+            <p><a href="https://github.com/Miniks040506/EffectGate/releases/download/v1.0.0/effectgate-preview-1.0.0-1.noarch.rpm">Download RPM</a>. Use your distribution's local RPM command if it does not ship <code>dnf</code>.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="connect" class="section-rule">
+      <div class="wrap">
+        <h2>Connect in five minutes.</h2>
+        <p class="section-intro">Start with the deterministic fixture. It is safe for learning and proves that your client can discover and call EffectGate tools.</p>
+        <div class="steps">
+          <article class="step"><div>
+            <h3>Add EffectGate to Claude Code</h3>
+            <p>Run this once. Claude Code will launch EffectGate over stdio when it needs the server.</p>
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>claude mcp add --transport stdio effectgate -- effectgate mcp serve</pre></div>
+          </div></article>
+          <article class="step"><div>
+            <h3>Or configure any MCP client</h3>
+            <p>Add this server object to the MCP configuration used by your editor or agent.</p>
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>{
+  "mcpServers": {
+    "effectgate": {
+      "command": "effectgate",
+      "args": ["mcp", "serve"]
+    }
+  }
+}</pre></div>
+          </div></article>
+          <article class="step"><div>
+            <h3>Run the fixture tour</h3>
+            <p>Ask your agent to call <code>fixture__echo</code>, then <code>fixture__large_log</code> with <code>{"lines": 200}</code>. Continue with the cursor and artifact ID returned by the result.</p>
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>Call fixture__large_log with {"lines": 200}.
+Then use effectgate_search on its artifact_id to find "line 150".
+Show the cited byte range and content digest.</pre></div>
+          </div></article>
+          <article class="step"><div>
+            <h3>Try retrieval and projection</h3>
+            <p>Use <code>effectgate_fetch</code> while <code>more_available</code> is true. Request fixture output as JSONL, CSV, or Markdown, then pass its artifact ID to <code>effectgate_project</code>.</p>
+            <p class="note"><strong>Redaction demo:</strong> set <code>includeSecrets</code> to <code>true</code>. The fixture inserts synthetic sentinels only. Never paste a real credential into a demo.</p>
+          </div></article>
+        </div>
+      </div>
+    </section>
+
++    <section id="use-features" class="section-rule">
+      <div class="wrap">
+        <p class="eyebrow">Feature activation manual</p>
+        <h2>What to ask, what actually runs.</h2>
+        <p class="section-intro">EffectGate is an MCP server. Claude may select its tools from a natural-language request, or you can name the exact tool. It is not activated by <code>@</code> or <code>$</code>.</p>
+
+        <div class="syntax-grid">
+          <div class="syntax">
+            <strong>Natural language</strong>
+            <p>Ask Claude to use EffectGate and state the outcome you need. This is the easiest route.</p>
+          </div>
+          <div class="syntax">
+            <strong>Exact MCP tool</strong>
+            <p>Name <code>effectgate_search</code>, <code>effectgate_fetch</code>, or another published tool when you need deterministic routing.</p>
+          </div>
+          <div class="syntax">
+            <strong>Optional <code>/skill</code></strong>
+            <p>Create the wrapper below if you want a reusable <code>/effectgate</code> or one-turn <code>/no-effectgate</code> command.</p>
+          </div>
+        </div>
+
+        <p class="note warning"><strong>Syntax truth:</strong> <code>@</code> refers to files and other host resources. <code>$ARGUMENTS</code> is expanded inside a Claude skill. Neither one invokes an MCP server. EffectGate 1.0 does not ship a Claude plugin or slash skill. A slash command works only after you install the optional wrapper described below.</p>
+        <p class="note"><strong>Connected does not mean used on every prompt:</strong> EffectGate tools become available to Claude, often through deferred Tool Search, but EffectGate does not intercept native tools. Its paging, citation, redaction, and withholding rules apply only after Claude calls a tool through the EffectGate server.</p>
+
+        <div class="reference-layout" style="margin-top:48px">
+          <div class="reference-copy">
+            <h3>Context features</h3>
+            <p>These tools retain large evidence locally and return only the cited portion Claude needs.</p>
+          </div>
+          <div>
+            <details open>
+              <summary>Bound a large result automatically</summary>
+              <div class="detail-body">
+                <span class="tool-name">Automatic on an eligible tool result</span>
+                <p>There is no separate “bound this” command. The result is bounded automatically when the backend call goes through EffectGate and cannot pass through safely as a small typed result.</p>
+                <div class="invoke-grid">
+                  <div class="invoke"><strong>Ask naturally</strong><p>Tell Claude to use the EffectGate server for the backend call.</p></div>
+                  <div class="invoke"><strong>Name the tool</strong><p>For the bundled fixture, call <code>fixture__large_log</code>.</p></div>
+                </div>
+                <div class="code-block"><button class="copy" type="button">Copy</button><pre>Use EffectGate, call fixture__large_log with {"lines": 8000},
+and report the returned byte range, content digest, and whether more is available.</pre></div>
+                <p class="note"><strong>Claude canonical name:</strong> when the server is named <code>effectgate</code>, the permission/tool name is <code>mcp__effectgate__fixture__large_log</code>.</p>
+              </div>
+            </details>
+
+            <details>
+              <summary>Fetch the next cited page</summary>
+              <div class="detail-body">
+                <span class="tool-name">effectgate_fetch</span>
+                <p>Use the opaque cursor returned by a partial Context View. The cursor is session-bound, authenticated, single-purpose, and expires after ten minutes.</p>
+                <div class="invoke-grid">
+                  <div class="invoke"><strong>Ask naturally</strong><p>“Continue the same EffectGate result until you have the next cited page.”</p></div>
+                  <div class="invoke"><strong>Call exactly</strong><p><code>effectgate_fetch</code> with only the returned <code>cursor</code>.</p></div>
+                </div>
+                <div class="code-block"><button class="copy" type="button">Copy</button><pre>Use effectgate_fetch with the cursor from the previous result.
+Do not invent or edit the cursor. Stop when more_available is false.</pre></div>
+              </div>
+            </details>
+
+            <details>
+              <summary>Search inside a retained artifact</summary>
+              <div class="detail-body">
+                <span class="tool-name">effectgate_search</span>
+                <p>Search typed-mode artifacts with a case-sensitive literal query. Supply the exact <code>artifact_id</code> returned by the original Context View.</p>
+                <div class="invoke-grid">
+                  <div class="invoke"><strong>Ask naturally</strong><p>Ask Claude to find a literal string without paging through the full log.</p></div>
+                  <div class="invoke"><strong>Call exactly</strong><p>Provide <code>artifact_id</code>, <code>query</code>, optional <code>context_lines</code>, and optional <code>max_tokens</code>.</p></div>
+                </div>
+                <div class="code-block"><button class="copy" type="button">Copy</button><pre>Use effectgate_search on ARTIFACT_ID with:
+{"query":"ERROR request_id=42","context_lines":2,"max_tokens":512}
+Return the matching text and its exact source byte range.</pre></div>
+                <p class="note"><strong>Compact mode:</strong> <code>effectgate_search</code> searches capability metadata there. Search retained content with <code>effectgate_artifact_search</code>.</p>
+              </div>
+            </details>
+
+            <details>
+              <summary>Project JSON, JSONL, CSV, TSV, or Markdown</summary>
+              <div class="detail-body">
+                <span class="tool-name">effectgate_project</span>
+                <p>Extract only selected fields, columns, records, or an exact Markdown ATX section while preserving source citations.</p>
+                <div class="code-block"><button class="copy" type="button">Copy</button><pre>For JSONL:
+Use effectgate_project with {"artifact_id":"ARTIFACT_ID","format":"jsonl",
+"fields":["/timestamp","/level","/message"],
+"filter":{"pointer":"/level","equals":"ERROR"},"limit":50}.
+
+For CSV:
+Use effectgate_project with {"artifact_id":"ARTIFACT_ID","format":"csv",
+"columns":["timestamp","status","message"],
+"filter":{"column":"status","equals":"failed"},"limit":50}.
+
+For Markdown:
+Use effectgate_project with {"artifact_id":"ARTIFACT_ID",
+"format":"markdown","heading":"Known limitations","max_tokens":512}.</pre></div>
+                <p class="note"><strong>Compact mode:</strong> use <code>effectgate_artifact_project</code> for retained content.</p>
+              </div>
+            </details>
+
+            <details>
+              <summary>Redact secrets and withhold opaque content</summary>
+              <div class="detail-body">
+                <span class="tool-name">Automatic safety invariant</span>
+                <p>Assignment values, bearer tokens, and selected token prefixes are redacted before every emitted page. Suspicious opaque content is withheld instead of guessed.</p>
+                <div class="invoke-grid">
+                  <div class="invoke"><strong>Observe it</strong><p>Ask Claude to report <code>redactions</code>, <code>status</code>, and safe diagnostics from the Context View.</p></div>
+                  <div class="invoke"><strong>Fixture test</strong><p>Call <code>fixture__large_log</code> with <code>includeSecrets: true</code> to insert synthetic sentinels.</p></div>
+                </div>
+                <div class="code-block"><button class="copy" type="button">Copy</button><pre>Use EffectGate to call fixture__large_log with
+{"lines":200,"includeSecrets":true}.
+Confirm that synthetic sentinels do not appear in any returned page.</pre></div>
+                <p class="note warning"><strong>Cannot be disabled inside EffectGate:</strong> there is no prompt or flag that returns unredacted source. Bypassing the server also bypasses its citations and safety checks.</p>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <div class="reference-layout" style="margin-top:96px">
+          <div class="reference-copy">
+            <h3>Catalog and effect features</h3>
+            <p>These features change how tools are exposed or place a protected write behind operator evidence.</p>
+          </div>
+          <div>
+            <details open>
+              <summary>Use compact capability discovery</summary>
+              <div class="detail-body">
+                <span class="tool-name">effectgate_search → effectgate_describe → effectgate_call</span>
+                <p>Compact mode exposes generic contracts instead of every admitted backend schema. Select it when the MCP server starts. A prompt cannot switch an existing process between typed and compact mode.</p>
+                <div class="code-block"><button class="copy" type="button">Copy</button><pre>claude mcp add --transport stdio effectgate-compact -- \
+  effectgate mcp serve --profile compact_mux</pre></div>
+                <div class="code-block" style="margin-top:14px"><button class="copy" type="button">Copy</button><pre>Use the effectgate-compact server.
+Search admitted capabilities for "large log", describe the returned ref,
+call it with {"lines":200}, then search the retained artifact for "line 150".</pre></div>
+                <p>The compact sequence is: search capability metadata, describe one returned ref, call that ref, then continue with <code>effectgate_fetch</code>, <code>effectgate_artifact_search</code>, or <code>effectgate_artifact_project</code>.</p>
+              </div>
+            </details>
+
+            <details>
+              <summary>Call a reviewed read-only backend</summary>
+              <div class="detail-body">
+                <span class="tool-name">Configured backend tool, namespaced by source</span>
+                <p>Start EffectGate with a digest-pinned reviewed config. Claude can then select the admitted public tool naturally or by exact name.</p>
+                <div class="code-block"><button class="copy" type="button">Copy</button><pre>effectgate mcp serve --config D:\path\reviewed-backend.json</pre></div>
+                <div class="code-block" style="margin-top:14px"><button class="copy" type="button">Copy</button><pre>Use the EffectGate MCP server and its admitted lookup tool.
+Do not call the native backend directly. If no reviewed capability matches,
+stop and tell me instead of bypassing EffectGate.</pre></div>
+                <p>EffectGate refuses writes, dynamic catalogs, missing safe-read annotations, executable drift, source drift, identity drift, and calls to names the client never discovered.</p>
+              </div>
+            </details>
+
+            <details>
+              <summary>Run a protected reversible effect</summary>
+              <div class="detail-body">
+                <span class="tool-name">filesystem.apply_patch in the configured effect fixture</span>
+                <p>Serve the configured phase/Capsule runtime, ask Claude to use its published effect tool, then approve the exact operation from another local terminal.</p>
+                <div class="code-block"><button class="copy" type="button">Copy</button><pre>effectgate mcp skill serve --config D:\path\effectgate.json</pre></div>
+                <div class="code-block" style="margin-top:14px"><button class="copy" type="button">Copy</button><pre>Use the EffectGate protected filesystem.apply_patch tool for this exact change.
+If it returns awaiting_approval, stop and show me the operation ID.
+Do not replace it with a native file-write tool.</pre></div>
+                <p>Inspect and approve with <code>effectgate approve --config FILE --operation ID</code>, then repeat the identical MCP call. Changed arguments are denied.</p>
+                <p class="note"><strong>Name clarification:</strong> <code>mcp skill serve</code> is EffectGate's internal phase/Capsule runtime. It does not install a Claude Code slash skill.</p>
+              </div>
+            </details>
+
+            <details>
+              <summary>Enable the token ledger and session output guard</summary>
+              <div class="detail-body">
+                <span class="tool-name">Runtime configuration, not an MCP call</span>
+                <p>The output guard is always present. Set a lower session ceiling or persist content-free accounting when the server starts.</p>
+                <div class="code-block"><button class="copy" type="button">Copy</button><pre>effectgate mcp serve \
+  --max-session-emitted-tokens 100000 \
+  --token-ledger D:\logs\effectgate-ledger.jsonl \
+  --run-id local-session-01 \
+  --profile native_deferred</pre></div>
+                <p>Claude cannot turn these controls on or off from a prompt. Restart the MCP server with a different reviewed command to change them.</p>
+              </div>
+            </details>
+
+            <details>
+              <summary>Run doctor, receipts, backup, restore, and rollback</summary>
+              <div class="detail-body">
+                <span class="tool-name">Operator-only CLI</span>
+                <p>These are intentionally not model-callable MCP tools. Run them yourself in a trusted terminal.</p>
+                <div class="code-block"><button class="copy" type="button">Copy</button><pre>effectgate doctor --config D:\path\effectgate.json --json
+effectgate status --config D:\path\effectgate.json
+effectgate receipt --config D:\path\effectgate.json --id RECEIPT_ID
+effectgate backup --config D:\path\effectgate.json --output D:\backups\effectgate</pre></div>
+                <p>Restore and rollback remain plan-first and confirmation-bound. See the protected-effect section below for the complete recovery sequence.</p>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <div class="reference-layout" style="margin-top:96px">
+          <div class="reference-copy">
+            <h3>Choose or block EffectGate</h3>
+            <p>Natural-language preference is convenient. Permission rules or a one-turn Claude skill provide deterministic blocking.</p>
+          </div>
+          <div>
+            <details open>
+              <summary>Prefer EffectGate for one prompt</summary>
+              <div class="detail-body">
+                <p>This is the shortest option and needs no extra setup:</p>
+                <div class="code-block"><button class="copy" type="button">Copy</button><pre>For this request, use EffectGate for every matching tool call.
+Do not call the native backend directly. If EffectGate has no admitted
+capability for the task, stop and tell me.</pre></div>
+                <p>This is an instruction to Claude, not a hard permission boundary.</p>
+              </div>
+            </details>
+
+            <details>
+              <summary>Add an optional <code>/effectgate</code> skill</summary>
+              <div class="detail-body">
+                <p>Create <code>.claude/skills/effectgate/SKILL.md</code> in a project, or <code>~/.claude/skills/effectgate/SKILL.md</code> for all projects:</p>
+                <div class="code-block"><button class="copy" type="button">Copy</button><pre>---
+name: effectgate
+description: Route matching tool work through the configured EffectGate MCP server.
+disable-model-invocation: true
+---
+
+For this turn, use EffectGate for every matching tool call.
+Do not bypass it with a native backend tool.
+If no admitted capability matches, stop and explain the gap.
+
+Complete this request:
+$ARGUMENTS</pre></div>
+                <p>Invoke it with <code>/effectgate Investigate the large build log</code>. The slash name comes from the skill directory. This wrapper is optional and is not bundled with EffectGate 1.0.</p>
+                <p class="note warning"><strong>Claude skill lifecycle:</strong> invoked skill text remains in the conversation context. To reverse that preference later, explicitly say “stop preferring EffectGate” or invoke the hard one-turn blocker below.</p>
+              </div>
+            </details>
+
+            <details>
+              <summary>Soft-disable EffectGate for one prompt</summary>
+              <div class="detail-body">
+                <div class="code-block"><button class="copy" type="button">Copy</button><pre>For this request only, do not use any tool from the EffectGate MCP server.
+Use native tools only, and do not search for EffectGate capabilities.</pre></div>
+                <p>This usually works, but the tools remain available to Claude. Use the next method when the block must be enforced.</p>
+              </div>
+            </details>
+
+            <details>
+              <summary>Hard-disable EffectGate for exactly one prompt</summary>
+              <div class="detail-body">
+                <p>Create <code>.claude/skills/no-effectgate/SKILL.md</code>:</p>
+                <div class="code-block"><button class="copy" type="button">Copy</button><pre>---
+name: no-effectgate
+description: Block every configured EffectGate MCP tool for one user turn.
+disable-model-invocation: true
+disallowed-tools: mcp__effectgate__* mcp__effectgate-compact__* mcp__effectgate-effects__*
+---
+
+Complete this request without EffectGate:
+$ARGUMENTS</pre></div>
+                <p>Run <code>/no-effectgate Explain this file</code>. Claude Code removes those tools for that turn, and the restriction clears when you send the next message. Adjust the server-name segments if you configured different names.</p>
+              </div>
+            </details>
+
+            <details>
+              <summary>Disable it for a session, project, or permanently</summary>
+              <div class="detail-body">
+                <div class="code-block"><button class="copy" type="button">Copy</button><pre># Start one Claude session without the default EffectGate server
+claude --disallowedTools "mcp__effectgate__*"
+
+# Inspect or disable the server for the current project
+/mcp
+
+# Remove its saved configuration
+claude mcp remove effectgate</pre></div>
+                <p>The <code>/mcp</code> command runs inside Claude Code and can toggle a configured server for the project. Removing the server is persistent until you add it again.</p>
+              </div>
+            </details>
+            <p class="note">Claude Code references: <a href="https://code.claude.com/docs/en/mcp">MCP servers</a>, <a href="https://code.claude.com/docs/en/slash-commands">skills and one-turn tool restrictions</a>, and <a href="https://code.claude.com/docs/en/permissions">permission rules</a>.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="features" class="wrap">
+      <h2>Large output stays local.</h2>
+      <p class="section-intro">EffectGate stores the complete result in a temporary content-addressed store. The model receives only a bounded, cited, redacted view.</p>
+      <img class="evidence-image" src="assets/terminal.svg" alt="An 8,000-line fixture log reduced to a bounded view, followed by a cited targeted search result">
+      <div class="feature-grid">
+        <article class="feature"><h3>Search instead of scrolling</h3><p><code>effectgate_search</code> performs a bounded, case-sensitive literal scan. It returns source-ordered windows with exact byte citations, not an invented summary.</p><div class="metric">4 KiB</div><div class="metric-label">default first source-content view</div></article>
+        <article class="feature"><h3>Fail closed</h3><p>Opaque, oversized, corrupt, expired, cross-session, and unsupported results are withheld. The model gets a bounded diagnostic rather than source leakage.</p><div class="metric">10 min</div><div class="metric-label">authenticated cursor lifetime</div></article>
+        <article class="feature"><h3>Project records with citations</h3><p>Use RFC 6901 pointers for JSON and JSONL, named columns for CSV and TSV, or exact ATX section titles for Markdown. Each emitted record maps back to source bytes. Redaction runs before every page, including fetched and projected pages.</p></article>
+      </div>
+    </section>
+
+    <section id="effects" class="section-rule">
+      <div class="wrap reference-layout">
+        <div class="reference-copy">
+          <h2>Put effects behind evidence.</h2>
+          <p>The v1 effect path is a configured, reviewed fixture for learning and qualification. It demonstrates exact intent binding, single-use approval, idempotent dispatch, verification, receipts, backup, restore, and rollback.</p>
+          <p class="note warning"><strong>Scope:</strong> v1 does not approve arbitrary production writes. Use the fixture until you have independently reviewed the adapter and trust boundary.</p>
+        </div>
+        <div>
+          <details open><summary>Create and inspect a configuration</summary><div class="detail-body">
+            <p>Prepare a skill folder containing <code>SKILL.md</code> and <code>phases/modify.md</code>. Preview the generated paths and digests first.</p>
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>effectgate init \
+  --config D:\path\effectgate.json \
+  --state D:\path\effectgate-state \
+  --skill-root D:\path\skill \
+  --target docs/guide.md \
+  --transaction reviewed-transaction \
+  --dry-run --json</pre></div>
+            <p>Review the output, replace <code>--dry-run</code> with <code>--apply</code>, then run <code>effectgate doctor --config FILE</code>.</p>
+          </div></details>
+          <details><summary>Serve the protected skill</summary><div class="detail-body"><p>Point your MCP client at the configured skill runtime. A completed one-phase configuration publishes no tools.</p><div class="code-block"><button class="copy" type="button">Copy</button><pre>effectgate mcp skill serve --config D:\path\effectgate.json</pre></div></div></details>
+          <details><summary>Review and approve an operation</summary><div class="detail-body">
+            <p>The first identical MCP call returns <code>awaiting_approval</code>. Keep the runtime open, inspect exact arguments over the user-local operator channel, then approve with the printed digest.</p>
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>effectgate approve --config D:\path\effectgate.json --operation OPERATION_ID
+effectgate approve --config D:\path\effectgate.json \
+  --operation OPERATION_ID \
+  --approver local-operator \
+  --intent sha256:REVIEWED_INTENT_DIGEST --yes</pre></div>
+            <p>Repeat the identical MCP call after approval. Changed arguments fail admission.</p>
+          </div></details>
+          <details><summary>Resolve uncertainty without redispatch</summary><div class="detail-body"><p>When a response is lost, EffectGate verifies instead of blindly repeating the write.</p><div class="code-block"><button class="copy" type="button">Copy</button><pre>effectgate resolve --config D:\path\effectgate.json \
+  --operation OPERATION_ID --reconcile</pre></div><p>Manual resolution requires independent evidence and explicit confirmation. It does not claim the effect committed.</p></div></details>
+          <details><summary>Inspect receipts and recover state</summary><div class="detail-body">
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>effectgate status --config D:\path\effectgate.json
+effectgate receipt --config D:\path\effectgate.json --id RECEIPT_ID
+effectgate backup --config D:\path\effectgate.json --output D:\backups\effectgate
+effectgate restore --backup D:\backups\effectgate --config D:\restored\effectgate.json --state D:\restored\state
+effectgate rollback --backup D:\backups\effectgate --config D:\rollback\effectgate.json --state D:\rollback\state</pre></div>
+            <p>Backup and restore reject existing targets, unknown databases, bad manifests, digest drift, and overlapping paths. Rollback is plan-first and confirmation-bound.</p>
+          </div></details>
+        </div>
+      </div>
+    </section>
+
+    <section id="backend" class="wrap">
+      <h2>Connect one reviewed read-only backend.</h2>
+      <p class="section-intro">EffectGate can proxy a third-party stdio server only after you pin its executable, reviewed source files, identity, launch binding, and immutable catalog.</p>
+      <div class="steps">
+        <article class="step"><div><h3>Capture exact bytes</h3><p>Hash the executable and every source file you reviewed. Do not auto-trust the catalog reported by the child process.</p></div></article>
+        <article class="step"><div><h3>Admit only closed-world reads</h3><p>Every catalog tool must declare read-only, non-destructive, idempotent, and closed-world annotations. Any mismatch, drift, extra catalog page, or invented backend name is denied.</p></div></article>
+        <article class="step"><div><h3>Start with the reviewed config</h3><div class="code-block"><button class="copy" type="button">Copy</button><pre>effectgate mcp serve --config D:\path\reviewed-backend.json</pre></div><p><a href="https://github.com/Miniks040506/EffectGate/blob/main/docs/backends.md">Open the complete reviewed-backend configuration guide</a>.</p></div></article>
+      </div>
+    </section>
+
+    <section id="limits" class="section-rule">
+      <div class="wrap">
+        <p class="eyebrow">Know the boundary</p>
+        <h2>Useful today, deliberately narrow.</h2>
+        <p class="section-intro">The release makes evidence-bound claims. It is not a universal security wrapper for every tool or model host.</p>
+        <table class="status-table">
+          <thead><tr><th>Area</th><th>v1.0 status</th><th>What it means</th></tr></thead>
+          <tbody>
+            <tr><td>Context View</td><td class="state">Available</td><td>Paging, literal search, structured projection, citations, redaction, opacity withholding, and compact catalog mode.</td></tr>
+            <tr><td>Effect control</td><td class="state">Qualified fixture</td><td>Intent-bound approval, idempotency, verification, receipts, and recovery are implemented against reviewed fixtures.</td></tr>
+            <tr><td>Real stdio backend</td><td class="state">Reviewed read only</td><td>Exact digest, identity, catalog, and safe-read annotations are required.</td></tr>
+            <tr><td>HTTP backend</td><td class="state caution">Main preview</td><td>The Streamable HTTP JSON adapter is post-v1 preview work and is not in the public 1.0 package.</td></tr>
+            <tr><td>Secret detection</td><td class="state caution">Heuristic</td><td>Three deterministic high-signal rules, not comprehensive secret or PII protection.</td></tr>
+            <tr><td>OS isolation</td><td class="state caution">Not provided</td><td>Backend processes run with the current user's operating-system permissions.</td></tr>
+            <tr><td>Independent audit</td><td class="state caution">Pending</td><td>Maintainer sign-off proves source binding, not third-party assurance or separation of duties.</td></tr>
+            <tr><td>Native packages</td><td class="state caution">Unsigned</td><td>MSI, PKG, DEB, and RPM are qualified but not code-signed or notarized.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="troubleshooting" class="wrap reference-layout">
+      <div class="reference-copy"><h2>Troubleshooting.</h2><p>Most setup failures are version, PATH, client configuration, or reviewed-config mismatches. Start with the CLI before debugging the MCP host.</p></div>
+      <div>
+        <details open><summary><code>effectgate</code> is not found</summary><div class="detail-body"><p>Open a new terminal after installation and confirm your global npm binary directory is on PATH. Run <code>npm prefix --global</code> to locate the global prefix.</p></div></details>
+        <details><summary>The CLI rejects my Node.js version</summary><div class="detail-body"><p>Run <code>node --version</code>. EffectGate 1.0 requires Node.js 24 or newer. Install or select a compatible runtime, then reinstall the package.</p></div></details>
+        <details><summary>My MCP client shows no tools</summary><div class="detail-body"><p>First run <code>effectgate --version</code>. Then confirm the client launches <code>effectgate mcp serve</code>. A completed protected phase intentionally publishes no effect tool.</p></div></details>
+        <details><summary>A reviewed backend fails admission</summary><div class="detail-body"><p>Run <code>effectgate doctor --config FILE --json</code>. Recheck executable and source digests, working directory, server identity, exact one-page catalog, and all four safe-read annotations.</p></div></details>
+        <details><summary>I want to remove EffectGate</summary><div class="detail-body"><p>Run <code>effectgate uninstall --config FILE</code> to print the package removal command and preserved paths. State deletion is separate and confirmation-bound through <code>effectgate purge --config FILE</code>.</p></div></details>
+        <details><summary>I found a security issue</summary><div class="detail-body"><p>Do not publish technical details in an issue. Use GitHub private vulnerability reporting when available, or follow the private process in <a href="https://github.com/Miniks040506/EffectGate/blob/main/SECURITY.md">SECURITY.md</a>.</p></div></details>
+      </div>
+    </section>
+
+    <div class="closing wrap">
+      <div><h2>Start with the fixture.</h2><p>Learn the result and approval flows locally, then admit only backend bytes you have actually reviewed.</p></div>
+      <a class="button primary" href="#install">Install v1.0.0</a>
+    </div>
+  </main>
+
+  <footer>
+    <div class="footer-row wrap">
+      <span>EffectGate is licensed under Apache-2.0.</span>
+      <div class="footer-links">
+        <a href="https://github.com/Miniks040506/EffectGate/blob/main/docs/architecture.md">Architecture</a><a href="https://github.com/Miniks040506/EffectGate/blob/main/docs/verification.md">Verification</a><a href="https://github.com/Miniks040506/EffectGate/blob/main/docs/native-installers.md">Native installers</a>
+        <a href="https://github.com/Miniks040506/EffectGate/blob/main/docs/review/v1.0.0.md">External review</a><a href="https://github.com/Miniks040506/EffectGate/issues">Issues</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const root = document.documentElement;
+    const themeButton = document.querySelector('[data-theme-toggle]');
+    const themes = ['auto', 'light', 'dark'];
+    function setTheme(theme) {
+      if (theme === 'auto') root.removeAttribute('data-theme');
+      else root.dataset.theme = theme;
+      themeButton.textContent = 'Theme: ' + theme[0].toUpperCase() + theme.slice(1);
+      localStorage.setItem('effectgate-theme', theme);
+    }
+    setTheme(localStorage.getItem('effectgate-theme') || 'auto');
+    themeButton.addEventListener('click', () => {
+      const current = localStorage.getItem('effectgate-theme') || 'auto';
+      setTheme(themes[(themes.indexOf(current) + 1) % themes.length]);
+    });
+
+    const tabs = [...document.querySelectorAll('[role="tab"]')];
+    function activateTab(selected) {
+      tabs.forEach(tab => {
+        const active = tab === selected;
+        tab.setAttribute('aria-selected', active);
+        tab.tabIndex = active ? 0 : -1;
+        document.getElementById(tab.getAttribute('aria-controls')).hidden = !active;
+      });
+    }
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => activateTab(tab));
+      tab.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+        event.preventDefault();
+        const offset = event.key === 'ArrowRight' ? 1 : -1;
+        const next = tabs[(index + offset + tabs.length) % tabs.length];
+        activateTab(next);
+        next.focus();
+      });
+    });
+
+    document.querySelectorAll('.copy').forEach(button => {
+      button.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(button.nextElementSibling.textContent);
+          button.textContent = 'Copied';
+          setTimeout(() => { button.textContent = 'Copy'; }, 1600);
+        } catch {
+          button.textContent = 'Select text';
+        }
+      });
+    });
+  </script>
+</body>
+</html>

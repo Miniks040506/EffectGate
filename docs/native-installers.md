@@ -29,8 +29,8 @@ The `Native installer qualification` workflow:
    `--version`.
 6. Uploads each package with a SHA-256 checksum as a workflow artifact.
 
-The workflow has read-only repository permission. Native installers are not
-attached to a GitHub release until the qualification succeeds.
+The workflow has read-only repository permission. The v1.0.0 installers were
+attached to the GitHub release only after this qualification succeeded.
 
 ## Trust boundary
 
