@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Install, connect, and operate EffectGate 1.0 with any MCP client.">
   <meta name="theme-color" content="#10130f">
+  <meta property="og:title" content="EffectGate 1.0 practical guide">
+  <meta property="og:description" content="Install, connect, and use EffectGate with Claude Code or any MCP client.">
+  <meta property="og:image" content="https://miniks040506.github.io/EffectGate/assets/guide-live.png">
   <title>EffectGate 1.0 | Practical guide</title>
   <style>
     :root {
@@ -65,6 +68,10 @@
     .invoke-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:18px 0}.invoke{min-width:0;border-left:3px solid var(--line);padding:4px 0 4px 16px}.invoke strong{display:block;margin-bottom:5px;color:var(--ink)}.invoke p{margin:0;color:var(--muted)}
     .tool-name{display:inline-block;margin:0 0 14px;color:var(--accent);font:700 13px var(--mono)}
     .evidence-image{display:block;width:100%;margin:0 0 24px;border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+    .run-layout{display:grid;grid-template-columns:minmax(0,.78fr) minmax(460px,1.22fr);gap:clamp(38px,6vw,76px);align-items:center}
+    .run-copy p{max-width:620px;color:var(--muted)}.run-facts{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin-top:30px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+    .run-fact{background:var(--surface);padding:18px}.run-fact strong{display:block;font:750 22px/1.2 var(--mono)}.run-fact span{color:var(--muted);font-size:12px}
+    .session-meta{display:flex;flex-wrap:wrap;gap:8px;border-top:1px solid #2d352b;padding:12px 16px;color:var(--code-muted);font:12px var(--mono)}.session-meta span{border:1px solid #334030;border-radius:5px;padding:3px 7px}
     .feature-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:1px;overflow:hidden;border:1px solid var(--line);border-radius:var(--radius);background:var(--line)}
     .feature{min-height:240px;background:var(--surface);padding:clamp(26px,4vw,44px)}.feature:nth-child(3){grid-column:1/-1;min-height:auto}.feature p{max-width:650px;color:var(--muted)}.feature code{color:var(--accent)}
     .metric{margin:34px 0 10px;font:760 clamp(38px,6vw,72px)/1 var(--mono);letter-spacing:-.08em}.metric-label{color:var(--muted)}
@@ -75,7 +82,7 @@
     .status-table th{color:var(--muted);font:700 12px var(--mono);letter-spacing:.06em;text-transform:uppercase}.status-table td:first-child{font-weight:700}.state{color:var(--accent);font-weight:700}.state.caution{color:var(--warn)}
     .closing{display:grid;grid-template-columns:1fr auto;align-items:end;gap:32px;border-top:1px solid var(--line);padding-block:70px}.closing h2{margin-bottom:10px}.closing p{max-width:620px;margin:0;color:var(--muted)}
     footer{border-top:1px solid var(--line);padding:28px 0 44px;color:var(--muted);font-size:14px}.footer-row{display:flex;flex-wrap:wrap;justify-content:space-between;gap:16px}.footer-links{display:flex;flex-wrap:wrap;gap:18px}
-    @media(max-width:900px){.nav-links a:not(:last-of-type){display:none}.hero{min-height:auto;grid-template-columns:1fr;padding-block:64px 80px}.proof-strip{grid-template-columns:repeat(2,1fr)}.proof:nth-child(3){border-left:0;border-top:1px solid var(--line)}.proof:nth-child(4){border-top:1px solid var(--line)}.install-layout,.reference-layout{grid-template-columns:1fr}.install-nav,.reference-copy{position:static}.tab-list{flex-direction:row;overflow-x:auto}.tab{white-space:nowrap}}
+    @media(max-width:900px){.nav-links a:not(:last-of-type){display:none}.hero{min-height:auto;grid-template-columns:1fr;padding-block:64px 80px}.proof-strip{grid-template-columns:repeat(2,1fr)}.proof:nth-child(3){border-left:0;border-top:1px solid var(--line)}.proof:nth-child(4){border-top:1px solid var(--line)}.install-layout,.reference-layout,.run-layout{grid-template-columns:1fr}.install-nav,.reference-copy{position:static}.tab-list{flex-direction:row;overflow-x:auto}.tab{white-space:nowrap}}
     @media(max-width:620px){.wrap{width:min(100% - 28px,1180px)}.nav{gap:10px}.nav-links{gap:10px}.nav-links a{display:none}h1{font-size:clamp(43px,14vw,64px)}section{padding-block:72px}.proof-strip,.feature-grid,.syntax-grid,.invoke-grid{grid-template-columns:1fr}.proof+.proof{border-left:0;border-top:1px solid var(--line)}.feature:nth-child(3){grid-column:auto}.step{grid-template-columns:38px 1fr;gap:12px}.status-table{display:block;overflow-x:auto}.closing{grid-template-columns:1fr;align-items:start}.button{width:100%}}
     @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important}}
   </style>
@@ -120,7 +127,7 @@
     <div class="proof-strip wrap" aria-label="Release facts">
       <div class="proof"><strong>170 / 170</strong><span>dependency-free tests passing</span></div>
       <div class="proof"><strong>4 KiB</strong><span>default source-content page</span></div>
-      <div class="proof"><strong>0</strong><span>third-party runtime imports</span></div>
+      <div class="proof"><strong>45.7%</strong><span>less input context in the latest paired case</span></div>
       <div class="proof"><strong>Local</strong><span>stdio transport, no network listener</span></div>
     </div>
 
@@ -214,7 +221,7 @@ Show the cited byte range and content digest.</pre></div>
       </div>
     </section>
 
-+    <section id="use-features" class="section-rule">
+    <section id="use-features" class="section-rule">
       <div class="wrap">
         <p class="eyebrow">Feature activation manual</p>
         <h2>What to ask, what actually runs.</h2>
@@ -485,6 +492,36 @@ claude mcp remove effectgate</pre></div>
             </details>
             <p class="note">Claude Code references: <a href="https://code.claude.com/docs/en/mcp">MCP servers</a>, <a href="https://code.claude.com/docs/en/slash-commands">skills and one-turn tool restrictions</a>, and <a href="https://code.claude.com/docs/en/permissions">permission rules</a>.</p>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="real-run" class="section-rule">
+      <div class="wrap run-layout">
+        <div class="run-copy">
+          <p class="eyebrow">Recorded 1 September 2026</p>
+          <h2>Claude used EffectGate for a real corpus search.</h2>
+          <p>Claude Code 2.1.251 found the single <code>rare_status</code> row in BENCH-JSON-002. Both EffectGate modes returned the exact answer while sending less input context than the matched native run.</p>
+          <div class="run-facts" aria-label="Observed input-token reductions">
+            <div class="run-fact"><strong>57.5%</strong><span>less with typed EffectGate</span></div>
+            <div class="run-fact"><strong>34.0%</strong><span>less with compact EffectGate</span></div>
+            <div class="run-fact"><strong>45.7%</strong><span>combined reduction in this case</span></div>
+          </div>
+          <p><strong>P1 typed</strong> keeps each tool's typed contract and lets native Tool Search defer it. <strong>P2 compact</strong> exposes four generic search, describe, call, and fetch contracts; it suits very large catalogs but may need more discovery steps.</p>
+          <p class="note"><strong>Current overall estimate:</strong> across the three observed real-Claude task groups, P1 is 38.3% lower, P2 is 10.9% lower, and their combined input is 24.6% lower than matched native baselines. This small sample is evidence, not a universal saving guarantee. <a href="https://github.com/Miniks040506/EffectGate/blob/main/poc/evidence/claude-code-target-partial-cell-json-2.1.251.json">Inspect the content-free record</a>.</p>
+        </div>
+        <div class="terminal" aria-label="Content-free record of Claude Code using EffectGate">
+          <div class="terminal-bar"><span>claude-code / real run</span><span>BENCH-JSON-002 · P1</span></div>
+          <pre><span class="prompt">$</span> claude "Use EffectGate to find rare_status"
+
+<span class="comment">ToolSearch</span>  → EffectGate target corpus
+<span class="comment">EffectGate</span> → target_corpus
+<span class="comment">EffectGate</span> → effectgate_search
+<span class="comment">Claude</span>     → StructuredOutput
+
+<span class="result">{"customer_id":"customer-target-42424",
+ "id":42424,"status":"rare_status"}</span></pre>
+          <div class="session-meta"><span>Claude 2.1.251</span><span>P1 typed</span><span>task oracle: pass</span><span>raw stream deleted</span></div>
         </div>
       </div>
     </section>

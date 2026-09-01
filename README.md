@@ -1,8 +1,8 @@
 <div align="center">
 
-<a href="https://miniks040506.github.io/EffectGate/">
-  <img alt="Live EffectGate 1.0 practical guide on GitHub Pages" src="docs/assets/guide-live.png" width="100%">
-</a>
+<h1>EffectGate</h1>
+
+<p><strong>Keep large tool output local. Give AI the cited evidence it needs.</strong></p>
 
 <br>
 
@@ -18,7 +18,7 @@
 [What it looks like](#what-it-looks-like) ·
 [Features](#what-you-get) ·
 [Docs](#documentation) ·
-[Status](#project-status)
+[Evidence](#evidence-and-limits)
 
 </div>
 
@@ -43,32 +43,38 @@ whether the effect actually committed.
 
 ## What it looks like
 
-The deployed guide shows how EffectGate is actually selected: ask naturally,
-name an exact MCP tool, or install the optional one-turn skill wrapper.
+<table>
+  <tr>
+    <td width="56%"><a href="https://miniks040506.github.io/EffectGate/"><img alt="EffectGate live installation and connection guide" src="docs/assets/guide-live.png"></a></td>
+    <td width="44%"><strong>Real Claude run.</strong><br><br><a href="https://miniks040506.github.io/EffectGate/#real-run">Open the recorded Claude Code + EffectGate terminal</a>. It shows the actual Tool Search → EffectGate → structured-output path from BENCH-JSON-002.</td>
+  </tr>
+  <tr>
+    <td><strong>Install and connect.</strong> The live guide covers npm, native packages, Claude Code, and any MCP client.</td>
+    <td><strong>Use it from Claude.</strong> The terminal view is reconstructed from a real content-free capture, not generated artwork.</td>
+  </tr>
+</table>
 
-<a href="https://miniks040506.github.io/EffectGate/#use-features">
-  <img alt="Live EffectGate feature activation guide on GitHub Pages" src="docs/assets/guide-features-live.png" width="100%">
-</a>
+### Observed context reduction
 
-The screenshots above were captured from the public GitHub Pages deployment,
-not generated artwork. The bundled fixture still provides the reproducible
-runtime measurement behind the context claim:
+| Path | Latest real Claude JSON case | Estimate across 3 observed groups |
+|---|---:|---:|
+| Typed EffectGate tools (P1) | **57.5% less input** | **38.3% less input** |
+| Compact EffectGate tools (P2) | **34.0% less input** | **10.9% less input** |
+| **P1 + P2 combined** | **45.7% less input** | **24.6% less input** |
 
-| Fixture step | Measured byte-proxy tokens |
-|---|---:|
-| Raw 8,000-line result | 164,031 |
-| First bounded view | 1,020 |
-| Targeted search result | 62 |
+#### P1 typed or P2 compact?
 
-The model never saw the full log. It got a bounded page with an exact byte
-range, a content digest, and a cursor; the synthetic API key on line 5 was
-redacted before that page left the process. When it wanted line 7,942, it
-searched instead of scrolling.
+| Mode | What Claude sees | Use it when |
+|---|---|---|
+| **P1 typed** | Each backend tool keeps its typed name and schema, but Claude loads it only after native Tool Search selects it. | Your host has qualified tool deferral. This is the recommended default and performed best in the latest run. |
+| **P2 compact** | Four generic contracts—search, describe, call, and fetch—route to admitted backend tools through arguments. | The catalog is very large or native typed deferral is unavailable or insufficient. Expect extra discovery steps. |
 
-> These are real figures from `npm --prefix poc start` against the bundled
-> fixture, measured with EffectGate's deterministic byte-proxy counter. It is an
-> honest proxy, not a model tokenizer, and it does not yet prove a whole-session
-> saving — see [Project status](#project-status).
+At the individual tool-result level, the bundled 8,000-line fixture reduced
+the first bounded view by **99.4%** and a targeted search response by
+**99.96%** relative to returning the raw result. Whole-session figures above
+use host-reported Claude Code input tokens; fixture figures use the labeled
+deterministic byte proxy. The real-host sample is still small, so these are
+measured observations—not a saving guarantee for every workload.
 
 ## Quick start
 
@@ -218,82 +224,19 @@ its server identity, and a reviewed immutable catalog.
 
 → [Request path, invariants, and every enforced bound](docs/architecture.md)
 
-## Project status
+## Evidence and limits
 
-EffectGate is deliberately conservative about what it claims.
+The percentage table above is the user-facing summary. Reproducible evidence
+is available for the [`2.1.241 READ`](poc/evidence/claude-code-target-paired-cell-2.1.241.json),
+[`2.1.251 READ`](poc/evidence/claude-code-target-paired-cell-2.1.251.json), and
+[`2.1.251 JSON`](poc/evidence/claude-code-target-partial-cell-json-2.1.251.json)
+runs. The full regression, Tier-1, and campaign accounting lives in
+[Verification evidence](docs/verification.md).
 
 > [!CAUTION]
-> **Release status is evidence-bound.** v1.0.0 is stable only when its exact
-> source commit carries the required Tier-1 evidence and five-role Ed25519
-> sign-off. An unqualified checkout is a release candidate, not a production
-> security boundary. Redaction remains heuristic, and unreviewed executables or
-> undeclared third-party writes are denied.
-
-### Verification snapshot
-
-| Evidence layer | Coverage | Result |
-|---|---:|---|
-| Deterministic regression suite | **170/170 tests** | Pass on the current checkout |
-| Tier-1 performance qualification | **400/400 runs** | 100 runs on each of Linux x64, Linux arm64, Windows x64, and macOS arm64; all pass |
-| Fresh local paired-fixture check | **20/20 profile runs** | Five repetitions across P0-P3; no failed run |
-
-Across the four Tier-1 platforms, the mean of the platform median proxy-added
-latencies is **0.310 ms**; the mean of their platform p95 values is **0.428
-ms**. These figures come from the checked-in
-[`tier1-performance-6c898e2.json`](poc/evidence/tier1-performance-6c898e2.json)
-and describe runtime latency, not model-token savings. The fresh local check
-uses the deterministic fixture and makes no Claude or paid API call.
-
-**The separate whole-session token claim is not yet proven.** Two real-host
-paired cells have been observed toward the planned 320-cell campaign. Their
-per-profile averages are:
-
-| Profile | Mean input tokens | Mean paired change | Task passes |
-|---|---:|---:|---:|
-| P0 native | 250,132 | — | 0/2 |
-| P1 EffectGate typed | 170,999 | −31.5% | 1/2 |
-| P2 EffectGate compact | 242,974 | −2.7% | 2/2 |
-| P3 eager diagnostic | 195,780 | −21.7% | 0/2 |
-
-The newer Claude Code 2.1.251 cell does put reduction and completion on the
-same P1 row: 198,719 versus 246,412 native input tokens, a 19.4% reduction.
-That is encouraging measured evidence, but two cells are still too few for a
-general whole-session saving claim. The 400/400 Tier-1 runs above measure
-latency and cannot be relabeled as 320/320 real-host campaign cells. Raw,
-content-free evidence:
-[`2.1.241`](poc/evidence/claude-code-target-paired-cell-2.1.241.json) and
-[`2.1.251`](poc/evidence/claude-code-target-paired-cell-2.1.251.json).
-
-**EffectGate is not** an OS sandbox, an authentication or encryption layer, a
-comprehensive secret/PII detector, a durable audit journal, or approved for
-unreviewed backends and production writes. Redaction is three deterministic
-rules for high-signal credentials — useful, not exhaustive.
-
-**Sign-off is not independent review.** The five release roles for v1.0.0 were
-signed by a single maintainer. That is supply-chain integrity, not separation of
-duties. The handoff for a genuine external audit is open:
-[`docs/review/v1.0.0.md`](docs/review/v1.0.0.md).
-
-<details>
-<summary><strong>Available in 1.0 vs. post-1.0 direction</strong></summary>
-
-<br>
-
-| Available in 1.0 | Post-1.0 direction |
-|---|---|
-| Fixture proxy, reviewed read-only stdio binding, one digest-pinned effect fixture | Streamable HTTP and broader reviewed adapters |
-| Exact executable, identity, catalog, and typed read-only admission pins | Signed backend capability passports and sealed generations |
-| Quota-limited partitioned filesystem CAS with explicit invalidation | Durable metadata, shared-writer locking, production GC |
-| Cited paging, search, projection, and fail-closed opaque withholding | Ranked search, safe regex policy, streaming indexes, richer predicates |
-| HMAC-authenticated process/session-bound cursors | Authenticated OS principal identity and durable policy binding |
-| Basis-aware counters, output guards, compact mux, P0–P3 fixture evidence | SQLite-backed evidence and real-host comparison qualification |
-| Deterministic tests plus seeded JSONL/MCP and effect fuzz evidence | Broader fuzz, compatibility, latency, and crash qualification |
-| Dependency-free Node.js 24 runtime, public npm package, and qualified MSI, PKG, DEB, and RPM installers | Signed/notarized native packages and managed OS package repositories |
-
-No date or production claim attaches to a future capability until its
-acceptance evidence exists.
-
-</details>
+> EffectGate is not an OS sandbox or a comprehensive secret detector. Use the
+> bundled fixture first; admit only reviewed read-only backends. Production
+> writes and independent external security review remain outside the v1 claim.
 
 ## Documentation
 

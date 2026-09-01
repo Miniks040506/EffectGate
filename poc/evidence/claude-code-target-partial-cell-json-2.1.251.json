@@ -1,0 +1,93 @@
+{
+  "kind": "effectgate_claude_target_corpus_partial_cell",
+  "schema_version": "1.0.0",
+  "task_id": "BENCH-JSON-002",
+  "repetition": 0,
+  "source_commit": "09d23b1c636450cccb5bff5b555e511565091300",
+  "authorization_id": "readme-json-251-001",
+  "client": {
+    "name": "claude-code",
+    "version": "2.1.251",
+    "build_digest": "sha256:8d1229a281281b98fd2dee72b3253a704be4fce4d45207200cd32a9bb5a6c909"
+  },
+  "configuration": {
+    "model": "claude-sonnet-5",
+    "effort": "medium",
+    "max_budget_usd_per_session": 0.25,
+    "backend_digest": "sha256:e15689dcd5ce3781becb4b518150681e2ced361a38ce7967d66142eeec0a8f21",
+    "prompt_digest": "sha256:f43334539d4a8b4b2f88d34f3164dfa74233f0e56bc0f00f9b5730f30467c5b2",
+    "rubric_digest": "sha256:d854473701ccd3de82508f4ef825d7eed291c4ca3b9e438c74d5b78591e11f4d"
+  },
+  "profiles": [
+    {
+      "profile": "P0_NATIVE_DEFAULT",
+      "observed_at": "2026-09-01T00:30:50.777Z",
+      "task_success": false,
+      "failure_code": "error_max_budget_usd",
+      "tool_call_count": 11,
+      "fetch_count": 0,
+      "total_input_tokens": 174612,
+      "metered_equivalent_usd": 0.2597614,
+      "capture_digest": "sha256:fea16ab836ed46ca4afce3fd0a253ec5aed9d34ed27aefb2eea52840bc24fb5a",
+      "metrics_digest": "sha256:37b767fec530ce623480fafd1a6a91046142e078931d06ddf9ce13d70b88afd4"
+    },
+    {
+      "profile": "P1_EG_TYPED",
+      "observed_at": "2026-09-01T00:31:05.292Z",
+      "task_success": true,
+      "failure_code": null,
+      "tool_call_count": 5,
+      "fetch_count": 0,
+      "total_input_tokens": 74200,
+      "metered_equivalent_usd": 0.06433939999999999,
+      "capture_digest": "sha256:9b72789db12347fff61f88483356bda414ecb59c584392755af6a3e8617d8c93",
+      "metrics_digest": "sha256:d97099097ae51d92c6853831cd21a99b37e23ca1b51d604372fed3817d1f6e62"
+    },
+    {
+      "profile": "P2_EG_MUX",
+      "observed_at": "2026-09-01T00:31:25.020Z",
+      "task_success": true,
+      "failure_code": null,
+      "tool_call_count": 9,
+      "fetch_count": 0,
+      "total_input_tokens": 115260,
+      "metered_equivalent_usd": 0.08264060000000001,
+      "capture_digest": "sha256:f9cc3cc2a7b1bc46b9a67f9637bb53707b9fd01a095a83f6ab34f3fc1bedc486",
+      "metrics_digest": "sha256:1c8031c60d600cbc3a69ba9c0f372b3f46b1c0a9a9dc3eafb17eaeb20bf521db"
+    }
+  ],
+  "usage_guard": {
+    "authentication": "claude.ai",
+    "api_key_source": "none",
+    "authorized_profile_sessions": 3,
+    "recorded_profile_sessions": 3,
+    "zero_token_transport_retries": 3,
+    "recorded_metered_equivalent_usd": 0.4067414,
+    "is_using_overage": false,
+    "overage_disabled_reason": "org_level_disabled"
+  },
+  "evidence": {
+    "raw_results_retained": false,
+    "raw_streams_retained": false,
+    "completed_profiles": 3,
+    "passed_profiles": 2
+  },
+  "qualification_scope": {
+    "paired_cell_complete": false,
+    "completed_profiles_in_cell": 3,
+    "required_profiles_in_cell": 4,
+    "campaign_completed_profile_runs": 11,
+    "campaign_required_profile_runs": 320,
+    "complete_four_profile_groups": 2,
+    "required_four_profile_groups": 80,
+    "full_campaign_complete": false
+  },
+  "verdict": {
+    "state": "partial",
+    "reasons": [
+      "P0_NATIVE_DEFAULT exceeded the per-session budget",
+      "P1_EG_TYPED and P2_EG_MUX satisfied the exact task oracle",
+      "P3_EAGER_DIAGNOSTIC was not authorized for this three-session run"
+    ]
+  }
+}
