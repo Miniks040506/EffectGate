@@ -43,14 +43,18 @@ whether the effect actually committed.
 
 ## What it looks like
 
+<p align="center">
+  <a href="https://miniks040506.github.io/EffectGate/"><img alt="EffectGate live installation and connection guide" src="docs/assets/guide-live-v2.png" width="900"></a>
+</p>
+
 <table>
   <tr>
-    <td width="56%"><a href="https://miniks040506.github.io/EffectGate/"><img alt="EffectGate live installation and connection guide" src="docs/assets/guide-live.png"></a></td>
-    <td width="44%"><strong>Real Claude run.</strong><br><br><a href="https://miniks040506.github.io/EffectGate/#real-run">Open the recorded Claude Code + EffectGate terminal</a>. It shows the actual Tool Search → EffectGate → structured-output path from BENCH-JSON-002.</td>
+    <td width="50%"><a href="https://miniks040506.github.io/EffectGate/#use-features"><img alt="EffectGate feature activation guide without the previous stray plus sign" src="docs/assets/guide-features-live-v3.png"></a></td>
+    <td width="50%"><a href="https://miniks040506.github.io/EffectGate/#real-run"><img alt="Claude Code using EffectGate in a recorded BENCH-JSON-002 session" src="docs/assets/guide-claude-live-v2.png"></a></td>
   </tr>
   <tr>
-    <td><strong>Install and connect.</strong> The live guide covers npm, native packages, Claude Code, and any MCP client.</td>
-    <td><strong>Use it from Claude.</strong> The terminal view is reconstructed from a real content-free capture, not generated artwork.</td>
+    <td><strong>Ask or select a tool.</strong> Natural language, exact MCP names, and optional one-turn skills are explained in the live guide.</td>
+    <td><strong>Watch the real path.</strong> Tool Search → EffectGate → structured output, reconstructed from a content-free Claude capture.</td>
   </tr>
 </table>
 
