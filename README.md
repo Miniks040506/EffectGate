@@ -214,6 +214,69 @@ npm --prefix poc start
 Both surfaces are covered by a dependency-free suite: **170 tests, zero
 third-party imports**. See [Verification evidence](docs/verification.md).
 
+<details>
+<summary><strong>Giải thích EffectGate cho khách hàng bằng tiếng Việt</strong></summary>
+
+### EffectGate là gì?
+
+> EffectGate là lớp kiểm soát nằm giữa AI và các công cụ/MCP. Thay vì đưa toàn
+> bộ dữ liệu lớn vào context, nó giữ dữ liệu trên máy và chỉ trả về phần cần
+> thiết kèm bằng chứng nguồn. Với thao tác ghi đã cấu hình, EffectGate ràng buộc
+> approval với đúng ý định để tránh gọi lặp hoặc thay đổi tham số ngoài ý muốn.
+
+#### 1. Giảm dữ liệu đưa vào context
+
+Khi tool trả về log, JSON hoặc bảng rất lớn, EffectGate giữ toàn bộ dữ liệu trên
+máy, chỉ đưa cho Claude một phần nhỏ theo giới hạn, cho phép tìm hoặc trích đúng
+trường cần thiết và đọc tiếp từng phần khi cần. Điều này giảm input token và
+tránh lấp đầy context bằng dữ liệu không liên quan.
+
+#### 2. Trả lời kèm bằng chứng nguồn
+
+Mỗi phần dữ liệu trả về có vị trí byte chính xác, SHA-256 digest, trạng thái đầy
+đủ hoặc một phần, cùng citation cho kết quả hay từng record. Người dùng có thể
+kiểm tra AI lấy câu trả lời từ đâu thay vì chỉ tin phần tóm tắt.
+
+#### 3. Tìm kiếm và lọc dữ liệu lớn
+
+Claude có thể tìm lỗi trong hàng nghìn dòng log, lọc JSON/JSONL theo điều kiện,
+chỉ lấy vài cột từ CSV/TSV hoặc lấy đúng section trong Markdown. Giá trị chính
+không phải là “AI đọc nhanh hơn”, mà là AI không cần tải toàn bộ dữ liệu vào
+context.
+
+#### 4. Bảo vệ dữ liệu nhạy cảm
+
+EffectGate che token, bearer credential và các giá trị gán nhạy cảm trước mỗi
+trang được trả về. Nội dung không rõ hoặc đáng ngờ bị giữ lại thay vì được suy
+đoán. Prompt không thể tắt cơ chế redaction này.
+
+#### 5. Kiểm soát công cụ AI được nhìn thấy
+
+EffectGate chỉ công bố capability đã được kiểm tra. Backend phải khớp
+executable và digest đã duyệt; tool đọc phải khai báo read-only,
+non-destructive và idempotent. Claude không thể tự gọi một backend tool chưa
+được công bố, còn compact mode giúp giảm schema tool phải đưa vào context.
+
+#### 6. Kiểm soát thao tác ghi
+
+Với protected effect đã cấu hình, Claude đề xuất thao tác và EffectGate trả về
+operation ID để chờ người dùng duyệt. Approval chỉ áp dụng cho đúng tham số ban
+đầu; thay đổi file, nội dung hoặc tham số sẽ làm approval cũ mất hiệu lực.
+
+#### 7. Tránh thực hiện một thao tác hai lần
+
+Nếu tool timeout hoặc mất response, EffectGate không tự động ghi lại. Nó kiểm
+tra kết quả trước, báo trạng thái không chắc chắn khi chưa thể chứng minh và lưu
+receipt phục vụ đối chiếu.
+
+#### 8. Receipt, backup và phục hồi
+
+Operator có thể kiểm tra trạng thái operation, Effect/Phase Receipt, backup đã
+xác minh checksum, cùng kế hoạch restore hoặc rollback. Các chức năng effect và
+recovery yêu cầu runtime đã được cấu hình, không tự bật chỉ bằng prompt.
+
+</details>
+
 ## How it works
 
 EffectGate is one process on your machine with **no network listener**.
