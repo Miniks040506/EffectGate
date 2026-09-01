@@ -78,7 +78,10 @@ the first bounded view by **99.4%** and a targeted search response by
 **99.96%** relative to returning the raw result. Whole-session figures above
 use host-reported Claude Code input tokens; fixture figures use the labeled
 deterministic byte proxy. The real-host sample is still small, so these are
-measured observations—not a saving guarantee for every workload.
+measured observations—not a saving guarantee for every workload. The native
+MCP baseline reached its session ceiling in all three observed groups, while
+P1 passed two and P2 passed all three; this is recorded-input evidence, not an
+equal-success trial.
 
 ## Quick start
 
