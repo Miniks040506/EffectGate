@@ -63,6 +63,14 @@ const LATEST_CLAUDE_HOST_EVIDENCE = fileURLToPath(new URL(
   "../evidence/host-compatibility-claude-code-2.1.241.json",
   import.meta.url
 ));
+const CLAUDE_251_QUALIFICATION = fileURLToPath(new URL(
+  "../evidence/claude-code-tool-search-2.1.251.json",
+  import.meta.url
+));
+const CLAUDE_251_HOST_EVIDENCE = fileURLToPath(new URL(
+  "../evidence/host-compatibility-claude-code-2.1.251.json",
+  import.meta.url
+));
 
 function manifest(overrides = {}) {
   return {
@@ -249,6 +257,29 @@ test("EG-014B qualifies Claude Code 2.1.241 without overage", () => {
     clientInfo: { name: "claude-code", version: "2.1.241" },
     clientBuildDigest: qualification.client.build_digest,
     now: () => Date.parse("2026-08-25T00:00:00.000Z")
+  }).reason, "qualified");
+});
+
+test("EG-014B qualifies Claude Code 2.1.251 without overage", () => {
+  const qualification = JSON.parse(readFileSync(
+    CLAUDE_251_QUALIFICATION, "utf8"
+  ));
+  const evidence = loadHostCompatibilityEvidence(CLAUDE_251_HOST_EVIDENCE);
+  assert.equal(qualification.client.version, "2.1.251");
+  assert.equal(qualification.observation.tool_search_call_count, 1);
+  assert.equal(qualification.observation.selected_tool_call_count, 1);
+  assert.equal(qualification.observation.probe_result_exact, true);
+  assert.equal(qualification.observation.permission_denial_count, 0);
+  assert.equal(qualification.usage_guard.is_using_overage, false);
+  assert.equal(
+    digest(JSON.stringify(qualification.configuration)),
+    qualification.configuration_digest
+  );
+  assert.equal(evidence.manifest.evidence_state, "pass");
+  assert.equal(decideNativeDeferral(evidence, {
+    clientInfo: { name: "claude-code", version: "2.1.251" },
+    clientBuildDigest: qualification.client.build_digest,
+    now: () => Date.parse("2026-09-01T00:00:00.000Z")
   }).reason, "qualified");
 });
 

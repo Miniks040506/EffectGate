@@ -44,6 +44,9 @@ const CLAUDE_TARGET_P2_REQUALIFICATION = fileURLToPath(new URL(
 const CLAUDE_TARGET_PAIRED_CELL = fileURLToPath(new URL(
   "../evidence/claude-code-target-paired-cell-2.1.241.json", import.meta.url
 ));
+const CLAUDE_251_TARGET_PAIRED_CELL = fileURLToPath(new URL(
+  "../evidence/claude-code-target-paired-cell-2.1.251.json", import.meta.url
+));
 const COMMIT = "a".repeat(40);
 const PROFILES = [
   "P0_NATIVE_DEFAULT",
@@ -646,6 +649,25 @@ test("real target-corpus paired cell records its fail-closed verdict", () => {
   );
   assert.equal(evidence.usage_guard.authorized_sessions, 4);
   assert.equal(evidence.usage_guard.executed_sessions, 4);
+  assert.equal(evidence.usage_guard.is_using_overage, false);
+  assert.equal(evidence.evidence.raw_results_retained, false);
+  assert.equal(evidence.evidence.raw_streams_retained, false);
+  assert.equal(evidence.qualification_scope.paired_cell_complete, true);
+  assert.equal(evidence.qualification_scope.full_campaign_complete, false);
+  assert.equal(evidence.verdict.state, "fail");
+});
+
+test("Claude Code 2.1.251 paired cell retains two exact task passes", () => {
+  const evidence = JSON.parse(readFileSync(
+    CLAUDE_251_TARGET_PAIRED_CELL, "utf8"
+  ));
+  assert.deepEqual(evidence.profiles.map(({ profile }) => profile), PROFILES);
+  assert.deepEqual(
+    evidence.profiles.map(({ task_success: success }) => success),
+    [false, true, true, false]
+  );
+  assert.equal(evidence.usage_guard.authorized_sessions, 6);
+  assert.equal(evidence.usage_guard.executed_sessions, 6);
   assert.equal(evidence.usage_guard.is_using_overage, false);
   assert.equal(evidence.evidence.raw_results_retained, false);
   assert.equal(evidence.evidence.raw_streams_retained, false);

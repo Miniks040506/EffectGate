@@ -1,0 +1,104 @@
+{
+  "kind": "effectgate_claude_target_corpus_paired_cell",
+  "schema_version": "1.0.0",
+  "task_id": "BENCH-READ-001",
+  "repetition": 0,
+  "source_commit": "ae012db05dac09cc532ca29c86b49fc19c11cd21",
+  "authorization_id": "readme-real-cell-251-001",
+  "client": {
+    "name": "claude-code",
+    "version": "2.1.251",
+    "build_digest": "sha256:8d1229a281281b98fd2dee72b3253a704be4fce4d45207200cd32a9bb5a6c909"
+  },
+  "configuration": {
+    "model": "claude-sonnet-5",
+    "effort": "medium",
+    "max_budget_usd_per_session": 0.25,
+    "backend_digest": "sha256:e15689dcd5ce3781becb4b518150681e2ced361a38ce7967d66142eeec0a8f21",
+    "prompt_digest": "sha256:60bb6f153e5e122783de3dcdfa747d8845df92165d81f8be4978e970d6b9d2d1",
+    "rubric_digest": "sha256:3be7d2c2cff5750e627ed999783bff3f6393c063eb3718492fd74bf82f77af44"
+  },
+  "profiles": [
+    {
+      "profile": "P0_NATIVE_DEFAULT",
+      "observed_at": "2026-08-31T15:30:00.000Z",
+      "task_success": false,
+      "failure_code": "terminal_error",
+      "tool_call_count": 16,
+      "fetch_count": 0,
+      "total_input_tokens": 246412,
+      "metered_equivalent_usd": 0.2503012,
+      "capture_digest": "sha256:77885993fc6a83456a632407bfcac99f9fa408c5276b5552f07d887fb8dc34cb",
+      "metrics_digest": "sha256:470dc61a7b7848cf6fab932b75f06cc214eb62fe0172a7cd7bb83ee70951d05e"
+    },
+    {
+      "profile": "P1_EG_TYPED",
+      "observed_at": "2026-08-31T15:32:00.000Z",
+      "task_success": true,
+      "failure_code": null,
+      "tool_call_count": 10,
+      "fetch_count": 4,
+      "total_input_tokens": 198719,
+      "metered_equivalent_usd": 0.1606888,
+      "capture_digest": "sha256:3ef84963f9ce84bf7d7c33a0edbab0ef0c0f089e82ffefaaa2f55c20d759260a",
+      "metrics_digest": "sha256:a8573c8da4c450ef09fd558815c33e6e58a50dd9af56751e1a5237f94860d02d"
+    },
+    {
+      "profile": "P2_EG_MUX",
+      "observed_at": "2026-08-31T15:35:00.000Z",
+      "task_success": true,
+      "failure_code": null,
+      "tool_call_count": 15,
+      "fetch_count": 5,
+      "total_input_tokens": 273123,
+      "metered_equivalent_usd": 0.1987194,
+      "capture_digest": "sha256:2204ddcab0c799704e5c029b19e29df80fc025e919d594e09557b2c28d7f6b4a",
+      "metrics_digest": "sha256:d8204e3eeb7ba98f533b1c41134b9b4aef5220026aacf04eebd559517d5ea46f"
+    },
+    {
+      "profile": "P3_EAGER_DIAGNOSTIC",
+      "observed_at": "2026-08-31T15:38:00.000Z",
+      "task_success": false,
+      "failure_code": "task_oracle_failed",
+      "tool_call_count": 13,
+      "fetch_count": 0,
+      "total_input_tokens": 203502,
+      "metered_equivalent_usd": 0.17871399999999998,
+      "capture_digest": "sha256:7fcae319b2a99b2f181cd4ff9097e4ae9fd1fb26c4f84afdb5d4cd643be6d1cc",
+      "metrics_digest": "sha256:909a223797c8dda486bae91ad8583825bfafa54c4eeb767463463758eb3c258f"
+    }
+  ],
+  "usage_guard": {
+    "authentication": "claude.ai",
+    "api_key_source": "none",
+    "authorized_sessions": 6,
+    "executed_sessions": 6,
+    "qualification_sessions": 1,
+    "recorded_profile_sessions": 4,
+    "unretained_executor_failure_sessions": 1,
+    "recorded_metered_equivalent_usd": 0.8403352,
+    "unretained_session_usage_included": false,
+    "is_using_overage": false,
+    "overage_disabled_reason": "org_level_disabled"
+  },
+  "evidence": {
+    "raw_results_retained": false,
+    "raw_streams_retained": false,
+    "completed_profiles": 4,
+    "passed_profiles": 2
+  },
+  "qualification_scope": {
+    "paired_cell_complete": true,
+    "qualified_slots": 1,
+    "completed_slots": 4,
+    "required_slots": 320,
+    "full_campaign_complete": false
+  },
+  "verdict": {
+    "state": "fail",
+    "reasons": [
+      "P0_NATIVE_DEFAULT ended with a terminal error",
+      "P3_EAGER_DIAGNOSTIC did not satisfy the exact task oracle"
+    ]
+  }
+}
