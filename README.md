@@ -1,9 +1,8 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.svg">
-  <img alt="EffectGate — your agent reads the whole log, your context window doesn't" src="docs/assets/hero-light.svg" width="100%">
-</picture>
+<a href="https://miniks040506.github.io/EffectGate/">
+  <img alt="Live EffectGate 1.0 practical guide on GitHub Pages" src="docs/assets/guide-live.png" width="100%">
+</a>
 
 <br>
 
@@ -44,20 +43,27 @@ whether the effect actually committed.
 
 ## What it looks like
 
-Ask the bundled fixture for an 8,000-line log, then go looking for one line
-inside it:
+The deployed guide shows how EffectGate is actually selected: ask naturally,
+name an exact MCP tool, or install the optional one-turn skill wrapper.
 
-<img alt="Terminal session: an 8,000-line log returns a 1,020-token bounded view, and a targeted search for one line returns 62 tokens" src="docs/assets/terminal.svg" width="100%">
+<a href="https://miniks040506.github.io/EffectGate/#use-features">
+  <img alt="Live EffectGate feature activation guide on GitHub Pages" src="docs/assets/guide-features-live.png" width="100%">
+</a>
 
-The model never saw the log. It got a bounded page with an exact byte range, a
-content digest, and a cursor — and the synthetic API key on line 5 was redacted
-before that page left the process. When it wanted line 7,942, it searched
-instead of scrolling.
+The screenshots above were captured from the public GitHub Pages deployment,
+not generated artwork. The bundled fixture still provides the reproducible
+runtime measurement behind the context claim:
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/savings-dark.svg">
-  <img alt="164,031 raw tokens become a 1,020-token first view, or 62 tokens with a targeted search" src="docs/assets/savings-light.svg" width="100%">
-</picture>
+| Fixture step | Measured byte-proxy tokens |
+|---|---:|
+| Raw 8,000-line result | 164,031 |
+| First bounded view | 1,020 |
+| Targeted search result | 62 |
+
+The model never saw the full log. It got a bounded page with an exact byte
+range, a content digest, and a cursor; the synthetic API key on line 5 was
+redacted before that page left the process. When it wanted line 7,942, it
+searched instead of scrolling.
 
 > These are real figures from `npm --prefix poc start` against the bundled
 > fixture, measured with EffectGate's deterministic byte-proxy counter. It is an
@@ -192,7 +198,7 @@ npm --prefix poc start
 - **Arguments stay private** — exact arguments are reviewable only over a
   user-local socket or named pipe, and never reach the journal.
 
-Both surfaces are covered by a dependency-free suite: **168 tests, zero
+Both surfaces are covered by a dependency-free suite: **170 tests, zero
 third-party imports**. See [Verification evidence](docs/verification.md).
 
 ## How it works
@@ -223,19 +229,40 @@ EffectGate is deliberately conservative about what it claims.
 > security boundary. Redaction remains heuristic, and unreviewed executables or
 > undeclared third-party writes are denied.
 
-**The whole-session token claim is not yet proven.** One real-host paired cell
-exists — 1 of 320 required campaign slots — and it fails closed:
+### Verification snapshot
 
-| Profile | Input tokens | vs. native | Tool calls | Task completed |
-|---|---:|---:|---:|:---:|
-| P0 native | 253,851 | — | 11 | ✗ budget |
-| P1 EffectGate typed | 143,279 | −43.6% | 8 | ✗ session limit |
-| P2 EffectGate compact | 212,824 | −16.2% | 14 | ✓ |
-| P3 eager diagnostic | 188,057 | −25.8% | 10 | ✗ budget |
+| Evidence layer | Coverage | Result |
+|---|---:|---|
+| Deterministic regression suite | **170/170 tests** | Pass on the current checkout |
+| Tier-1 performance qualification | **400/400 runs** | 100 runs on each of Linux x64, Linux arm64, Windows x64, and macOS arm64; all pass |
+| Fresh local paired-fixture check | **20/20 profile runs** | Five repetitions across P0-P3; no failed run |
 
-The large reduction and the completed task are on *different rows*. Until they
-land together, no token-saving claim is made. Raw evidence:
-[`poc/evidence/`](poc/evidence/claude-code-target-paired-cell-2.1.241.json).
+Across the four Tier-1 platforms, the mean of the platform median proxy-added
+latencies is **0.310 ms**; the mean of their platform p95 values is **0.428
+ms**. These figures come from the checked-in
+[`tier1-performance-6c898e2.json`](poc/evidence/tier1-performance-6c898e2.json)
+and describe runtime latency, not model-token savings. The fresh local check
+uses the deterministic fixture and makes no Claude or paid API call.
+
+**The separate whole-session token claim is not yet proven.** Two real-host
+paired cells have been observed toward the planned 320-cell campaign. Their
+per-profile averages are:
+
+| Profile | Mean input tokens | Mean paired change | Task passes |
+|---|---:|---:|---:|
+| P0 native | 250,132 | — | 0/2 |
+| P1 EffectGate typed | 170,999 | −31.5% | 1/2 |
+| P2 EffectGate compact | 242,974 | −2.7% | 2/2 |
+| P3 eager diagnostic | 195,780 | −21.7% | 0/2 |
+
+The newer Claude Code 2.1.251 cell does put reduction and completion on the
+same P1 row: 198,719 versus 246,412 native input tokens, a 19.4% reduction.
+That is encouraging measured evidence, but two cells are still too few for a
+general whole-session saving claim. The 400/400 Tier-1 runs above measure
+latency and cannot be relabeled as 320/320 real-host campaign cells. Raw,
+content-free evidence:
+[`2.1.241`](poc/evidence/claude-code-target-paired-cell-2.1.241.json) and
+[`2.1.251`](poc/evidence/claude-code-target-paired-cell-2.1.251.json).
 
 **EffectGate is not** an OS sandbox, an authentication or encryption layer, a
 comprehensive secret/PII detector, a durable audit journal, or approved for
@@ -275,7 +302,7 @@ acceptance evidence exists.
 | [Interactive usage guide](https://miniks040506.github.io/EffectGate/) | Install, connect an MCP client, take the fixture tour, run protected effects, and troubleshoot |
 | [Architecture](docs/architecture.md) | Request path, invariants, every enforced bound, protocol surface, Context View contract |
 | [Connecting real backends](docs/backends.md) | Reviewed third-party stdio backends, verified-effect fixture, operator CLI |
-| [Verification evidence](docs/verification.md) | What the 168-test suite actually asserts |
+| [Verification evidence](docs/verification.md) | What the 170-test suite actually asserts |
 | [Release engineering](docs/releasing.md) | Verify, reproduce, sign, and cut a release; uninstall and purge |
 | [Native installers](docs/native-installers.md) | Qualified MSI, PKG, DEB, and RPM packaging and trust boundary |
 | [HTTP adapter preview](docs/adapters/streamable-http-json.md) | v1.1 preview: reviewed Streamable HTTP JSON bridge |
