@@ -1300,6 +1300,15 @@ export function runProxy(args) {
     return `${source}__${digest}`;
   }
 
+  function publicToolDescription(description, contextViewEligible) {
+    const routing = contextViewEligible
+      ? "EffectGate-routed backend tool. Call it to invoke the admitted backend; large or sensitive results become a bounded Context View with an artifact_id for EffectGate search, projection, and fetch."
+      : "EffectGate-routed backend tool. Call it to invoke the admitted backend; its declared typed result is preserved or safely rejected.";
+    return description === undefined
+      ? routing
+      : `${routing} Backend description: ${description}`;
+  }
+
   function forward(
     clientRequest,
     method,
@@ -1553,8 +1562,16 @@ export function runProxy(args) {
       if (!isSafeReadTool(tool)) return [];
       const publicName = publicToolName(tool.name);
       if (nextNames.has(publicName)) throw new Error("tool name collision");
+      const contextViewEligible = tool.outputSchema === undefined;
       const publicContract = withNativeDeferralMetadata(
-        { ...tool, name: publicName },
+        {
+          ...tool,
+          name: publicName,
+          description: publicToolDescription(
+            tool.description,
+            contextViewEligible
+          )
+        },
         deferralDecision
       );
       if (serializedBytes(publicContract) > MAX_TOOL_RESULT_BYTES) {
@@ -1562,7 +1579,7 @@ export function runProxy(args) {
       }
       nextNames.set(publicName, {
         backendName: tool.name,
-        contextViewEligible: tool.outputSchema === undefined,
+        contextViewEligible,
         contract: publicContract
       });
       return [publicContract];

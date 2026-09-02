@@ -2,6 +2,22 @@
 
 All notable changes to EffectGate are documented here.
 
+## 1.0.1 — 2026-09-02
+
+### Fixed
+
+- Labels every admitted backend tool as EffectGate-routed so agents do not
+  mistake the required Context View bootstrap call for a native bypass.
+- Explains that eligible large backend results return the session-local
+  `artifact_id` used by EffectGate search, projection, and fetch.
+- Adds an installed-package regression path covering bootstrap, bounded Context
+  View creation, artifact search, and cited evidence retrieval.
+
+### Documentation
+
+- Clarifies that artifact IDs must come from a routed backend call and must
+  never be guessed, derived, or discovered through MCP Resources.
+
 ## 1.0.0 — 2026-08-02
 
 EffectGate 1.0 is a dependency-free Node.js runtime that controls what MCP tool

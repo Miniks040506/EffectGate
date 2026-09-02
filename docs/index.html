@@ -125,7 +125,7 @@
     </div>
 
     <div class="proof-strip wrap" aria-label="Release facts">
-      <div class="proof"><strong>170 / 170</strong><span>dependency-free tests passing</span></div>
+      <div class="proof"><strong>171 / 171</strong><span>dependency-free tests passing</span></div>
       <div class="proof"><strong>4 KiB</strong><span>default source-content page</span></div>
       <div class="proof"><strong>45.7%</strong><span>less input context in the latest paired case</span></div>
       <div class="proof"><strong>Local</strong><span>stdio transport, no network listener</span></div>
@@ -365,6 +365,7 @@ call it with {"lines":200}, then search the retained artifact for "line 150".</p
                 <div class="code-block" style="margin-top:14px"><button class="copy" type="button">Copy</button><pre>Use the EffectGate MCP server and its admitted lookup tool.
 Do not call the native backend directly. If no reviewed capability matches,
 stop and tell me instead of bypassing EffectGate.</pre></div>
+                <p class="note"><strong>Bootstrap rule:</strong> a source-prefixed tool published by the EffectGate server is the admitted, gated entry point—not a bypass. Call it first; when its result is large, EffectGate returns the <code>artifact_id</code> used by search, projection, and fetch. Never guess an artifact ID.</p>
                 <p>EffectGate refuses writes, dynamic catalogs, missing safe-read annotations, executable drift, source drift, identity drift, and calls to names the client never discovered.</p>
               </div>
             </details>

@@ -156,7 +156,7 @@ test("fixture implements deterministic typed MCP calls", async (context) => {
   assert.equal(unicodeCall.result.structuredContent.text, unicode);
 });
 
-test("proxy preserves the tool contract and namespaces only its name", async (context) => {
+test("proxy preserves the tool contract and labels its routed public tool", async (context) => {
   const proxy = new RpcProcess(["mcp", "serve", "--source", "fixture"]);
   context.after(() => proxy.stop());
 
@@ -179,7 +179,15 @@ test("proxy preserves the tool contract and namespaces only its name", async (co
   const { name, ...proxiedContract } = listed.result.tools[0];
   const { name: fixtureName, ...fixtureContract } = FIXTURE_TOOL;
   assert.equal(name, `fixture__${fixtureName}`);
-  assert.deepEqual(proxiedContract, fixtureContract);
+  const { description, ...proxiedWithoutDescription } = proxiedContract;
+  const {
+    description: fixtureDescription,
+    ...fixtureWithoutDescription
+  } = fixtureContract;
+  assert.deepEqual(proxiedWithoutDescription, fixtureWithoutDescription);
+  assert.match(description, /^EffectGate-routed backend tool\./u);
+  assert.match(description, /declared typed result/u);
+  assert.match(description, new RegExp(fixtureDescription, "u"));
 
   const called = await proxy.request("tools/call", {
     name,

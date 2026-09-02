@@ -211,7 +211,7 @@ npm --prefix poc start
 - **Arguments stay private** — exact arguments are reviewable only over a
   user-local socket or named pipe, and never reach the journal.
 
-Both surfaces are covered by a dependency-free suite: **170 tests, zero
+Both surfaces are covered by a dependency-free suite: **171 tests, zero
 third-party imports**. See [Verification evidence](docs/verification.md).
 
 <details>
@@ -292,6 +292,11 @@ Out of the box it proxies only its bundled fixture. Pointing it at a real
 backend requires pinning that backend's exact executable and source digests,
 its server identity, and a reviewed immutable catalog.
 
+A source-prefixed tool published by an EffectGate server is the admitted,
+gated entry point, not a native bypass. Call that tool first; an eligible large
+result returns the session-local `artifact_id` used by EffectGate search,
+projection, and fetch. Artifact IDs must never be guessed or derived.
+
 → [Request path, invariants, and every enforced bound](docs/architecture.md)
 
 ## Evidence and limits
@@ -315,7 +320,7 @@ runs. The full regression, Tier-1, and campaign accounting lives in
 | [Interactive usage guide](https://miniks040506.github.io/EffectGate/) | Install, connect an MCP client, take the fixture tour, run protected effects, and troubleshoot |
 | [Architecture](docs/architecture.md) | Request path, invariants, every enforced bound, protocol surface, Context View contract |
 | [Connecting real backends](docs/backends.md) | Reviewed third-party stdio backends, verified-effect fixture, operator CLI |
-| [Verification evidence](docs/verification.md) | What the 170-test suite actually asserts |
+| [Verification evidence](docs/verification.md) | What the 171-test suite actually asserts |
 | [Release engineering](docs/releasing.md) | Verify, reproduce, sign, and cut a release; uninstall and purge |
 | [Native installers](docs/native-installers.md) | Qualified MSI, PKG, DEB, and RPM packaging and trust boundary |
 | [HTTP adapter preview](docs/adapters/streamable-http-json.md) | v1.1 preview: reviewed Streamable HTTP JSON bridge |
