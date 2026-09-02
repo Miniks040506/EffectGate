@@ -14,8 +14,8 @@ import test from "node:test";
 
 import { stageNativePackage } from "../src/release/native-package-stage.mjs";
 
-const VERSION = "1.0.0";
-const SHA256 = "44aa32776701e22d8dab8e76307ea9013fd528a39493a63419545a3aed4f9c20";
+const VERSION = "1.0.1";
+const SHA256 = "6a90342a28d396902c1b6294c6342acc96fe2c7490d53a55365ecc484edd7a66";
 
 function fixture(root) {
   const packageRoot = join(root, "package");
@@ -28,7 +28,7 @@ function fixture(root) {
   }));
   writeFileSync(
     join(packageRoot, "src", "proxy", "effectgate.mjs"),
-    "process.stdout.write('1.0.0\\n');\n"
+    "process.stdout.write('1.0.1\\n');\n"
   );
   return packageRoot;
 }
@@ -53,7 +53,7 @@ test("native staging creates relocatable Windows payload", () => {
     );
     assert.equal(
       readFileSync(join(output, "package", "src", "proxy", "effectgate.mjs"), "utf8"),
-      "process.stdout.write('1.0.0\\n');\n"
+      "process.stdout.write('1.0.1\\n');\n"
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -95,7 +95,7 @@ test("native staging rejects mismatched and linked package payloads", () => {
       packageDirectory: packageRoot,
       output: join(root, "wrong-version"),
       platform: "linux",
-      version: "1.0.1",
+      version: "1.0.0",
       sha256: SHA256
     }), /identity/u);
     assert.throws(() => stageNativePackage({
