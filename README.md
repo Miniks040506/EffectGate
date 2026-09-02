@@ -97,8 +97,8 @@ dependencies.
 ### 1. Install
 
 ```powershell
-npm install --global effectgate-preview@1.0.0
-effectgate --version   # must print 1.0.0
+npm install --global effectgate-preview@1.0.1
+effectgate --version   # must print 1.0.1
 ```
 
 <details>
@@ -107,7 +107,7 @@ effectgate --version   # must print 1.0.0
 <br>
 
 Qualified MSI, PKG, DEB, and RPM packages are attached to the
-[v1.0.0 release](https://github.com/Miniks040506/EffectGate/releases/tag/v1.0.0).
+[v1.0.1 release](https://github.com/Miniks040506/EffectGate/releases/tag/v1.0.1).
 They contain the same dependency-free CLI and do not run npm during install.
 
 The repository install scripts download only the pinned release tarball, check

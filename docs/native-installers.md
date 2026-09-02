@@ -1,14 +1,14 @@
 # Native installers
 
 EffectGate builds four unsigned native package formats from the exact signed
-`v1.0.0` npm tarball:
+`v1.0.1` npm tarball:
 
 | Platform | Artifact | Install command |
 |---|---|---|
-| Windows x64 | `effectgate-preview-1.0.0-x64.msi` | `msiexec /i effectgate-preview-1.0.0-x64.msi` |
-| macOS | `effectgate-preview-1.0.0-universal.pkg` | `sudo installer -pkg effectgate-preview-1.0.0-universal.pkg -target /` |
-| Debian/Ubuntu | `effectgate-preview_1.0.0_all.deb` | `sudo apt install ./effectgate-preview_1.0.0_all.deb` |
-| RPM Linux | `effectgate-preview-1.0.0-1.noarch.rpm` | `sudo dnf install ./effectgate-preview-1.0.0-1.noarch.rpm` |
+| Windows x64 | `effectgate-preview-1.0.1-x64.msi` | `msiexec /i effectgate-preview-1.0.1-x64.msi` |
+| macOS | `effectgate-preview-1.0.1-universal.pkg` | `sudo installer -pkg effectgate-preview-1.0.1-universal.pkg -target /` |
+| Debian/Ubuntu | `effectgate-preview_1.0.1_all.deb` | `sudo apt install ./effectgate-preview_1.0.1_all.deb` |
+| RPM Linux | `effectgate-preview-1.0.1-1.noarch.rpm` | `sudo dnf install ./effectgate-preview-1.0.1-1.noarch.rpm` |
 
 All packages require Node.js 24 or newer. They contain the dependency-free
 EffectGate package and a small launcher; installation does not run npm or
@@ -20,7 +20,7 @@ The `Native installer qualification` workflow:
 
 1. Downloads the published GitHub release tarball.
 2. Requires SHA-256
-   `44aa32776701e22d8dab8e76307ea9013fd528a39493a63419545a3aed4f9c20`.
+   `6a90342a28d396902c1b6294c6342acc96fe2c7490d53a55365ecc484edd7a66`.
 3. Rejects package identity, version, license, engine, entrypoint, and symlink
    mismatches before staging.
 4. Builds packages with `dpkg-deb`, `rpmbuild`, `pkgbuild`, and pinned WiX
@@ -29,7 +29,7 @@ The `Native installer qualification` workflow:
    `--version`.
 6. Uploads each package with a SHA-256 checksum as a workflow artifact.
 
-The workflow has read-only repository permission. The v1.0.0 installers were
+The workflow has read-only repository permission. The v1.0.1 installers were
 attached to the GitHub release only after this qualification succeeded.
 
 ## Trust boundary

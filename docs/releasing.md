@@ -6,30 +6,30 @@ five-role Ed25519 sign-off. This document covers verifying a published release,
 reproducing it, and cutting a new one.
 
 > [!NOTE]
-> The five roles for v1.0.0 were signed by a single maintainer. That provides
+> The five roles for v1.0.0 and v1.0.1 were signed by a single maintainer. That provides
 > supply-chain integrity — not separation of duties, and not independent
 > review. See [`docs/review/v1.0.0.md`](review/v1.0.0.md).
 
 ## Verify a published release
 
-Download `effectgate-preview-1.0.0.tgz` from the
-[v1.0.0 release](https://github.com/Miniks040506/EffectGate/releases/tag/v1.0.0),
+Download `effectgate-preview-1.0.1.tgz` from the
+[v1.0.1 release](https://github.com/Miniks040506/EffectGate/releases/tag/v1.0.1),
 then verify its SHA-256 digest:
 
 ```text
-44aa32776701e22d8dab8e76307ea9013fd528a39493a63419545a3aed4f9c20
+6a90342a28d396902c1b6294c6342acc96fe2c7490d53a55365ecc484edd7a66
 ```
 
-On Windows use `Get-FileHash effectgate-preview-1.0.0.tgz -Algorithm SHA256`.
-On Linux use `sha256sum effectgate-preview-1.0.0.tgz`; on macOS use
-`shasum -a 256 effectgate-preview-1.0.0.tgz`. The release also publishes
+On Windows use `Get-FileHash effectgate-preview-1.0.1.tgz -Algorithm SHA256`.
+On Linux use `sha256sum effectgate-preview-1.0.1.tgz`; on macOS use
+`shasum -a 256 effectgate-preview-1.0.1.tgz`. The release also publishes
 `SHA256SUMS`, a CycloneDX SBOM, source-bound provenance, qualification evidence,
 five Ed25519 approvals, their public keys, and the final sign-off evidence.
 
 After verification, install the downloaded file with:
 
 ```powershell
-npm install --global ./effectgate-preview-1.0.0.tgz
+npm install --global ./effectgate-preview-1.0.1.tgz
 ```
 
 ### What the package contains
@@ -46,7 +46,7 @@ The manual `Tier 1 package qualification` workflow pins Node `24.14.0` and
 qualifies Linux x64, Linux arm64, Windows x64, and macOS x64. GitHub's concrete
 Linux runner images are Ubuntu 24.04 for x64 and arm64; this is runner evidence,
 not an Ubuntu-only runtime restriction. Each cell runs the full suite, then
-installs the pinned `0.17.0` package, upgrades to `1.0.0`, rolls back, and
+installs the pinned `0.17.0` package, upgrades to `1.0.1`, rolls back, and
 upgrades again while proving external state remains unchanged. The workflow
 uses `workflow_dispatch` only, so pushes do not start hosted runners
 automatically.

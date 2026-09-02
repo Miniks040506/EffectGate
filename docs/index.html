@@ -107,15 +107,15 @@
         <p class="hero-copy">Install a local MCP proxy that bounds tool results and puts risky effects behind reviewable proof.</p>
         <div class="actions">
           <a class="button primary" href="#install">Install EffectGate</a>
-          <a class="button" href="https://github.com/Miniks040506/EffectGate/releases/tag/v1.0.0">View release</a>
+          <a class="button" href="https://github.com/Miniks040506/EffectGate/releases/tag/v1.0.1">View release</a>
         </div>
       </div>
       <div class="terminal" aria-label="EffectGate installation example">
         <div class="terminal-bar"><span>local terminal</span><span>Node.js 24+</span></div>
-        <pre><span class="prompt">$</span> npm install --global effectgate-preview@1.0.0
+        <pre><span class="prompt">$</span> npm install --global effectgate-preview@1.0.1
 
 <span class="prompt">$</span> effectgate --version
-<span class="result">1.0.0</span>
+<span class="result">1.0.1</span>
 
 <span class="prompt">$</span> claude mcp add --transport stdio \
     effectgate -- effectgate mcp serve
@@ -137,7 +137,7 @@
       <p class="section-intro">The npm package is the shortest route. Native packages contain the same dependency-free runtime and require <strong>Node.js 24 or newer</strong>.</p>
       <div class="install-layout">
         <div class="install-nav">
-          <p>Select your platform. Downloads point to the qualified v1.0.0 GitHub release.</p>
+          <p>Select your platform. Downloads point to the qualified v1.0.1 GitHub release.</p>
           <div class="tab-list" role="tablist" aria-label="Installation method">
             <button class="tab" role="tab" aria-selected="true" aria-controls="install-npm" id="tab-npm">npm</button>
             <button class="tab" role="tab" aria-selected="false" aria-controls="install-windows" id="tab-windows" tabindex="-1">Windows</button>
@@ -149,35 +149,35 @@
         <div>
           <div class="tab-panel" id="install-npm" role="tabpanel" aria-labelledby="tab-npm">
             <h3>Install from npm</h3>
-            <div class="code-block"><button class="copy" type="button">Copy</button><pre>npm install --global effectgate-preview@1.0.0
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>npm install --global effectgate-preview@1.0.1
 effectgate --version</pre></div>
-            <p class="note"><strong>Expected:</strong> the version command prints <code>1.0.0</code>. The package has no install lifecycle script.</p>
+            <p class="note"><strong>Expected:</strong> the version command prints <code>1.0.1</code>. The package has no install lifecycle script.</p>
           </div>
           <div class="tab-panel" id="install-windows" role="tabpanel" aria-labelledby="tab-windows" hidden>
             <h3>Install the Windows x64 MSI</h3>
-            <div class="code-block"><button class="copy" type="button">Copy</button><pre>msiexec /i effectgate-preview-1.0.0-x64.msi
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>msiexec /i effectgate-preview-1.0.1-x64.msi
 effectgate --version</pre></div>
-            <p><a href="https://github.com/Miniks040506/EffectGate/releases/download/v1.0.0/effectgate-preview-1.0.0-x64.msi">Download MSI</a> and verify its checksum from the release.</p>
+            <p><a href="https://github.com/Miniks040506/EffectGate/releases/download/v1.0.1/effectgate-preview-1.0.1-x64.msi">Download MSI</a> and verify its checksum from the release.</p>
             <p class="note warning"><strong>Unsigned preview:</strong> Windows SmartScreen may warn. Inspect the checksum before continuing.</p>
           </div>
           <div class="tab-panel" id="install-macos" role="tabpanel" aria-labelledby="tab-macos" hidden>
             <h3>Install the universal macOS package</h3>
-            <div class="code-block"><button class="copy" type="button">Copy</button><pre>sudo installer -pkg effectgate-preview-1.0.0-universal.pkg -target /
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>sudo installer -pkg effectgate-preview-1.0.1-universal.pkg -target /
 effectgate --version</pre></div>
-            <p><a href="https://github.com/Miniks040506/EffectGate/releases/download/v1.0.0/effectgate-preview-1.0.0-universal.pkg">Download PKG</a> and verify its checksum from the release.</p>
+            <p><a href="https://github.com/Miniks040506/EffectGate/releases/download/v1.0.1/effectgate-preview-1.0.1-universal.pkg">Download PKG</a> and verify its checksum from the release.</p>
             <p class="note warning"><strong>Unsigned preview:</strong> the package is not Apple-notarized, so Gatekeeper may warn.</p>
           </div>
           <div class="tab-panel" id="install-deb" role="tabpanel" aria-labelledby="tab-deb" hidden>
             <h3>Install on Debian-family Linux</h3>
-            <div class="code-block"><button class="copy" type="button">Copy</button><pre>sudo apt install ./effectgate-preview_1.0.0_all.deb
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>sudo apt install ./effectgate-preview_1.0.1_all.deb
 effectgate --version</pre></div>
-            <p><a href="https://github.com/Miniks040506/EffectGate/releases/download/v1.0.0/effectgate-preview_1.0.0_all.deb">Download DEB</a>. This package is suitable for Debian-family distributions, not Linux as a whole.</p>
+            <p><a href="https://github.com/Miniks040506/EffectGate/releases/download/v1.0.1/effectgate-preview_1.0.1_all.deb">Download DEB</a>. This package is suitable for Debian-family distributions, not Linux as a whole.</p>
           </div>
           <div class="tab-panel" id="install-rpm" role="tabpanel" aria-labelledby="tab-rpm" hidden>
             <h3>Install on RPM-family Linux</h3>
-            <div class="code-block"><button class="copy" type="button">Copy</button><pre>sudo dnf install ./effectgate-preview-1.0.0-1.noarch.rpm
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>sudo dnf install ./effectgate-preview-1.0.1-1.noarch.rpm
 effectgate --version</pre></div>
-            <p><a href="https://github.com/Miniks040506/EffectGate/releases/download/v1.0.0/effectgate-preview-1.0.0-1.noarch.rpm">Download RPM</a>. Use your distribution's local RPM command if it does not ship <code>dnf</code>.</p>
+            <p><a href="https://github.com/Miniks040506/EffectGate/releases/download/v1.0.1/effectgate-preview-1.0.1-1.noarch.rpm">Download RPM</a>. Use your distribution's local RPM command if it does not ship <code>dnf</code>.</p>
           </div>
         </div>
       </div>
