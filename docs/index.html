@@ -107,15 +107,15 @@
         <p class="hero-copy">Install a local MCP proxy that bounds tool results and puts risky effects behind reviewable proof.</p>
         <div class="actions">
           <a class="button primary" href="#install">Install EffectGate</a>
-          <a class="button" href="https://github.com/Miniks040506/EffectGate/releases/tag/v1.0.1">View release</a>
+          <a class="button" href="https://github.com/Miniks040506/EffectGate/releases/tag/v1.0.2">View release</a>
         </div>
       </div>
       <div class="terminal" aria-label="EffectGate installation example">
         <div class="terminal-bar"><span>local terminal</span><span>Node.js 24+</span></div>
-        <pre><span class="prompt">$</span> npm install --global effectgate-preview@1.0.1
+        <pre><span class="prompt">$</span> npm install --global effectgate-preview@1.0.2
 
 <span class="prompt">$</span> effectgate --version
-<span class="result">1.0.1</span>
+<span class="result">1.0.2</span>
 
 <span class="prompt">$</span> claude mcp add --transport stdio \
     effectgate -- effectgate mcp serve
@@ -125,7 +125,7 @@
     </div>
 
     <div class="proof-strip wrap" aria-label="Release facts">
-      <div class="proof"><strong>171 / 171</strong><span>dependency-free tests passing</span></div>
+      <div class="proof"><strong>175 / 175</strong><span>dependency-free tests passing</span></div>
       <div class="proof"><strong>4 KiB</strong><span>default source-content page</span></div>
       <div class="proof"><strong>45.7%</strong><span>less input context in the latest paired case</span></div>
       <div class="proof"><strong>Local</strong><span>stdio transport, no network listener</span></div>
@@ -137,7 +137,7 @@
       <p class="section-intro">The npm package is the shortest route. Native packages contain the same dependency-free runtime and require <strong>Node.js 24 or newer</strong>.</p>
       <div class="install-layout">
         <div class="install-nav">
-          <p>Select your platform. Downloads point to the qualified v1.0.1 GitHub release.</p>
+          <p>npm installs v1.0.2. Native downloads remain on the qualified v1.0.1 release until the new packages finish platform qualification.</p>
           <div class="tab-list" role="tablist" aria-label="Installation method">
             <button class="tab" role="tab" aria-selected="true" aria-controls="install-npm" id="tab-npm">npm</button>
             <button class="tab" role="tab" aria-selected="false" aria-controls="install-windows" id="tab-windows" tabindex="-1">Windows</button>
@@ -149,9 +149,9 @@
         <div>
           <div class="tab-panel" id="install-npm" role="tabpanel" aria-labelledby="tab-npm">
             <h3>Install from npm</h3>
-            <div class="code-block"><button class="copy" type="button">Copy</button><pre>npm install --global effectgate-preview@1.0.1
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>npm install --global effectgate-preview@1.0.2
 effectgate --version</pre></div>
-            <p class="note"><strong>Expected:</strong> the version command prints <code>1.0.1</code>. The package has no install lifecycle script.</p>
+            <p class="note"><strong>Expected:</strong> the version command prints <code>1.0.2</code>. The package has no install lifecycle script.</p>
           </div>
           <div class="tab-panel" id="install-windows" role="tabpanel" aria-labelledby="tab-windows" hidden>
             <h3>Install the Windows x64 MSI</h3>
@@ -185,17 +185,36 @@ effectgate --version</pre></div>
 
     <section id="connect" class="section-rule">
       <div class="wrap">
-        <h2>Connect in five minutes.</h2>
-        <p class="section-intro">Start with the deterministic fixture. It is safe for learning and proves that your client can discover and call EffectGate tools.</p>
+        <h2>Connect once, then ask normally.</h2>
+        <p class="section-intro">User scope makes one EffectGate server available to every project and future Claude Code session. Start with the deterministic fixture, then connect only reviewed real backends.</p>
         <div class="steps">
           <article class="step"><div>
-            <h3>Add EffectGate to Claude Code</h3>
-            <p>Run this once. Claude Code will launch EffectGate over stdio when it needs the server.</p>
-            <div class="code-block"><button class="copy" type="button">Copy</button><pre>claude mcp add --transport stdio effectgate -- effectgate mcp serve</pre></div>
+            <h3>Connect EffectGate once</h3>
+            <p>This command defaults to user scope and does not need to be repeated for each project or session.</p>
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>effectgate connect claude
+effectgate connect claude --check</pre></div>
+            <p class="note"><strong>What it changes:</strong> it saves the same registration as <code>claude mcp add --transport stdio effectgate --scope user -- effectgate mcp serve</code>; it does not edit your permission settings.</p>
           </div></article>
           <article class="step"><div>
-            <h3>Or configure any MCP client</h3>
-            <p>Add this server object to the MCP configuration used by your editor or agent.</p>
+            <h3>Allow only this server</h3>
+            <p>Run <code>/permissions</code> in Claude Code and allow <code>mcp__effectgate__*</code>, or merge this rule into your existing user settings. Do not overwrite other settings.</p>
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>{
+  "permissions": {
+    "allow": ["mcp__effectgate__*"]
+  }
+}</pre></div>
+            <p class="note">User settings live at <code>~/.claude/settings.json</code>. Project scope uses <code>.claude/settings.json</code>; local scope uses <code>.claude/settings.local.json</code>.</p>
+          </div></article>
+          <article class="step"><div>
+            <h3>Ask in natural language</h3>
+            <p>Claude receives routing guidance from EffectGate. You describe the result; Claude bootstraps the Context View and chooses search, projection, or continuation.</p>
+            <div class="code-block"><button class="copy" type="button">Copy</button><pre>Use EffectGate. Analyze the demo log, find line 150,
+and include its citation. Choose the appropriate
+EffectGate retrieval operation yourself.</pre></div>
+          </div></article>
+          <article class="step"><div>
+            <h3>Or configure another MCP client</h3>
+            <p>Point any stdio MCP client at <code>effectgate mcp serve</code>. The bundled fixture opens no port and contains synthetic data only.</p>
             <div class="code-block"><button class="copy" type="button">Copy</button><pre>{
   "mcpServers": {
     "effectgate": {
@@ -204,18 +223,6 @@ effectgate --version</pre></div>
     }
   }
 }</pre></div>
-          </div></article>
-          <article class="step"><div>
-            <h3>Run the fixture tour</h3>
-            <p>Ask your agent to call <code>fixture__echo</code>, then <code>fixture__large_log</code> with <code>{"lines": 200}</code>. Continue with the cursor and artifact ID returned by the result.</p>
-            <div class="code-block"><button class="copy" type="button">Copy</button><pre>Call fixture__large_log with {"lines": 200}.
-Then use effectgate_search on its artifact_id to find "line 150".
-Show the cited byte range and content digest.</pre></div>
-          </div></article>
-          <article class="step"><div>
-            <h3>Try retrieval and projection</h3>
-            <p>Use <code>effectgate_fetch</code> while <code>more_available</code> is true. Request fixture output as JSONL, CSV, or Markdown, then pass its artifact ID to <code>effectgate_project</code>.</p>
-            <p class="note"><strong>Redaction demo:</strong> set <code>includeSecrets</code> to <code>true</code>. The fixture inserts synthetic sentinels only. Never paste a real credential into a demo.</p>
           </div></article>
         </div>
       </div>
@@ -241,6 +248,15 @@ Show the cited byte range and content digest.</pre></div>
             <p>Create the wrapper below if you want a reusable <code>/effectgate</code> or one-turn <code>/no-effectgate</code> command.</p>
           </div>
         </div>
+
+        <div class="code-block"><button class="copy" type="button">Copy</button><pre># Text or logs
+Use EffectGate. Find the root cause in the connected logs and cite the evidence.
+
+# Structured records
+Use EffectGate. Find failed customer records and return only id, status, and reason.
+
+# Mixed development task
+Build this app. Use EffectGate for connected large data, and use normal tools for coding and testing.</pre></div>
 
         <p class="note warning"><strong>Syntax truth:</strong> <code>@</code> refers to files and other host resources. <code>$ARGUMENTS</code> is expanded inside a Claude skill. Neither one invokes an MCP server. EffectGate 1.0 does not ship a Claude plugin or slash skill. A slash command works only after you install the optional wrapper described below.</p>
         <p class="note"><strong>Connected does not mean used on every prompt:</strong> EffectGate tools become available to Claude, often through deferred Tool Search, but EffectGate does not intercept native tools. Its paging, citation, redaction, and withholding rules apply only after Claude calls a tool through the EffectGate server.</p>
@@ -365,7 +381,7 @@ call it with {"lines":200}, then search the retained artifact for "line 150".</p
                 <div class="code-block" style="margin-top:14px"><button class="copy" type="button">Copy</button><pre>Use the EffectGate MCP server and its admitted lookup tool.
 Do not call the native backend directly. If no reviewed capability matches,
 stop and tell me instead of bypassing EffectGate.</pre></div>
-                <p class="note"><strong>Bootstrap rule:</strong> a source-prefixed tool published by the EffectGate server is the admitted, gated entry point—not a bypass. Call it first; when its result is large, EffectGate returns the <code>artifact_id</code> used by search, projection, and fetch. Never guess an artifact ID.</p>
+                <p class="note"><strong>Bootstrap rule:</strong> a source-prefixed tool published by the EffectGate server is the admitted, gated entry point, not a bypass. Call it first; when its result is large, EffectGate returns the <code>artifact_id</code> used by search, projection, and fetch. Never guess an artifact ID.</p>
                 <p>EffectGate refuses writes, dynamic catalogs, missing safe-read annotations, executable drift, source drift, identity drift, and calls to names the client never discovered.</p>
               </div>
             </details>
@@ -510,6 +526,7 @@ claude mcp remove effectgate</pre></div>
           </div>
           <p><strong>P1 typed</strong> keeps each tool's typed contract and lets native Tool Search defer it. <strong>P2 compact</strong> exposes four generic search, describe, call, and fetch contracts; it suits very large catalogs but may need more discovery steps.</p>
           <p class="note"><strong>Current overall estimate:</strong> across the three observed real-Claude task groups, P1 is 38.3% lower, P2 is 10.9% lower, and their combined input is 24.6% lower than matched native baselines. This small sample is evidence, not a universal saving guarantee. <a href="https://github.com/Miniks040506/EffectGate/blob/main/poc/evidence/claude-code-target-partial-cell-json-2.1.251.json">Inspect the content-free record</a>.</p>
+          <p class="note"><strong>Automatic routing check:</strong> Claude Code 2.1.259 independently selected search, JSONL projection, sequential fetch, and a mixed native/EffectGate route in four of four real sessions. <a href="https://github.com/Miniks040506/EffectGate/blob/main/poc/evidence/claude-code-routing-2.1.259.json">Inspect the sanitized qualification</a>.</p>
         </div>
         <div class="terminal" aria-label="Content-free record of Claude Code using EffectGate">
           <div class="terminal-bar"><span>claude-code / real run</span><span>BENCH-JSON-002 · P1</span></div>

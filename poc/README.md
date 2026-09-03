@@ -39,6 +39,19 @@ effectgate --version
 effectgate mcp serve
 ```
 
+Connect Claude Code once at user scope, verify the saved registration without
+calling a model, then ask normally:
+
+```powershell
+effectgate connect claude
+effectgate connect claude --check
+```
+
+The command does not overwrite Claude settings. It prints the exact
+`mcp__effectgate__*` permission rule to merge through `/permissions` or the
+appropriate Claude settings file. Use `--scope project` or `--scope local`
+when the server should not be available in every project.
+
 The packed artifact is dependency-free and contains only runtime source, this
 guide, package metadata, and the Apache-2.0 license. The automated package
 qualification packs it offline, installs that exact tarball into a clean
@@ -82,7 +95,7 @@ node /absolute/path/to/EffectGate/poc/src/proxy/effectgate.mjs mcp skill serve -
 
 Package qualification is defined in
 `.github/workflows/tier1-package.yml`. It is manual-only and runs the full
-suite plus the pinned `0.17.0` → `1.0.0` → `0.17.0` → `1.0.0` package
+suite plus the pinned `1.0.1` → `1.0.2` → `1.0.1` → `1.0.2` package
 rehearsal on Linux x64, Linux arm64, Windows x64, and macOS x64. The concrete
 Linux runner images use Ubuntu 24.04, but the Node package has no Ubuntu-only
 runtime dependency. Each cell emits a machine-readable evidence line and

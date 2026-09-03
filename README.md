@@ -97,8 +97,8 @@ dependencies.
 ### 1. Install
 
 ```powershell
-npm install --global effectgate-preview@1.0.1
-effectgate --version   # must print 1.0.1
+npm install --global effectgate-preview@1.0.2
+effectgate --version   # must print 1.0.2
 ```
 
 <details>
@@ -128,9 +128,24 @@ To check the digest yourself before installing anything, see
 
 ### 2. Connect your agent
 
+Connect once at user scope and reuse the same server in every project and
+future Claude Code session:
+
 ```powershell
-claude mcp add --transport stdio effectgate -- effectgate mcp serve
+effectgate connect claude
+effectgate connect claude --check
 ```
+
+The command prints the exact server-only permission rule and settings snippet.
+It never overwrites Claude settings. If you prefer the underlying Claude Code
+command, use:
+
+```powershell
+claude mcp add --transport stdio effectgate --scope user -- effectgate mcp serve
+```
+
+Use `--scope project` or `--scope local` only when you do not want the server
+available in every project.
 
 Any MCP client works — point it at the stdio process:
 
@@ -150,14 +165,23 @@ fixture. It opens no port.
 
 ### 3. Take the tour
 
-Ask your agent to work through the fixture:
+The normal interface is a short request, not an internal tool name:
 
-1. `fixture__echo` — a small typed result passes through untouched.
-2. `fixture__large_log` with `{"lines": 200}` — get a bounded view.
-3. `effectgate_fetch` with the returned cursor while `more_available` is true.
-4. `effectgate_search` with the `artifact_id` and a literal query.
-5. Ask for `format: "jsonl"`, `"csv"`, or `"markdown"`, then project it with
-   `effectgate_project`.
+```text
+Use EffectGate. Analyze the demo log, find line 150, and include its citation.
+Choose the appropriate EffectGate retrieval operation yourself.
+```
+
+Claude should call the routed fixture first to receive a Context View, then
+select the matching operation:
+
+- text, errors and evidence use `effectgate_search`;
+- JSON, JSONL, CSV, TSV and Markdown fields use `effectgate_project`;
+- necessary sequential continuation uses `effectgate_fetch`;
+- source editing, builds and browser testing still use normal development tools.
+
+Advanced users can still name an exact tool. New users do not need to copy an
+`artifact_id`, construct a cursor or learn the internal sequence.
 
 Add `"includeSecrets": true` to watch redaction fire. The fixture inserts
 synthetic sentinels only — never substitute real credentials.
@@ -211,7 +235,7 @@ npm --prefix poc start
 - **Arguments stay private** — exact arguments are reviewable only over a
   user-local socket or named pipe, and never reach the journal.
 
-Both surfaces are covered by a dependency-free suite: **171 tests, zero
+Both surfaces are covered by a dependency-free suite: **175 tests, zero
 third-party imports**. See [Verification evidence](docs/verification.md).
 
 <details>
@@ -305,7 +329,9 @@ The percentage table above is the user-facing summary. Reproducible evidence
 is available for the [`2.1.241 READ`](poc/evidence/claude-code-target-paired-cell-2.1.241.json),
 [`2.1.251 READ`](poc/evidence/claude-code-target-paired-cell-2.1.251.json), and
 [`2.1.251 JSON`](poc/evidence/claude-code-target-partial-cell-json-2.1.251.json)
-runs. The full regression, Tier-1, and campaign accounting lives in
+runs. Four automatic routing paths also passed with
+[`Claude Code 2.1.259`](poc/evidence/claude-code-routing-2.1.259.json). The full
+regression, Tier-1, and campaign accounting lives in
 [Verification evidence](docs/verification.md).
 
 > [!CAUTION]
@@ -320,7 +346,7 @@ runs. The full regression, Tier-1, and campaign accounting lives in
 | [Interactive usage guide](https://miniks040506.github.io/EffectGate/) | Install, connect an MCP client, take the fixture tour, run protected effects, and troubleshoot |
 | [Architecture](docs/architecture.md) | Request path, invariants, every enforced bound, protocol surface, Context View contract |
 | [Connecting real backends](docs/backends.md) | Reviewed third-party stdio backends, verified-effect fixture, operator CLI |
-| [Verification evidence](docs/verification.md) | What the 171-test suite actually asserts |
+| [Verification evidence](docs/verification.md) | What the 175-test suite actually asserts |
 | [Release engineering](docs/releasing.md) | Verify, reproduce, sign, and cut a release; uninstall and purge |
 | [Native installers](docs/native-installers.md) | Qualified MSI, PKG, DEB, and RPM packaging and trust boundary |
 | [HTTP adapter preview](docs/adapters/streamable-http-json.md) | v1.1 preview: reviewed Streamable HTTP JSON bridge |
