@@ -181,7 +181,7 @@ test("native installer workflow is exact-release-bound and non-publishing", () =
   assert.doesNotMatch(source, /^\s+(?:push|pull_request):/mu);
   assert.match(
     source,
-    /EFFECTGATE_TARBALL_SHA256: 6a90342a28d396902c1b6294c6342acc96fe2c7490d53a55365ecc484edd7a66/u
+    /EFFECTGATE_TARBALL_SHA256: 9f8b288d4e2af47084cf8c4cf63d3a988b59ee7acb2b074b111a5537946a1e48/u
   );
   assert.match(source, /dotnet tool install --global wix --version 6\.0\.2/u);
   assert.match(source, /\$payload = \(Resolve-Path native\/windows\)\.Path/u);
