@@ -45,8 +45,8 @@ The package defines no install or uninstall lifecycle scripts.
 The manual `Tier 1 package qualification` workflow pins Node `24.14.0` and
 qualifies Linux x64, Linux arm64, Windows x64, and macOS x64. GitHub's concrete
 Linux runner images are Ubuntu 24.04 for x64 and arm64; this is runner evidence,
-not an Ubuntu-only runtime restriction. Each cell runs the full suite, then
-installs the pinned `0.17.0` package, upgrades to `1.0.1`, rolls back, and
+not an Ubuntu-only runtime restriction. Each v1.0.2 cell runs the full suite,
+then installs the pinned `1.0.1` package, upgrades to `1.0.2`, rolls back, and
 upgrades again while proving external state remains unchanged. The workflow
 uses `workflow_dispatch` only, so pushes do not start hosted runners
 automatically.

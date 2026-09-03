@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
+  chmodSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -172,6 +173,13 @@ test("proxy preserves the tool contract and labels its routed public tool", asyn
   assert.deepEqual(initialized.result.capabilities, {
     tools: { listChanged: false }
   });
+  assert.match(initialized.result.instructions, /asks to use EffectGate/u);
+  assert.match(initialized.result.instructions, /backend tool first/u);
+  assert.match(initialized.result.instructions, /effectgate_search/u);
+  assert.match(initialized.result.instructions, /effectgate_project/u);
+  assert.match(initialized.result.instructions, /effectgate_fetch/u);
+  assert.match(initialized.result.instructions, /Never invent artifact IDs/u);
+  assert.match(initialized.result.instructions, /normal development tools/u);
   assert.equal((await proxy.request("tools/list")).error.code, -32007);
   proxy.send({ jsonrpc: "2.0", method: "notifications/initialized" });
 
@@ -383,6 +391,12 @@ test("large text is losslessly paged through opaque Context View cursors", async
     ),
     CONTEXT_PROJECT_TOOL
   );
+  assert.match(CONTEXT_SEARCH_TOOL.description, /errors, root causes/u);
+  assert.match(CONTEXT_SEARCH_TOOL.description, /literal text/u);
+  assert.match(CONTEXT_PROJECT_TOOL.description, /selected records or fields/u);
+  assert.match(CONTEXT_PROJECT_TOOL.description, /instead of fetching/u);
+  assert.match(CONTEXT_FETCH_TOOL.description, /only when additional/u);
+  assert.match(CONTEXT_FETCH_TOOL.description, /never modify or invent/u);
   const secondPage = await proxy.request("tools/list", { cursor: "page-2" });
   const largeLog = secondPage.result.tools.find(
     (tool) => tool.name === "fixture__large_log"
@@ -2212,4 +2226,172 @@ test("the preview refuses arbitrary backend commands", () => {
   rmSync(directory, { recursive: true, force: true });
   assert.equal(corruptLedger.status, 2);
   assert.match(corruptLedger.stderr, /token ledger failed validation/);
+});
+
+test("Claude connection planning is safe, scoped, and copyable", () => {
+  const planned = spawnSync(
+    process.execPath,
+    [PROGRAM, "connect", "claude", "--name", "effectgate-data", "--dry-run"],
+    { encoding: "utf8", windowsHide: true }
+  );
+  assert.equal(planned.status, 0, planned.stderr);
+  assert.equal(planned.stderr, "");
+  assert.match(
+    planned.stdout,
+    /claude mcp add --transport stdio effectgate-data --scope user -- effectgate mcp serve/u
+  );
+  assert.match(planned.stdout, /mcp__effectgate-data__\*/u);
+  assert.match(planned.stdout, /Run \/permissions in Claude Code/u);
+  assert.match(planned.stdout, /~\/\.claude\/settings\.json/u);
+  assert.match(
+    planned.stdout,
+    /"allow": \[\s+"mcp__effectgate-data__\*"/u
+  );
+  assert.match(planned.stdout, /do not overwrite existing settings/u);
+
+  for (const [scope, settingsFile] of [
+    ["project", ".claude/settings.json"],
+    ["local", ".claude/settings.local.json"]
+  ]) {
+    const scoped = spawnSync(process.execPath, [
+      PROGRAM, "connect", "claude", "--scope", scope, "--dry-run"
+    ], { encoding: "utf8", windowsHide: true });
+    assert.equal(scoped.status, 0, scoped.stderr);
+    assert.match(scoped.stdout, new RegExp(
+      settingsFile.replaceAll(".", "\\."),
+      "u"
+    ));
+  }
+
+  for (const args of [
+    ["connect", "claude", "--scope", "global", "--dry-run"],
+    ["connect", "claude", "--name", "unsafe name", "--dry-run"],
+    ["connect", "claude", "--dry-run", "--dry-run"],
+    ["connect", "claude", "--dry-run", "--check"],
+    ["connect", "claude", "--config", "missing.json", "--dry-run"]
+  ]) {
+    const rejected = spawnSync(process.execPath, [PROGRAM, ...args], {
+      encoding: "utf8",
+      windowsHide: true
+    });
+    assert.equal(rejected.status, 2);
+    assert.match(rejected.stderr, /Usage:|config file is missing or invalid/u);
+  }
+});
+
+test("Claude connection preflight verifies readiness without model use", () => {
+  const directory = mkdtempSync(join(tmpdir(), "effectgate-claude-cli-"));
+  const windows = process.platform === "win32";
+  const fake = join(directory, windows ? "claude.cmd" : "claude");
+  writeFileSync(
+    fake,
+    windows
+      ? "@echo off\r\nif \"%1\"==\"--version\" (echo 2.1.test& exit /b 0)\r\nif \"%1\"==\"mcp\" if \"%2\"==\"get\" exit /b 0\r\nexit /b 2\r\n"
+      : "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 2.1.test; exit 0; fi\nif [ \"$1\" = mcp ] && [ \"$2\" = get ]; then exit 0; fi\nexit 2\n"
+  );
+  if (!windows) chmodSync(fake, 0o755);
+  const checked = spawnSync(
+    process.execPath,
+    [PROGRAM, "connect", "claude", "--name", "effectgate-data", "--check"],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${directory}${windows ? ";" : ":"}${process.env.PATH ?? ""}`
+      },
+      windowsHide: true
+    }
+  );
+  rmSync(directory, { recursive: true, force: true });
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.equal(checked.stderr, "");
+  assert.match(checked.stdout, /Claude Code\s+2\.1\.test OK/u);
+  assert.match(checked.stdout, /MCP registration\s+OK/u);
+  assert.match(checked.stdout, /Requested scope\s+user/u);
+  assert.match(checked.stdout, /Permission pattern\s+mcp__effectgate-data__\*/u);
+  assert.match(checked.stdout, /Permission setup:/u);
+  assert.match(checked.stdout, /Ready\s+YES/u);
+});
+
+test("local routing qualification exercises every automatic route contract", async (context) => {
+  const proxy = new RpcProcess(["mcp", "serve", "--source", "fixture"]);
+  context.after(() => proxy.stop());
+
+  const initialized = await proxy.request("initialize", {
+    protocolVersion: MCP_VERSION,
+    capabilities: {},
+    clientInfo: { name: "routing-qualification", version: "1" }
+  });
+  assert.match(initialized.result.instructions, /effectgate_search/u);
+  assert.match(initialized.result.instructions, /effectgate_project/u);
+  assert.match(initialized.result.instructions, /effectgate_fetch/u);
+  assert.match(initialized.result.instructions, /normal development tools/u);
+  proxy.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+
+  const firstPage = await proxy.request("tools/list");
+  const secondPage = await proxy.request("tools/list", { cursor: "page-2" });
+  const largeResult = secondPage.result.tools.find(
+    ({ name }) => name === "fixture__large_log"
+  );
+  assert.ok(largeResult);
+  assert.match(largeResult.description, /EffectGate-routed backend tool/u);
+
+  const logResult = await proxy.request("tools/call", {
+    name: largeResult.name,
+    arguments: { lines: 200 }
+  });
+  const logView = JSON.parse(logResult.result.content[0].text);
+  assert.match(logView.artifact_id, /^art_[a-f0-9]{64}$/u);
+  assert.equal(logView.retrieval.more_available, true);
+
+  const searched = await proxy.request("tools/call", {
+    name: CONTEXT_SEARCH_TOOL.name,
+    arguments: {
+      artifact_id: logView.artifact_id,
+      query: "000150 level=INFO",
+      context_lines: 0,
+      max_tokens: 64
+    }
+  });
+  const searchView = JSON.parse(searched.result.content[0].text);
+  assert.match(searchView.content, /000150 level=INFO/u);
+  assert.ok(searchView.citations.length > 0);
+
+  const structuredResult = await proxy.request("tools/call", {
+    name: largeResult.name,
+    arguments: { lines: 80, format: "jsonl" }
+  });
+  const structuredView = JSON.parse(structuredResult.result.content[0].text);
+  const projected = await proxy.request("tools/call", {
+    name: CONTEXT_PROJECT_TOOL.name,
+    arguments: {
+      artifact_id: structuredView.artifact_id,
+      format: "jsonl",
+      fields: ["/line", "/level"],
+      filter: { pointer: "/level", equals: "WARN" },
+      limit: 1,
+      max_tokens: 64
+    }
+  });
+  const projectionView = JSON.parse(projected.result.content[0].text);
+  assert.deepEqual(JSON.parse(projectionView.content), {
+    "/line": 1,
+    "/level": "WARN"
+  });
+  assert.equal(projectionView.record_citations.length, 1);
+
+  const fetched = await proxy.request("tools/call", {
+    name: CONTEXT_FETCH_TOOL.name,
+    arguments: { cursor: logView.retrieval.cursor }
+  });
+  const fetchedView = JSON.parse(fetched.result.content[0].text);
+  assert.ok(
+    fetchedView.citations[0].byte_start > logView.citations[0].byte_start
+  );
+  assert.deepEqual(
+    firstPage.result.tools
+      .filter(({ name }) => name.startsWith("effectgate_"))
+      .map(({ name }) => name),
+    ["effectgate_fetch", "effectgate_search", "effectgate_project"]
+  );
 });

@@ -1,4 +1,4 @@
-export const EFFECTGATE_VERSION = "1.0.1";
+export const EFFECTGATE_VERSION = "1.0.2";
 export const MAX_TOOL_RESULT_BYTES = 64 * 1024;
 export const MCP_VERSION = "2025-11-25";
 

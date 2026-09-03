@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { realpathSync } from "node:fs";
@@ -103,6 +103,16 @@ export const MAX_PENDING_REQUESTS = 64;
 export const FIXTURE_MAX_LINES = 100_000;
 export const TARGET_CORPUS_PAGE_BYTES = 128 * 1024;
 const MAX_ID_BYTES = 128;
+const MCP_ROUTING_INSTRUCTIONS =
+  "When the user asks to use EffectGate, prefer this server for matching " +
+  "backend data operations. Call an EffectGate-routed backend tool first " +
+  "to obtain the Context View artifact_id. Use effectgate_search for " +
+  "literal text, errors, identifiers, occurrences, and cited evidence. Use " +
+  "effectgate_project for records or fields in JSON, JSONL, CSV, TSV, or " +
+  "Markdown. Use effectgate_fetch only when additional sequential context " +
+  "is necessary and only with the authentic returned cursor. Never invent " +
+  "artifact IDs or cursors, and preserve citations in evidence-based claims. " +
+  "Use normal development tools for work outside the connected backend.";
 const CURSOR_INPUT_PATTERN = new RegExp(CURSOR_PATTERN, "u");
 const TOKEN_LEDGER_PROFILES = new Set([
   "native_default",
@@ -112,7 +122,9 @@ const TOKEN_LEDGER_PROFILES = new Set([
   "eager_diagnostic"
 ]);
 const SERVE_USAGE =
-  "Usage: effectgate [--version] | init|doctor|status|receipt|uninstall|" +
+  "Usage: effectgate [--version] | connect claude [--name NAME] " +
+  "[--scope local|project|user] [--config FILE] [--dry-run|--check] | " +
+  "init|doctor|status|receipt|uninstall|" +
   "purge|backup|restore|rollback ... | fixture | " +
   "mcp skill serve --config FILE | " +
   "mcp serve [--source NAME | --config FILE] " +
@@ -298,7 +310,10 @@ export const CONTEXT_FETCH_TOOL = Object.freeze({
   name: "effectgate_fetch",
   title: "Fetch Context View",
   description:
-    "Fetches the next bounded page using an authenticated EffectGate cursor.",
+    "Continues a bounded Context View using its authenticated cursor. Use " +
+    "only when additional sequential source context is necessary; prefer " +
+    "effectgate_search or effectgate_project when they can answer directly, " +
+    "and never modify or invent the returned cursor.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -319,7 +334,10 @@ export const CONTEXT_SEARCH_TOOL = Object.freeze({
   name: "effectgate_search",
   title: "Search Context Artifact",
   description:
-    "Returns a bounded, cited context window for a literal artifact match.",
+    "Searches a retained EffectGate artifact for literal text and returns a " +
+    "bounded, cited context window. Prefer this for errors, root causes, " +
+    "identifiers, occurrences, matching log lines, or textual evidence. " +
+    "Requires the artifact_id returned by a Context View.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -355,7 +373,11 @@ export const CONTEXT_PROJECT_TOOL = Object.freeze({
   name: "effectgate_project",
   title: "Project Context Artifact",
   description:
-    "Returns a bounded JSON/JSONL, CSV/TSV, or Markdown projection.",
+    "Extracts selected records or fields from a retained EffectGate artifact. " +
+    "Prefer this for structured JSON, JSONL, CSV, TSV, or Markdown records, " +
+    "attributes, columns, identifiers, statuses, or summaries instead of " +
+    "fetching the entire artifact. Requires the artifact_id returned by a " +
+    "Context View.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -1151,6 +1173,152 @@ function parseServeArguments(args) {
   };
 }
 
+function claudePermissionGuidance(name, scope) {
+  const pattern = `mcp__${name}__*`;
+  const settingsFile = scope === "user"
+    ? "~/.claude/settings.json"
+    : scope === "project"
+      ? ".claude/settings.json"
+      : ".claude/settings.local.json";
+  return [
+    "Permission setup:",
+    `1. Run /permissions in Claude Code and allow ${pattern}`,
+    `2. Or merge this into ${settingsFile} (do not overwrite existing settings):`,
+    JSON.stringify({ permissions: { allow: [pattern] } }, null, 2)
+  ].join("\n");
+}
+
+function connectClaude(args) {
+  let name = "effectgate";
+  let scope = "user";
+  let configFile;
+  let dryRun = false;
+  let check = false;
+  const seen = new Set();
+
+  for (let index = 0; index < args.length; index += 1) {
+    const option = args[index];
+    if (option === "--dry-run" && !seen.has(option)) {
+      dryRun = true;
+      seen.add(option);
+      continue;
+    }
+    if (option === "--check" && !seen.has(option)) {
+      check = true;
+      seen.add(option);
+      continue;
+    }
+    const value = args[index + 1];
+    if (seen.has(option) || value === undefined) throw new Error(SERVE_USAGE);
+    if (option === "--name" && /^[A-Za-z0-9_-]{1,64}$/u.test(value)) {
+      name = value;
+    } else if (option === "--scope" &&
+        ["local", "project", "user"].includes(value)) {
+      scope = value;
+    } else if (option === "--config" && value.length > 0 &&
+        Buffer.byteLength(value, "utf8") <= 1024 && !value.includes("\0")) {
+      try {
+        configFile = realpathSync(value);
+        loadReviewedBackendConfig(configFile);
+      } catch {
+        throw new Error(
+          "The reviewed backend config file is missing or invalid."
+        );
+      }
+    } else {
+      throw new Error(SERVE_USAGE);
+    }
+    seen.add(option);
+    index += 1;
+  }
+  if (dryRun && check) throw new Error(SERVE_USAGE);
+
+  const claudeArgs = [
+    "mcp", "add", "--transport", "stdio", name, "--scope", scope,
+    "--", "effectgate", "mcp", "serve",
+    ...(configFile === undefined ? [] : ["--config", configFile])
+  ];
+  const quote = (value) => /^[A-Za-z0-9_./:\\-]+$/u.test(value)
+    ? value
+    : `'${value.replaceAll("'", process.platform === "win32" ? "''" : "'\\''")}'`;
+  const commandLine = ["claude", ...claudeArgs].map(quote).join(" ");
+  const permission = `mcp__${name}__*`;
+  const permissionHelp = claudePermissionGuidance(name, scope);
+  if (check) {
+    const run = (windowsCommand, unixArgs) => process.platform === "win32"
+      ? spawnSync(process.env.ComSpec ?? "cmd.exe", [
+          "/d", "/s", "/c", windowsCommand
+        ], { encoding: "utf8", windowsHide: true })
+      : spawnSync("claude", unixArgs, {
+          encoding: "utf8",
+          windowsHide: true
+        });
+    const version = run("claude --version", ["--version"]);
+    const registration = run(
+      `claude mcp get ${name}`,
+      ["mcp", "get", name]
+    );
+    const nodeReady = Number(process.versions.node.split(".")[0]) >= 24;
+    const claudeReady = version.error === undefined && version.status === 0;
+    const registrationReady = registration.error === undefined &&
+      registration.status === 0;
+    const ready = nodeReady && claudeReady && registrationReady;
+    const claudeVersion = claudeReady
+      ? version.stdout.trim().split(/\r?\n/u)[0]
+      : "unavailable";
+    process.stdout.write([
+      `EffectGate CLI      ${EFFECTGATE_VERSION} OK`,
+      `Node.js             ${process.versions.node} ${nodeReady ? "OK" : "FAIL"}`,
+      `Claude Code         ${claudeVersion} ${claudeReady ? "OK" : "FAIL"}`,
+      `MCP registration    ${registrationReady ? "OK" : "FAIL"}`,
+      `Requested scope     ${scope}`,
+      `Backend config      ${configFile === undefined ? "bundled demo fixture" : "verified"}`,
+      `Permission pattern  ${permission}`,
+      `Ready               ${ready ? "YES" : "NO"}`,
+      "",
+      permissionHelp,
+      ""
+    ].join("\n"));
+    return ready ? 0 : 1;
+  }
+  if (dryRun) {
+    process.stdout.write(
+      `Connect command:\n${commandLine}\n\n${permissionHelp}\n`
+    );
+    return 0;
+  }
+
+  const result = process.platform === "win32"
+    ? spawnSync(process.env.ComSpec ?? "cmd.exe", [
+        "/d", "/s", "/c",
+        configFile === undefined
+          ? `claude mcp add --transport stdio ${name} --scope ${scope} -- effectgate mcp serve`
+          : `claude mcp add --transport stdio ${name} --scope ${scope} -- effectgate mcp serve --config \"%EFFECTGATE_CONNECT_CONFIG%\"`
+      ], {
+        env: {
+          ...process.env,
+          ...(configFile === undefined
+            ? {}
+            : { EFFECTGATE_CONNECT_CONFIG: configFile })
+        },
+        stdio: "inherit",
+        windowsHide: true
+      })
+    : spawnSync("claude", claudeArgs, {
+        stdio: "inherit",
+        windowsHide: true
+      });
+  if (result.error) {
+    throw new Error("Claude Code CLI is unavailable; install it and ensure `claude` is on PATH.");
+  }
+  if (result.status !== 0) return result.status ?? 2;
+  process.stdout.write(
+    `EffectGate MCP '${name}' is connected at ${scope} scope.\n` +
+    `${permissionHelp}\n`
+  );
+  return 0;
+}
+
 export function runProxy(args) {
   const {
     source: requestedSource,
@@ -1749,6 +1917,7 @@ export function runProxy(args) {
                 name: "effectgate-preview",
                 version: EFFECTGATE_VERSION
               },
+              instructions: MCP_ROUTING_INSTRUCTIONS,
               _meta: {
                 "dev.effectgate/nativeDeferral": deferralDecision
               }
@@ -2272,6 +2441,11 @@ export async function main(args = process.argv.slice(2)) {
       "../operator/operator-cli.mjs"
     );
     process.exitCode = await runOperatorCli(args);
+    return;
+  }
+
+  if (args[0] === "connect" && args[1] === "claude") {
+    process.exitCode = connectClaude(args.slice(2));
     return;
   }
 

@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 env:
-  EFFECTGATE_PREVIOUS_COMMIT: bb44512bb64b68193cb7cfc815f147a7f6c61967
+  EFFECTGATE_PREVIOUS_COMMIT: 7d210e289bc0c0b393e0fae1c8221a0f4f07195c
 
 jobs:
   package:

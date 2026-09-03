@@ -2,6 +2,24 @@
 
 All notable changes to EffectGate are documented here.
 
+## 1.0.2 — 2026-09-03
+
+### Added
+
+- Adds `effectgate connect claude` with user-scope defaults, safe dry-run
+  output, reviewed-backend configuration, and a model-free readiness check.
+- Publishes MCP routing guidance so Claude can bootstrap a Context View and
+  choose search, structured projection, or sequential continuation itself.
+
+### Changed
+
+- Makes retrieval descriptions task-oriented without changing tool contracts.
+- Updates the README and interactive guide with install, connection,
+  natural-language invocation, exact-tool, and one-turn disable paths.
+- Qualifies automatic routing with four real Claude Code 2.1.259 sessions:
+  text search, JSONL projection, sequential fetch, and mixed native/EffectGate
+  work.
+
 ## 1.0.1 — 2026-09-02
 
 ### Fixed

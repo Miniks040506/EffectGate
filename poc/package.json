@@ -1,6 +1,6 @@
 {
   "name": "effectgate-preview",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Evidence-gated MCP context and effect control runtime",
   "license": "Apache-2.0",
   "type": "module",
@@ -43,6 +43,7 @@
     "release:approve": "node src/release/release-approval.mjs approve",
     "release:signoff": "node src/release/release-approval.mjs verify",
     "test": "node --test --test-concurrency=1 test/*.test.mjs",
+    "test:routing": "node --test --test-concurrency=1 --test-name-pattern=\"local routing qualification\" test/effectgate.test.mjs",
     "test:security": "node --test test/security-fuzz.test.mjs test/security-resilience.test.mjs test/supply-chain.test.mjs",
     "test:native": "node --test test/native-package-stage.test.mjs"
   }
