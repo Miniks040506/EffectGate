@@ -1,5 +1,5 @@
 Name:           effectgate-preview
-Version:        1.0.1
+Version:        1.0.2
 Release:        1%{?dist}
 Summary:        Evidence-gated MCP context and effect control runtime
 License:        Apache-2.0
@@ -26,6 +26,9 @@ cp -a usr %{buildroot}/
 /usr/lib/effectgate-preview
 
 %changelog
+* Thu Sep 03 2026 EffectGate maintainers <noreply@github.com> - 1.0.2-1
+- Add one-command Claude connection and automatic routing guidance
+
 * Wed Sep 02 2026 EffectGate maintainers <noreply@github.com> - 1.0.1-1
 - Clarify routed target-corpus bootstrap
 

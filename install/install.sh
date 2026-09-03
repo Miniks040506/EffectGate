@@ -1,17 +1,17 @@
 #!/usr/bin/env sh
 set -eu
 
-version="1.0.1"
+version="1.0.2"
 check="false"
 for argument in "$@"; do
   case "$argument" in
     --check) check="true" ;;
-    1.0.1) version="$argument" ;;
-    *) echo "Usage: install.sh [1.0.1] [--check]" >&2; exit 2 ;;
+    1.0.2) version="$argument" ;;
+    *) echo "Usage: install.sh [1.0.2] [--check]" >&2; exit 2 ;;
   esac
 done
 
-expected_sha256="6a90342a28d396902c1b6294c6342acc96fe2c7490d53a55365ecc484edd7a66"
+expected_sha256="9f8b288d4e2af47084cf8c4cf63d3a988b59ee7acb2b074b111a5537946a1e48"
 package_name="effectgate-preview-$version.tgz"
 package_url="https://github.com/Miniks040506/EffectGate/releases/download/v$version/$package_name"
 

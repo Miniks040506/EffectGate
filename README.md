@@ -107,7 +107,7 @@ effectgate --version   # must print 1.0.2
 <br>
 
 Qualified MSI, PKG, DEB, and RPM packages are attached to the
-[v1.0.1 release](https://github.com/Miniks040506/EffectGate/releases/tag/v1.0.1).
+[v1.0.2 release](https://github.com/Miniks040506/EffectGate/releases/tag/v1.0.2).
 They contain the same dependency-free CLI and do not run npm during install.
 
 The repository install scripts download only the pinned release tarball, check

@@ -6,30 +6,30 @@ five-role Ed25519 sign-off. This document covers verifying a published release,
 reproducing it, and cutting a new one.
 
 > [!NOTE]
-> The five roles for v1.0.0 and v1.0.1 were signed by a single maintainer. That provides
+> The five roles for v1.0.0 through v1.0.2 were signed by a single maintainer. That provides
 > supply-chain integrity — not separation of duties, and not independent
 > review. See [`docs/review/v1.0.0.md`](review/v1.0.0.md).
 
 ## Verify a published release
 
-Download `effectgate-preview-1.0.1.tgz` from the
-[v1.0.1 release](https://github.com/Miniks040506/EffectGate/releases/tag/v1.0.1),
+Download `effectgate-preview-1.0.2.tgz` from the
+[v1.0.2 release](https://github.com/Miniks040506/EffectGate/releases/tag/v1.0.2),
 then verify its SHA-256 digest:
 
 ```text
-6a90342a28d396902c1b6294c6342acc96fe2c7490d53a55365ecc484edd7a66
+9f8b288d4e2af47084cf8c4cf63d3a988b59ee7acb2b074b111a5537946a1e48
 ```
 
-On Windows use `Get-FileHash effectgate-preview-1.0.1.tgz -Algorithm SHA256`.
-On Linux use `sha256sum effectgate-preview-1.0.1.tgz`; on macOS use
-`shasum -a 256 effectgate-preview-1.0.1.tgz`. The release also publishes
+On Windows use `Get-FileHash effectgate-preview-1.0.2.tgz -Algorithm SHA256`.
+On Linux use `sha256sum effectgate-preview-1.0.2.tgz`; on macOS use
+`shasum -a 256 effectgate-preview-1.0.2.tgz`. The release also publishes
 `SHA256SUMS`, a CycloneDX SBOM, source-bound provenance, qualification evidence,
 five Ed25519 approvals, their public keys, and the final sign-off evidence.
 
 After verification, install the downloaded file with:
 
 ```powershell
-npm install --global ./effectgate-preview-1.0.1.tgz
+npm install --global ./effectgate-preview-1.0.2.tgz
 ```
 
 ### What the package contains

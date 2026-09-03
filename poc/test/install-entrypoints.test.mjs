@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 
 const REPOSITORY_ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const EXPECTED = {
-  version: "1.0.1",
-  package_url: "https://github.com/Miniks040506/EffectGate/releases/download/v1.0.1/effectgate-preview-1.0.1.tgz",
-  sha256: "6a90342a28d396902c1b6294c6342acc96fe2c7490d53a55365ecc484edd7a66",
+  version: "1.0.2",
+  package_url: "https://github.com/Miniks040506/EffectGate/releases/download/v1.0.2/effectgate-preview-1.0.2.tgz",
+  sha256: "9f8b288d4e2af47084cf8c4cf63d3a988b59ee7acb2b074b111a5537946a1e48",
   node_major: Number(process.versions.node.split(".")[0])
 };
 

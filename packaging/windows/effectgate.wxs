@@ -3,7 +3,7 @@
   <Package
     Name="EffectGate"
     Manufacturer="EffectGate"
-    Version="1.0.1"
+    Version="1.0.2"
     UpgradeCode="B17A5CD5-0E8D-54E5-A282-432A8FC3A76B"
     Scope="perMachine">
     <MajorUpgrade DowngradeErrorMessage="A newer EffectGate version is already installed." />

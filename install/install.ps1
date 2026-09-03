@@ -1,14 +1,14 @@
 [CmdletBinding()]
 param(
-  [ValidateSet("1.0.1")]
-  [string]$Version = "1.0.1",
+  [ValidateSet("1.0.2")]
+  [string]$Version = "1.0.2",
   [switch]$Check
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$expectedSha256 = "6a90342a28d396902c1b6294c6342acc96fe2c7490d53a55365ecc484edd7a66"
+$expectedSha256 = "9f8b288d4e2af47084cf8c4cf63d3a988b59ee7acb2b074b111a5537946a1e48"
 $packageName = "effectgate-preview-$Version.tgz"
 $packageUrl = "https://github.com/Miniks040506/EffectGate/releases/download/v$Version/$packageName"
 
