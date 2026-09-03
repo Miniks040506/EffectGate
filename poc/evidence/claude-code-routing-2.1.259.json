@@ -1,0 +1,88 @@
+{
+  "kind": "effectgate_claude_routing_qualification",
+  "schema_version": "1.0.0",
+  "task_id": "EG-050I",
+  "client": {
+    "name": "claude-code",
+    "version": "2.1.259"
+  },
+  "source_commit": "f077e913f86ae25ca70ffa6cb24ab828b7339104",
+  "configuration": {
+    "mcp_server": "effectgate",
+    "source": "fixture",
+    "strict_mcp_config": true,
+    "permission_mode": "dontAsk",
+    "model": "sonnet",
+    "effort": "medium",
+    "session_count": 4
+  },
+  "observations": [
+    {
+      "name": "text-search",
+      "terminal_reason": "completed",
+      "num_turns": 4,
+      "tool_sequence": [
+        "ToolSearch",
+        "mcp__effectgate__fixture__large_log",
+        "mcp__effectgate__effectgate_search"
+      ],
+      "result_exact": true,
+      "citation_present": true
+    },
+    {
+      "name": "structured-project",
+      "terminal_reason": "completed",
+      "num_turns": 5,
+      "tool_sequence": [
+        "ToolSearch",
+        "ToolSearch",
+        "mcp__effectgate__fixture__large_log",
+        "mcp__effectgate__effectgate_project"
+      ],
+      "result_exact": true,
+      "citation_present": true
+    },
+    {
+      "name": "sequential-fetch",
+      "terminal_reason": "completed",
+      "num_turns": 4,
+      "tool_sequence": [
+        "ToolSearch",
+        "mcp__effectgate__fixture__large_log",
+        "mcp__effectgate__effectgate_fetch"
+      ],
+      "authentic_cursor_used": true,
+      "result_exact": true,
+      "citation_present": true
+    },
+    {
+      "name": "mixed-normal-and-effectgate",
+      "terminal_reason": "completed",
+      "num_turns": 5,
+      "tool_sequence": [
+        "Read",
+        "ToolSearch",
+        "mcp__effectgate__fixture__large_log",
+        "mcp__effectgate__effectgate_search"
+      ],
+      "normal_read_exact": true,
+      "result_exact": true,
+      "citation_present": true
+    }
+  ],
+  "usage_guard": {
+    "authentication": "claude.ai",
+    "api_key_source": "none",
+    "authorized_sessions": 4,
+    "executed_sessions": 4,
+    "max_budget_usd_per_session": 0.1,
+    "metered_equivalent_usd": 0.2462432,
+    "billing_or_overage_error_count": 0,
+    "paid_usage_observed": false,
+    "note": "Metered equivalent is a client-reported estimate, not a charge."
+  },
+  "permission_denial_count": 0,
+  "raw_captures_committed": false,
+  "observed_at": "2026-09-03T16:31:49.000Z",
+  "evidence_state": "pass"
+}

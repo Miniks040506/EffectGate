@@ -71,6 +71,10 @@ const CLAUDE_251_HOST_EVIDENCE = fileURLToPath(new URL(
   "../evidence/host-compatibility-claude-code-2.1.251.json",
   import.meta.url
 ));
+const CLAUDE_259_ROUTING = fileURLToPath(new URL(
+  "../evidence/claude-code-routing-2.1.259.json",
+  import.meta.url
+));
 
 function manifest(overrides = {}) {
   return {
@@ -281,6 +285,38 @@ test("EG-014B qualifies Claude Code 2.1.251 without overage", () => {
     clientBuildDigest: qualification.client.build_digest,
     now: () => Date.parse("2026-09-01T00:00:00.000Z")
   }).reason, "qualified");
+});
+
+test("EG-050I qualifies four Claude Code 2.1.259 routing paths", () => {
+  const qualification = JSON.parse(readFileSync(CLAUDE_259_ROUTING, "utf8"));
+  const expectedRoutes = new Map([
+    ["text-search", "mcp__effectgate__effectgate_search"],
+    ["structured-project", "mcp__effectgate__effectgate_project"],
+    ["sequential-fetch", "mcp__effectgate__effectgate_fetch"],
+    ["mixed-normal-and-effectgate", "Read"]
+  ]);
+
+  assert.equal(qualification.client.version, "2.1.259");
+  assert.equal(
+    qualification.source_commit,
+    "f077e913f86ae25ca70ffa6cb24ab828b7339104"
+  );
+  assert.equal(qualification.evidence_state, "pass");
+  assert.equal(qualification.observations.length, expectedRoutes.size);
+  for (const observation of qualification.observations) {
+    assert.equal(observation.terminal_reason, "completed");
+    assert.equal(observation.result_exact, true);
+    assert.equal(observation.citation_present, true);
+    assert.ok(observation.tool_sequence.includes(expectedRoutes.get(
+      observation.name
+    )));
+  }
+  assert.equal(qualification.permission_denial_count, 0);
+  assert.equal(qualification.usage_guard.executed_sessions, 4);
+  assert.equal(qualification.usage_guard.paid_usage_observed, false);
+  assert.ok(qualification.usage_guard.metered_equivalent_usd <=
+    qualification.usage_guard.authorized_sessions *
+      qualification.usage_guard.max_budget_usd_per_session);
 });
 
 test("host evidence fails closed on mismatch, weak state, expiry, or corruption", () => {
