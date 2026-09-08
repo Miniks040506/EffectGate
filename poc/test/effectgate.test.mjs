@@ -975,6 +975,12 @@ test("CSV projection preserves records, citations, filters, and redaction", asyn
     assert.equal(view.diagnostics[0].code, "EG-PROJECT-TABLE-001");
     assert.equal(view.record_citations.length, records.length);
     assert.ok(view.budget.applied_bytes <= 256);
+    assert.deepEqual(
+      view.redactions.map(({ rule_id: ruleId }) => ruleId).sort(),
+      records.some(({ line }) => line === "41")
+        ? ["bearer-token-v1", "csv-sensitive-column-v1"]
+        : []
+    );
 
     for (let index = 0; index < records.length; index += 1) {
       const citation = view.citations[view.record_citations[index]];

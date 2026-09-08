@@ -126,26 +126,21 @@ export function buildTabularEntries({
   offsets,
   render
 }) {
-  const rendered = render(0, artifact.byteLength);
   const delimiter = format === "csv" ? "," : "\t";
   const source = parseDelimited(text, delimiter, offsets);
-  const visible =
-    rendered.redactions.length === 0
-      ? source
-      : parseDelimited(rendered.content, delimiter);
-  if (
-    source.length === 0 ||
-    source.length !== visible.length ||
-    source.some(
-      (record, index) => record.fields.length !== visible[index].fields.length
-    )
-  ) {
+  if (source.length === 0) {
     throw new InvalidDocumentProjectionError();
   }
 
+  const renderedHeader = render(source[0].byteStart, source[0].byteEnd);
+  const visibleHeaderRecord = parseDelimited(
+    renderedHeader.content,
+    delimiter
+  )[0];
   const header = source[0].fields.map(canonicalColumn);
-  const visibleHeader = visible[0].fields;
+  const visibleHeader = visibleHeaderRecord?.fields ?? [];
   if (
+    visibleHeader.length !== header.length ||
     header.some((name) => name.length === 0) ||
     new Set(header).size !== header.length ||
     visibleHeader.some((name) => name.trim().length === 0) ||
@@ -175,12 +170,16 @@ export function buildTabularEntries({
   const entries = [];
   for (let row = 1; row < source.length; row += 1) {
     const raw = source[row];
-    const redacted = visible[row];
     if (raw.fields.length !== header.length) {
       throw new InvalidDocumentProjectionError();
     }
     if (filter && raw.fields[filterIndex] !== filter.equals) continue;
-    const redactions = [];
+    const rendered = render(raw.byteStart, raw.byteEnd);
+    const redacted = parseDelimited(rendered.content, delimiter)[0];
+    if (redacted?.fields.length !== header.length) {
+      throw new InvalidDocumentProjectionError();
+    }
+    const redactions = [...rendered.redactions];
     const value = Object.fromEntries(selectedIndexes.flatMap((index) => {
       if (index >= redacted.fields.length) return [];
       const sensitive = SENSITIVE_COLUMN.test(header[index]);
@@ -213,7 +212,7 @@ export function buildTabularEntries({
   }
   return {
     entries,
-    commonRedactions: rendered.redactions,
+    commonRedactions: renderedHeader.redactions,
     mediaType: "application/x-ndjson",
     diagnostic: {
       code: "EG-PROJECT-TABLE-001",
