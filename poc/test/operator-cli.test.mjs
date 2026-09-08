@@ -272,6 +272,23 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
         assert.equal(approved.status, "approved");
         assert.equal(approved.state, "admitted");
         assert.equal(JSON.stringify(approved).includes("egl_"), false);
+        const malformedReceipt = await call(
+          "operator-operation",
+          "invalid receipt",
+          "OPERATOR_RAW_CONTENT_MUST_NOT_ESCAPE",
+          7
+        );
+        assert.equal(malformedReceipt.result.isError, true);
+        assert.equal(
+          malformedReceipt.result.structuredContent.effectgate_code,
+          "EG_EFFECT_COMMAND_INVALID"
+        );
+        assert.equal(
+          json(["status", "--config", configFile]).operations.find(
+            ({ operation_id: id }) => id === "operator-operation"
+          ).state,
+          "admitted"
+        );
         await jsonLive([
           ...approvedArguments,
           "--approver", "operator-test",
@@ -296,7 +313,7 @@ test("operator CLI initializes, diagnoses, inspects, and fails closed",
           "operator-operation",
           "operator-receipt",
           "OPERATOR_RAW_CONTENT_MUST_NOT_ESCAPE",
-          7
+          8
         );
         assert.equal(completed.result.isError, false);
         assert.equal(

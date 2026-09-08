@@ -652,11 +652,24 @@ export class SkillRpc {
     if (!validArguments) {
       failure("EG_EFFECT_COMMAND_INVALID", "effect command is invalid");
     }
+    const journal = this.#effects();
+    let receipt;
+    try {
+      receipt = EffectOperationJournal.prototype.loadReceipt.call(
+        journal,
+        params.receipt_id
+      );
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      failure("EG_EFFECT_COMMAND_INVALID", "effect command is invalid");
+    }
+    if (receipt && receipt.operation_id !== params.operation_id) {
+      failure("EG_RECEIPT_ALREADY_EXISTS", "effect receipt already exists");
+    }
     const current = this.#now();
     if (!Number.isFinite(current)) {
       failure("EG_PHASE_TRANSITION_DENIED", "Skill RPC clock is invalid");
     }
-    const journal = this.#effects();
     let operation = EffectOperationJournal.prototype.load.call(
       journal,
       params.operation_id

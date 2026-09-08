@@ -532,7 +532,9 @@ test("Skill RPC runs only runtime-owned verified effect commands", async () => {
       qualification_evidence_digest: digest("b")
     });
     const backend = new Set();
+    let invocations = 0;
     let writes = 0;
+    let verifications = 0;
     let dispatchStarted;
     const interruptedDispatch = new Promise((resolve) => {
       dispatchStarted = resolve;
@@ -565,6 +567,7 @@ test("Skill RPC runs only runtime-owned verified effect commands", async () => {
       validate: (argumentsValue) =>
         typeof argumentsValue?.patch === "string",
       invoke: async (request) => {
+        invocations += 1;
         if (request.arguments.patch !== "DO_NOT_COMMIT") {
           writes += 1;
           const key = request.headers["Idempotency-Key"];
@@ -580,17 +583,20 @@ test("Skill RPC runs only runtime-owned verified effect commands", async () => {
           }
         }
       },
-      verify: async ({ arguments: lookup }) => ({
-        data: {
-          status: ambiguous.has(lookup.idempotency_key)
-            ? "ambiguous"
-            : backend.has(lookup.idempotency_key)
-              ? "found"
-              : "not_found"
-        },
-        evidence_ref: "evidence://rpc/patch",
-        evidence_digest: digest("c")
-      })
+      verify: async ({ arguments: lookup }) => {
+        verifications += 1;
+        return {
+          data: {
+            status: ambiguous.has(lookup.idempotency_key)
+              ? "ambiguous"
+              : backend.has(lookup.idempotency_key)
+                ? "found"
+                : "not_found"
+          },
+          evidence_ref: "evidence://rpc/patch",
+          evidence_digest: digest("c")
+        };
+      }
     };
     const rpc = new SkillRpc({
       skills: [skill],
@@ -670,6 +676,23 @@ test("Skill RPC runs only runtime-owned verified effect commands", async () => {
       resource_scope: params.resource_scope,
       disclosure_digest: params.disclosure_digest
     };
+    for (const receiptId of ["invalid receipt", "rpc-command-receipt"]) {
+      await assert.rejects(
+        client.requestAsync("skills/effect/execute", {
+          ...params,
+          ...publishedArguments,
+          receipt_id: receiptId,
+          arguments: { patch: "MUST_NOT_WRITE_INVALID_RECEIPT" }
+        }),
+        (error) => error.effectgateCode === (receiptId.includes(" ")
+          ? "EG_EFFECT_COMMAND_INVALID"
+          : "EG_RECEIPT_ALREADY_EXISTS")
+      );
+    }
+    assert.equal(journal.load("rpc-command-absent"), undefined);
+    assert.equal(invocations, 1);
+    assert.equal(writes, 1);
+    assert.equal(verifications, 1);
     const mcp = new SkillMcp(rpc);
     const initialized = await mcp.dispatch({
       jsonrpc: "2.0",
@@ -724,6 +747,28 @@ test("Skill RPC runs only runtime-owned verified effect commands", async () => {
     });
     assert.equal(injected.error.code, -32602);
     assert.equal(journal.load("rpc-command-mcp-injected"), undefined);
+    const malformedReceipt = await mcp.dispatch({
+      jsonrpc: "2.0",
+      id: "malformed-receipt",
+      method: "tools/call",
+      params: {
+        name: "effectgate_apply_patch",
+        arguments: {
+          ...publishedArguments,
+          receipt_id: "invalid receipt",
+          arguments: { patch: "MUST_NOT_WRITE_INVALID_RECEIPT" }
+        }
+      }
+    });
+    assert.equal(malformedReceipt.result.isError, true);
+    assert.equal(
+      malformedReceipt.result.structuredContent.effectgate_code,
+      "EG_EFFECT_COMMAND_INVALID"
+    );
+    assert.equal(journal.load("rpc-command-absent"), undefined);
+    assert.equal(invocations, 1);
+    assert.equal(writes, 1);
+    assert.equal(verifications, 1);
     const denied = await mcp.dispatch({
       jsonrpc: "2.0",
       id: "denied",
