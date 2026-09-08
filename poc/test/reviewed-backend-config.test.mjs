@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  existsSync,
   mkdtempSync,
   rmSync,
   writeFileSync
@@ -20,6 +21,7 @@ import {
   loadReviewedBackendConfig,
   reviewedFileDigest
 } from "../src/proxy/reviewed-backend-config.mjs";
+import { COMPACT_CALL_TOOL } from "../src/proxy/compact-mux.mjs";
 import {
   LOOKUP_TOOL,
   PATCH_TOOL
@@ -34,7 +36,7 @@ const FIXTURE = join(
 const NODE_DIGEST = reviewedFileDigest(process.execPath);
 const FIXTURE_DIGEST = reviewedFileDigest(FIXTURE);
 
-function configuration(root, sentinel) {
+function configuration(root, sentinel, callMarker) {
   return {
     schema_version: "1.0.0",
     driver: REVIEWED_STDIO_DRIVER,
@@ -44,7 +46,8 @@ function configuration(root, sentinel) {
     argv: [
       FIXTURE,
       "--state", join(root, "backend.db"),
-      "--target", "docs/guide.md"
+      "--target", "docs/guide.md",
+      ...(callMarker === undefined ? [] : ["--call-marker", callMarker])
     ],
     working_directory: root,
     source_files: [
@@ -120,6 +123,47 @@ test("reviewed stdio config admits only pinned safe reads and detects drift",
       });
       assert.equal(drifted.error.code, -32004);
       assert.doesNotMatch(JSON.stringify(drifted), /source drift/u);
+    } finally {
+      await proxy.stop();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+test("compact calls reject reviewed source drift before backend dispatch",
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), "effectgate-reviewed-compact-"));
+    const sentinel = join(root, "reviewed-source.txt");
+    const callMarker = join(root, "backend-called.txt");
+    const configFile = join(root, "effectgate.json");
+    writeFileSync(sentinel, "reviewed source\n");
+    writeFileSync(
+      configFile,
+      JSON.stringify(configuration(root, sentinel, callMarker))
+    );
+
+    const proxy = new RpcProcess([
+      "mcp", "serve", "--config", configFile, "--profile", "compact_mux"
+    ], { timeoutMs: 15_000 });
+    try {
+      await proxy.request("initialize", {
+        protocolVersion: MCP_VERSION,
+        capabilities: {},
+        clientInfo: { name: "reviewed-compact-test", version: "1" }
+      });
+      proxy.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+      await proxy.request("tools/list");
+
+      writeFileSync(sentinel, "compact source drift\n");
+      const drifted = await proxy.request("tools/call", {
+        name: COMPACT_CALL_TOOL.name,
+        arguments: {
+          ref: "reviewed__filesystem.patch.lookup",
+          arguments: { idempotency_key: `eg_${"C".repeat(43)}` }
+        }
+      });
+      assert.equal(drifted.error.code, -32004);
+      assert.equal(existsSync(callMarker), false);
+      assert.doesNotMatch(JSON.stringify(drifted), /compact source drift/u);
     } finally {
       await proxy.stop();
       rmSync(root, { recursive: true, force: true });

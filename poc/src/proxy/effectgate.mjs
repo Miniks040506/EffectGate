@@ -1489,6 +1489,26 @@ export function runProxy(args) {
       return;
     }
 
+    if (method === "tools/call" && reviewedBackend !== undefined) {
+      try {
+        verifyReviewedBackendFiles(reviewedBackend, false);
+      } catch {
+        failBackend(
+          -32004,
+          "The reviewed backend changed after admission."
+        );
+        child.kill();
+        reply(
+          errorMessage(
+            clientRequest.id,
+            -32004,
+            "The reviewed backend changed after admission."
+          )
+        );
+        return;
+      }
+    }
+
     if (pending.size >= MAX_PENDING_REQUESTS) {
       reply(
         errorMessage(
@@ -2363,25 +2383,6 @@ export function runProxy(args) {
               )
             );
             return;
-          }
-          if (reviewedBackend !== undefined) {
-            try {
-              verifyReviewedBackendFiles(reviewedBackend, false);
-            } catch {
-              failBackend(
-                -32004,
-                "The reviewed backend changed after admission."
-              );
-              child.kill();
-              reply(
-                errorMessage(
-                  message.id,
-                  -32004,
-                  "The reviewed backend changed after admission."
-                )
-              );
-              return;
-            }
           }
           forward(message, "tools/call", {
             ...message.params,

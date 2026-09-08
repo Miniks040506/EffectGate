@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
@@ -50,12 +51,16 @@ function toolResult(status, isError = false) {
 
 export function runReviewedStdioEffectFixture(args) {
   const probe = args.length === 1 && args[0] === "--probe";
-  if (!probe && (args.length !== 4 || args[0] !== "--state" ||
+  const argumentsConfigured = args.length === 4 ||
+    (args.length === 6 && args[4] === "--call-marker" &&
+      bounded(args[5], 1024));
+  if (!probe && (!argumentsConfigured || args[0] !== "--state" ||
       args[2] !== "--target" || !bounded(args[1], 1024) ||
       !bounded(args[3], 512))) {
     throw new TypeError("invalid reviewed fixture arguments");
   }
   const targetPath = probe ? "__effectgate_doctor_probe__" : args[3];
+  const callMarker = args.length === 6 ? resolve(args[5]) : undefined;
   const database = probe ? null : new DatabaseSync(resolve(args[1]));
   database?.exec(`
     CREATE TABLE IF NOT EXISTS fixture_config (
@@ -116,6 +121,7 @@ export function runReviewedStdioEffectFixture(args) {
         reply(response(id, toolResult("invalid_request", true)));
         return;
       }
+      if (callMarker !== undefined) writeFileSync(callMarker, "invoked\n");
       const { name, arguments: input } = message.params;
       if (name === LOOKUP_TOOL.name &&
           exact(input, ["idempotency_key"]) &&
