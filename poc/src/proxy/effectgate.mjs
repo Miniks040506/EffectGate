@@ -103,16 +103,30 @@ export const MAX_PENDING_REQUESTS = 64;
 export const FIXTURE_MAX_LINES = 100_000;
 export const TARGET_CORPUS_PAGE_BYTES = 128 * 1024;
 const MAX_ID_BYTES = 128;
-const MCP_ROUTING_INSTRUCTIONS =
+const STANDARD_ROUTING_INSTRUCTIONS =
   "When the user asks to use EffectGate, prefer this server for matching " +
-  "backend data operations. Call an EffectGate-routed backend tool first " +
-  "to obtain the Context View artifact_id. Use effectgate_search for " +
-  "literal text, errors, identifiers, occurrences, and cited evidence. Use " +
-  "effectgate_project for records or fields in JSON, JSONL, CSV, TSV, or " +
-  "Markdown. Use effectgate_fetch only when additional sequential context " +
-  "is necessary and only with the authentic returned cursor. Never invent " +
-  "artifact IDs or cursors, and preserve citations in evidence-based claims. " +
-  "Use normal development tools for work outside the connected backend.";
+  "backend data. Call an EffectGate-routed backend tool first to get a " +
+  "Context View artifact_id. Use effectgate_search for literal cited " +
+  "evidence, effectgate_project for structured records, and effectgate_fetch " +
+  "only for needed sequential context with the returned cursor. Never invent " +
+  "artifact IDs or cursors; preserve citations. Use normal development tools " +
+  "outside the connected backend.";
+const COMPACT_ROUTING_INSTRUCTIONS =
+  "When the user asks to use EffectGate, prefer this server for matching " +
+  "backend data. Use effectgate_search to find an admitted " +
+  "capability, effectgate_describe to inspect its schema, then " +
+  "effectgate_call with the returned ref. If that call returns a Context " +
+  "View artifact_id, use effectgate_artifact_search for literal evidence, " +
+  "effectgate_artifact_project for structured records, and effectgate_fetch " +
+  "only with its cursor. Never invent refs, artifact IDs, or cursors; " +
+  "preserve citations. Use normal development tools outside the " +
+  "connected backend.";
+
+function routingInstructions(profile) {
+  return profile === "compact_mux"
+    ? COMPACT_ROUTING_INSTRUCTIONS
+    : STANDARD_ROUTING_INSTRUCTIONS;
+}
 const CURSOR_INPUT_PATTERN = new RegExp(CURSOR_PATTERN, "u");
 const TOKEN_LEDGER_PROFILES = new Set([
   "native_default",
@@ -1937,7 +1951,7 @@ export function runProxy(args) {
                 name: "effectgate-preview",
                 version: EFFECTGATE_VERSION
               },
-              instructions: MCP_ROUTING_INSTRUCTIONS,
+              instructions: routingInstructions(profile),
               _meta: {
                 "dev.effectgate/nativeDeferral": deferralDecision
               }

@@ -178,6 +178,10 @@ test("proxy preserves the tool contract and labels its routed public tool", asyn
   assert.match(initialized.result.instructions, /effectgate_search/u);
   assert.match(initialized.result.instructions, /effectgate_project/u);
   assert.match(initialized.result.instructions, /effectgate_fetch/u);
+  assert.doesNotMatch(
+    initialized.result.instructions,
+    /effectgate_artifact_(?:search|project)/u
+  );
   assert.match(initialized.result.instructions, /Never invent artifact IDs/u);
   assert.match(initialized.result.instructions, /normal development tools/u);
   assert.equal((await proxy.request("tools/list")).error.code, -32007);

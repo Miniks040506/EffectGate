@@ -37,11 +37,24 @@ test("compact mux searches, describes, calls, and fetches admitted tools", async
   ]);
   context.after(() => proxy.stop());
 
-  await proxy.request("initialize", {
+  const initialized = await proxy.request("initialize", {
     protocolVersion: MCP_VERSION,
     capabilities: {},
     clientInfo: { name: "compact-mux-test", version: "1" }
   });
+  for (const name of [
+    COMPACT_SEARCH_TOOL.name,
+    COMPACT_DESCRIBE_TOOL.name,
+    COMPACT_CALL_TOOL.name,
+    CONTEXT_FETCH_TOOL.name,
+    COMPACT_CONTEXT_SEARCH_TOOL.name,
+    COMPACT_CONTEXT_PROJECT_TOOL.name
+  ]) {
+    assert.match(initialized.result.instructions, new RegExp(`\\b${name}\\b`, "u"));
+  }
+  assert.match(initialized.result.instructions, /capability/u);
+  assert.match(initialized.result.instructions, /Context View artifact_id/u);
+  assert.match(initialized.result.instructions, /normal development tools/u);
   proxy.send({ jsonrpc: "2.0", method: "notifications/initialized" });
 
   const firstPage = await proxy.request("tools/list");
@@ -53,6 +66,10 @@ test("compact mux searches, describes, calls, and fetches admitted tools", async
     COMPACT_CONTEXT_SEARCH_TOOL,
     COMPACT_CONTEXT_PROJECT_TOOL
   ]);
+  const publishedNames = new Set(firstPage.result.tools.map(({ name }) => name));
+  for (const name of initialized.result.instructions.match(/effectgate_[a-z_]+/gu)) {
+    assert.equal(publishedNames.has(name), true, `${name} is not published`);
+  }
   assert.equal(firstPage.result.nextCursor, undefined);
 
   const searched = await proxy.request("tools/call", {
