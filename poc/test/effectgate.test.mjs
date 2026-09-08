@@ -2287,34 +2287,66 @@ test("Claude connection preflight verifies readiness without model use", () => {
   const directory = mkdtempSync(join(tmpdir(), "effectgate-claude-cli-"));
   const windows = process.platform === "win32";
   const fake = join(directory, windows ? "claude.cmd" : "claude");
-  writeFileSync(
-    fake,
-    windows
-      ? "@echo off\r\nif \"%1\"==\"--version\" (echo 2.1.test& exit /b 0)\r\nif \"%1\"==\"mcp\" if \"%2\"==\"get\" exit /b 0\r\nexit /b 2\r\n"
-      : "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 2.1.test; exit 0; fi\nif [ \"$1\" = mcp ] && [ \"$2\" = get ]; then exit 0; fi\nexit 2\n"
-  );
-  if (!windows) chmodSync(fake, 0o755);
-  const checked = spawnSync(
-    process.execPath,
-    [PROGRAM, "connect", "claude", "--name", "effectgate-data", "--check"],
-    {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        PATH: `${directory}${windows ? ";" : ":"}${process.env.PATH ?? ""}`
-      },
-      windowsHide: true
-    }
-  );
-  rmSync(directory, { recursive: true, force: true });
+  const runCheck = ({
+    scope = "User config",
+    status = "Connected",
+    command = "effectgate",
+    args = "mcp serve"
+  } = {}) => {
+    const lines = [
+      "effectgate-data:",
+      `  Scope: ${scope}`,
+      `  Status: ${status}`,
+      "  Type: stdio",
+      `  Command: ${command}`,
+      `  Args: ${args}`
+    ];
+    writeFileSync(
+      fake,
+      windows
+        ? `@echo off\r\nif "%1"=="--version" (echo 2.1.test& exit /b 0)\r\nif "%1"=="mcp" if "%2"=="get" (\r\n${lines.map((line) => `echo ${line}`).join("\r\n")}\r\nexit /b 0\r\n)\r\nexit /b 2\r\n`
+        : `#!/bin/sh\nif [ "$1" = "--version" ]; then echo 2.1.test; exit 0; fi\nif [ "$1" = mcp ] && [ "$2" = get ]; then\n${lines.map((line) => `  echo '${line}'`).join("\n")}\n  exit 0\nfi\nexit 2\n`
+    );
+    if (!windows) chmodSync(fake, 0o755);
+    return spawnSync(
+      process.execPath,
+      [PROGRAM, "connect", "claude", "--name", "effectgate-data", "--check"],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${directory}${windows ? ";" : ":"}${process.env.PATH ?? ""}`
+        },
+        windowsHide: true
+      }
+    );
+  };
+  const checked = runCheck();
   assert.equal(checked.status, 0, checked.stderr);
   assert.equal(checked.stderr, "");
   assert.match(checked.stdout, /Claude Code\s+2\.1\.test OK/u);
   assert.match(checked.stdout, /MCP registration\s+OK/u);
-  assert.match(checked.stdout, /Requested scope\s+user/u);
+  assert.match(checked.stdout, /Registered command\s+OK/u);
+  assert.match(checked.stdout, /Registered args\s+OK/u);
+  assert.match(checked.stdout, /Registered scope\s+user OK/u);
+  assert.match(checked.stdout, /MCP handshake\s+OK/u);
   assert.match(checked.stdout, /Permission pattern\s+mcp__effectgate-data__\*/u);
+  assert.match(checked.stdout, /Permission check\s+UNKNOWN/u);
   assert.match(checked.stdout, /Permission setup:/u);
-  assert.match(checked.stdout, /Ready\s+YES/u);
+  assert.match(checked.stdout, /Ready\s+YES \(permission unverified\)/u);
+
+  for (const registration of [
+    { command: "definitely-not-effectgate" },
+    { args: "mcp serve --config wrong.json" },
+    { scope: "Local config" },
+    { status: "Disconnected" }
+  ]) {
+    const rejected = runCheck(registration);
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stdout, /MCP registration\s+FAIL/u);
+    assert.match(rejected.stdout, /Ready\s+NO/u);
+  }
+  rmSync(directory, { recursive: true, force: true });
 });
 
 test("local routing qualification exercises every automatic route contract", async (context) => {

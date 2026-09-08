@@ -1259,14 +1259,16 @@ function connectClaude(args) {
   const permission = `mcp__${name}__*`;
   const permissionHelp = claudePermissionGuidance(name, scope);
   if (check) {
+    const checkOptions = {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 5_000
+    };
     const run = (windowsCommand, unixArgs) => process.platform === "win32"
       ? spawnSync(process.env.ComSpec ?? "cmd.exe", [
           "/d", "/s", "/c", windowsCommand
-        ], { encoding: "utf8", windowsHide: true })
-      : spawnSync("claude", unixArgs, {
-          encoding: "utf8",
-          windowsHide: true
-        });
+        ], checkOptions)
+      : spawnSync("claude", unixArgs, checkOptions);
     const version = run("claude --version", ["--version"]);
     const registration = run(
       `claude mcp get ${name}`,
@@ -1274,8 +1276,27 @@ function connectClaude(args) {
     );
     const nodeReady = Number(process.versions.node.split(".")[0]) >= 24;
     const claudeReady = version.error === undefined && version.status === 0;
+    const registrationOutput = (registration.stdout ?? "")
+      .replaceAll(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "");
+    const field = (label) => registrationOutput.match(
+      new RegExp(`^\\s*${label}:\\s*(.*?)\\s*$`, "imu")
+    )?.[1];
+    const expectedArgs = [
+      "mcp", "serve",
+      ...(configFile === undefined ? [] : ["--config", configFile])
+    ].join(" ");
+    const entryReady = new RegExp(`^${name}:\\s*$`, "imu")
+      .test(registrationOutput);
+    const scopeReady = field("Scope")?.toLowerCase().includes(scope) === true;
+    const transportReady = field("Type")?.toLowerCase() === "stdio";
+    const commandReady = field("Command") === "effectgate";
+    const argsReady = field("Args") === expectedArgs;
+    const status = field("Status")?.toLowerCase() ?? "";
+    const handshakeReady = /\bconnected\b/u.test(status) &&
+      !/\b(?:disconnected|failed|error)\b/u.test(status);
     const registrationReady = registration.error === undefined &&
-      registration.status === 0;
+      registration.status === 0 && entryReady && scopeReady && transportReady &&
+      commandReady && argsReady && handshakeReady;
     const ready = nodeReady && claudeReady && registrationReady;
     const claudeVersion = claudeReady
       ? version.stdout.trim().split(/\r?\n/u)[0]
@@ -1285,10 +1306,14 @@ function connectClaude(args) {
       `Node.js             ${process.versions.node} ${nodeReady ? "OK" : "FAIL"}`,
       `Claude Code         ${claudeVersion} ${claudeReady ? "OK" : "FAIL"}`,
       `MCP registration    ${registrationReady ? "OK" : "FAIL"}`,
-      `Requested scope     ${scope}`,
+      `Registered command  ${commandReady ? "OK" : "FAIL"}`,
+      `Registered args     ${argsReady ? "OK" : "FAIL"}`,
+      `Registered scope    ${scopeReady ? `${scope} OK` : `${scope} FAIL`}`,
+      `MCP handshake       ${handshakeReady ? "OK" : "FAIL"}`,
       `Backend config      ${configFile === undefined ? "bundled demo fixture" : "verified"}`,
       `Permission pattern  ${permission}`,
-      `Ready               ${ready ? "YES" : "NO"}`,
+      "Permission check    UNKNOWN (verify in Claude Code /permissions)",
+      `Ready               ${ready ? "YES (permission unverified)" : "NO"}`,
       "",
       permissionHelp,
       ""
